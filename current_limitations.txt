@@ -1,0 +1,5 @@
+Cannot initialize globals unless the initialization code is placed in a function
+Cannot create member functions (including member operator functions)
+Cannot create class static functions
+Cannot create global operator functions
+Cannot utilize templates

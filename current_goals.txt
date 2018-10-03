@@ -1,0 +1,11 @@
+list of current goals
+features
+  - add global import statement that
+    syntax ideas
+      import ("header.h", "source.cpp")
+      import ("header.h", "library.lib")
+      import ("header.h", sync "source.cpp") // default is async
+      import (extern "C" "header.h", extern "C" "source.c")
+      import (...^^^previous stuff^^^...) as module_name
+  - add a way to say `using std::cout as std:the_cout`
+    like aliasing var names
