@@ -82,7 +82,7 @@ if __name__ == "__main__" and run_opt == 5:
     print("TEST_FILES_DIR = %s" % test_files_dir)
     # with open(test_files_dir + "/main.cpp", "rb") as fl:
     #     tokens = ClsBrkLexer(fl.read())
-    # tokens = filter(lambda x: x.type_id not in {CLS_WS, CLS_BLK_COMMENT, CLS_LN_COMMENT}, tokens)
+    # tokens = list(filter(is_not_ign_tok, tokens))
     # with open(test_files_dir + "/floats_with_classes.cpp", "r") as fl:
     #    tokens = get_list_tokens(fl)
     # "/floats_and_ints.cpp"
@@ -157,7 +157,7 @@ if __name__ == "__main__" and run_opt == 5:
     print("\n" + "STOPPED".center(96, "="))
 elif __name__ == "__main__" and run_opt == 4:
     toks = cls_brk_lexer("void IdAllocator(void *ArrRanges, unsigned long long LenArr, unsigned long long Min, unsigned long long Max);")
-    toks1 = list(filter(lambda x: x.type_id not in {CLS_WS, CLS_BLK_COMMENT, CLS_LN_COMMENT}, toks))
+    toks1 = list(filter(is_not_ign_tok, toks))
     tmp_global = CompileContext("", None)
     tmp_local = tmp_global.new_scope(LocalScope("MAIN"))
     tmp_res, tmp_c = proc_typed_decl(toks1, 0, len(toks1), tmp_local)
@@ -206,7 +206,7 @@ elif __name__ == "__main__" and run_opt == 1:
     Local = Global.new_scope(LocalScope("MAIN"))
     for Str in Tests:
         print(Str)
-        tokens = list(filter(lambda x: x.type_id not in {CLS_WS, CLS_BLK_COMMENT, CLS_LN_COMMENT}, cls_brk_lexer(Str)))
+        tokens = list(filter(is_not_ign_tok, cls_brk_lexer(Str)))
         c = 0
         Res = None
         # noinspection PyBroadException
@@ -222,7 +222,7 @@ elif __name__ == "__main__" and run_opt == 1:
         del c
 elif __name__ == "__main__" and run_opt == 0:
     print("Attempt Compile Started")
-    tokens = list(filter(lambda x: x.type_id not in {CLS_WS, CLS_BLK_COMMENT, CLS_LN_COMMENT}, cls_brk_lexer("""\
+    tokens = list(filter(is_not_ign_tok, cls_brk_lexer("""\
 {
 int aba = 1;
 sys_out("%p", &aba);

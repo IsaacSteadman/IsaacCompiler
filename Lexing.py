@@ -476,3 +476,11 @@ def get_list_tokens(data):
         tok_c += 1
         token = lexer.get_token()
     return lst_tokens[:tok_c]
+
+
+def is_not_ign_tok(tok: ParseClass) -> bool:
+    """
+    returns True if `tok` is not supposed to be ignored by the parser
+    it returns False only for comments and whitespace
+    """
+    return tok.type_id != CLS_WS and tok.type_id != CLS_BLK_COMMENT and tok.type_id == CLS_LN_COMMENT
