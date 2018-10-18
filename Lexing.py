@@ -466,6 +466,14 @@ def is_not_ign_tok(tok: ParseClass) -> bool:
     return tok.type_id != CLS_WS and tok.type_id != CLS_BLK_COMMENT and tok.type_id != CLS_LN_COMMENT
 
 
+def is_ign_tok(tok: ParseClass) -> bool:
+    """
+    returns True if `tok` is supposed to be ignored by the parser
+    it returns True only for comments and whitespace
+    """
+    return tok.type_id == CLS_WS or tok.type_id == CLS_BLK_COMMENT or tok.type_id == CLS_LN_COMMENT
+
+
 def get_list_tokens(data):
     n = 64
     lst_tokens = [None] * 64
@@ -474,7 +482,7 @@ def get_list_tokens(data):
     token = lexer.get_token()
     tok_c = 0
     while token is not None:
-        if token.type_id in [CLS_WS, CLS_BLK_COMMENT, CLS_LN_COMMENT]:
+        if is_ign_tok(token):
             token = lexer.get_token()
             continue
         if tok_c >= n:
