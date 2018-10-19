@@ -382,7 +382,7 @@ class StringSource(BaseSource):
     def read(self, n_chars: int) -> str:
         index = self.index
         data = self.data
-        new_index = max(index + n_chars, len(data))
+        new_index = min(index + n_chars, len(data))
         self.index = new_index
         out = data[index: new_index]
         n = out.count('\n')
