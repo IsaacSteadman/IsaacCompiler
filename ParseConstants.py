@@ -76,6 +76,7 @@ KEYWORDS = {
     "inline", "extern", "using", "namespace", "operator",
     "implicit", "explicit", "template", "typename"
     } | MODIFIERS | BASE_TYPE_MODS | INT_TYPES | SINGLE_TYPES
+LST_STMNT_NAMES = ["{", "if", "while", "for", "return", "break", "continue", "namespace", "typedef", "<DECL_STMNT>"]
 STMNT_CURLY_STMNT = 0
 STMNT_IF = 1
 STMNT_WHILE = 2
@@ -84,8 +85,9 @@ STMNT_RTN = 4
 STMNT_BRK = 5
 STMNT_CONTINUE = 6
 STMNT_NAMESPACE = 7
-STMNT_DECL = 8
-STMNT_SEMI_COLON = 9  # always at end ('expr;' expression)
+STMNT_TYPEDEF = 8
+STMNT_DECL = 9
+STMNT_SEMI_COLON = 10  # always at end ('expr;' expression)
 EXPR_LITERAL = 0
 EXPR_NAME = 1
 EXPR_BIN_OP = 2
@@ -372,7 +374,6 @@ TYP_CLS_MULTI = 6
 
 SINGLE_TYPES1 = SINGLE_TYPES.union({"int"})
 PRIM_TYPE_WORDS = SINGLE_TYPES1 | INT_TYPES1 | BASE_TYPE_MODS
-LST_STMNT_NAMES = ["{", "if", "while", "for", "return", "break", "continue", "namespace", "<DECL_STMNT>"]
 
 TYPE_SPECS = {"const", "volatile", "register", "auto"}
 
