@@ -38,7 +38,7 @@ namespace my_ns {
     int test_var = 12248;
     namespace ns1 {
         unsigned long long strlen(const char *str) {
-            char *ptr = str;
+            const char *ptr = str;
             while (*ptr) {
                 ++ptr;
             }
