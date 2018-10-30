@@ -489,6 +489,66 @@ def is_array_type(typ):
     return False
 
 
+class TypeDefStmnt(BaseStmnt):
+    stmnt_type = STMNT_TYPEDEF
+
+    def __init__(self, id_qual_types=None):
+        """
+        :param list[IdentifiedQualType]|None id_qual_types:
+        """
+        self.id_qual_types = id_qual_types
+
+    def pretty_repr(self):
+        return [self.__class__.__name__, "("] + get_pretty_repr(self.id_qual_types) + [")"]
+
+    def build(self, tokens, c, end, context):
+        """
+        :param list[ParseClass] tokens:
+        :param int c:
+        :param int end:
+        :param CompileContext context:
+        :rtype: int
+        """
+        c += 1
+        base_type, c = get_base_type(tokens, c, end, context)
+        end_stmnt = c
+        # TODO: remove this limitation as this would break inline struct definitions (like struct {int a; char b} var)
+        # TODO: DONE
+        lvl = 0
+        while end_stmnt < end and (tokens[end_stmnt].str != ";" or lvl > 0):
+            if tokens[end_stmnt].str in OPEN_GROUPS:
+                lvl += 1
+            elif tokens[end_stmnt].str in CLOSE_GROUPS:
+                lvl -= 1
+            end_stmnt += 1
+        if base_type is None:
+            raise SyntaxError("Expected Typename for DeclStmnt")
+        self.id_qual_types = []
+        while c < end_stmnt + 1:
+            named_qual_type, c = proc_typed_decl(tokens, c, end_stmnt, context, base_type)
+            if named_qual_type is None:
+                raise ParsingError(tokens, c, "Expected Typename for DeclStmnt")
+            assert isinstance(named_qual_type, IdentifiedQualType)
+            if named_qual_type.name is None:
+                raise ParsingError(tokens, c, "Expected a name for typedef")
+            elif tokens[c].str == "," or tokens[c].str == ";":
+                self.id_qual_types.append(named_qual_type)
+                context.new_type(
+                    named_qual_type.name,
+                    TypeDefCtxMember(
+                        named_qual_type.name,
+                        context,
+                        named_qual_type.typ
+                    )
+                )
+                c += 1
+                if tokens[c].str == ";":
+                    break
+            else:
+                raise ParsingError(tokens, c, "Expected a ',' or ';' to delimit the typedef")
+        return c
+
+
 class DeclStmnt(BaseStmnt):
     stmnt_type = STMNT_DECL
     # decl_lst added to init-args for __repr__
@@ -571,7 +631,14 @@ class DeclStmnt(BaseStmnt):
                     return new_c
         base_type, c = get_base_type(tokens, c, end, context)
         end_stmnt = c
-        while end_stmnt < end and tokens[end_stmnt].str != ";":  # TODO: remove this limitation as this would break inline struct definitions (like struct {int a; char b} var)
+        lvl = 0
+        # TODO: remove this limitation as this would break inline struct definitions (like struct {int a; char b} var)
+        # TODO: Done
+        while end_stmnt < end and (tokens[end_stmnt].str != ";" or lvl > 0):
+            if tokens[end_stmnt].str in OPEN_GROUPS:
+                lvl += 1
+            elif tokens[end_stmnt].str in CLOSE_GROUPS:
+                lvl -= 1
             end_stmnt += 1
         if base_type is None:
             raise SyntaxError("Expected Typename for DeclStmnt")
@@ -1808,7 +1875,7 @@ def get_base_type(tokens, c, end, context):
                 if not cls.is_type():
                     raise ParsingError(tokens, c, "Expected a typename to follow 'typename', got %s" % name)
                 if base_type is None and not is_prim:
-                    base_type = cls
+                    base_type = cls.get_underlying_type()
                 else:
                     raise ParsingError(tokens, c, "Cannot specify different typenames as one type")
             elif tokens[c].str in PRIM_TYPE_WORDS:
@@ -1839,7 +1906,7 @@ def get_base_type(tokens, c, end, context):
                 if v is None:
                     raise ParsingError(tokens, c, "Undefined Identifier")
                 elif v.is_type():
-                    base_type = v
+                    base_type = v.get_underlying_type()
                 else:
                     return None, main_start
             else:
@@ -1858,6 +1925,7 @@ def get_base_type(tokens, c, end, context):
         base_type = PrimitiveType.from_str_name(str_name[:c0])
         # assert c0 == len(str_name), "expected c0 = len(str_name), c0=%u, str_name=%r" % (c0, str_name)
         str_name = str_name[c0:]
+    assert isinstance(base_type, BaseType), "type = %s" % base_type.__class__.__name__
     for s in str_name:
         base_type = QualType(QualType.QUAL_Dct[s], base_type)
     return base_type, c
@@ -2095,6 +2163,9 @@ def get_stmnt(tokens, c, end, context):
         c = rtn.build(tokens, c, end, context)
     elif pos == STMNT_NAMESPACE:
         rtn = NamespaceStmnt()
+        c = rtn.build(tokens, c, end, context)
+    elif pos == STMNT_TYPEDEF:
+        rtn = TypeDefStmnt()
         c = rtn.build(tokens, c, end, context)
     elif pos == STMNT_DECL:
         rtn = DeclStmnt()
@@ -3454,6 +3525,30 @@ class ContextMember(object):
 
     def is_local_scope(self): return False
 
+    def get_underlying_type(self):
+        # TODO: fix this so that structs/unions/classes will directly handle this (important)
+        if isinstance(self, BaseType):
+            return self
+        return None
+
+
+class TypeDefCtxMember(ContextMember):
+    def __init__(self, name, parent, typ):
+        """
+
+        :param str name:
+        :param CompileContext|None parent:
+        :param BaseType typ:
+        """
+        super(TypeDefCtxMember, self).__init__(name, parent)
+        self.typ = typ
+
+    def is_type(self):
+        return True
+
+    def get_underlying_type(self):
+        return self.typ
+
 
 def mangle_decl(name, typ, is_local, is_op_fn=False):
     """
@@ -4679,6 +4774,9 @@ def get_strict_stmnt(tokens, c, end, context):
         # print "Before c = %u, end = %u, STMNT_DECL" % (c, end)
         c = rtn.build(tokens, c, end, context)
         # print "After c = %u, end = %u, STMNT_DECL" % (c, end)
+    elif pos == STMNT_TYPEDEF:
+        rtn = TypeDefStmnt()
+        c = rtn.build(tokens, c, end, context)
     if rtn is None:
         raise ParsingError(tokens, c, "Expected only '{' statement or decl statement for strict statement")
     return rtn, c
@@ -6653,6 +6751,8 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
         assert isinstance(stmnt, NamespaceStmnt)
         for inner_stmnt in stmnt.lst_stmnts:
             compile_stmnt(cmpl_obj, inner_stmnt, stmnt.ns, cmpl_data)
+    elif stmnt.stmnt_type == STMNT_TYPEDEF:
+        pass # Do nothing for typedef statement
     else:
         raise ValueError("Unrecognized Statement Type")
     return 0
