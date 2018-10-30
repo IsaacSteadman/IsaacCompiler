@@ -1,0 +1,16 @@
+around line 4800, remove code in `compile_var_init`
+put the constructor overload resolver in something like SingleVarDecl
+put the expression form of the constructor in a new expression type (separate from FnCallExpr) and do overload
+  resolution at the time of processing/building the expression
+
+then for member functions to do overload resolution
+  is trivial, the this pointer is inserted into the list of argument types
+
+overloaded operator resolution is more difficult,
+  it will one of the following
+    a) that you try member functions using the 'this' pointer to class-type
+       and then try all the global operators using a reference to class-type
+    b) that you manipulate/map the list of global operator functions from first argument which is class-type reference
+       to functions with first argument is class-type pointer
+    c) that you manipulate/map the list of member operator functions from first argument (implicit this) which is class-type pointer
+       to functions with first argument is a class-type reference

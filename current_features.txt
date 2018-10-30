@@ -1,4 +1,4 @@
-all of C (except typedefs) (including floats)
+all of C (including typedefs) (including floats)
 C++ references
 C++ namespaces
 C++ function-overloading

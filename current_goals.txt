@@ -9,4 +9,3 @@ features
       import (...^^^previous stuff^^^...) as module_name
   - add a way to say `using std::cout as std:the_cout`
     like aliasing var names
-  - typedefs (from C)
