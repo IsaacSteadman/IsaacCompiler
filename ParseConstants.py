@@ -19,6 +19,26 @@ CLS_DOT = 16
 # post-parse token types
 CLS_ARRAY_LEN = 15
 
+CLS_ABREV = [
+    "Bln",
+    "WSp",
+    "Nam",
+    "Dec",
+    "Flt",
+    "Hex",
+    "Oct",
+    "Bin",
+    "Opr",
+    "Brk",
+    "SQu",
+    "DQu",
+    "BSl",
+    "LnC",
+    "BlC",
+    "PMC",
+    "Dot"
+]
+
 
 LITERAL_TYPES = {CLS_DBL_QUOTE, CLS_UNI_QUOTE, CLS_FLOAT, CLS_DEC_INT, CLS_OCT_INT, CLS_HEX_INT, CLS_BIN_INT}
 
