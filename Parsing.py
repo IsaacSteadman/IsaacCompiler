@@ -6773,8 +6773,8 @@ def compile_curly(cmpl_obj, stmnt, context, cmpl_data=None):
     if cmpl_data is None:
         print("WARN: Curly Statement usually requires cmpl_data")
     cmpl_data = LocalCompileData(cmpl_data)
-    for CurStmnt in stmnt.stmnts:
-        compile_stmnt(cmpl_obj, CurStmnt, stmnt.context, cmpl_data)
+    for cur_stmnt in stmnt.stmnts:
+        compile_stmnt(cmpl_obj, cur_stmnt, stmnt.context, cmpl_data)
     cmpl_data.compile_leave_scope(cmpl_obj, stmnt.context)
     return 0
 
@@ -6811,7 +6811,7 @@ def compile_lang1(tokens, cmpl_opts):
     global_ctx = CompileContext("", None)
     c = 0
     lst_stmnt = []
-    cmpl_obj = Compilation()
+    cmpl_obj = Compilation(cmpl_opts.keep_local_syms)
     run_method = link_opts.run_method
     if run_method == LNK_RUN_STANDALONE:
         main_fn = cmpl_obj.get_link("?FiPPczmain")
@@ -6866,31 +6866,6 @@ def compile_lang1(tokens, cmpl_opts):
         cmpl_obj.merge_all(link_opts, extern_deps, excl)
         cmpl_obj.link_all()
     return lst_stmnt, global_ctx, cmpl_obj, dep_dct
-
-
-SAVE_STRING_TABLE = 1
-SAVE_GLOBAL_TABLE = 2
-SAVE_LOCAL_TABLE = 4
-SAVE_REF_GLOBAL = 8
-SAVE_REF_LOCAL = 16
-
-REF_TYPE_UNDEFINED = 0
-REF_TYPE_REL_BP = 1
-REF_TYPE_REL_IP = 2
-REF_TYPE_ABS = 3
-
-# TODO: record data-segment start
-# TODO:   see TODO of CompileLang1
-
-
-def save_compilation(cmpl_obj, fl, opts=SAVE_GLOBAL_TABLE | SAVE_STRING_TABLE):
-    del cmpl_obj
-    fl.write(b"\x00\x00")
-    fl.write(chr(opts))
-    if opts & SAVE_STRING_TABLE:
-        pass
-    if opts & SAVE_GLOBAL_TABLE:
-        pass
 
 
 mangle_maps = {}
