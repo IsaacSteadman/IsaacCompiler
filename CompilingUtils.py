@@ -354,6 +354,10 @@ def dummy_byte_copy_intrinsic(arg, mem, sz, b0, b1):
 
 
 class OffsetLinkage(BaseLink):
+    """
+    :type parent: Linkage
+    :type offset: int
+    """
     def __init__(self, parent, offset):
         """
         :param Linkage parent:
@@ -416,6 +420,11 @@ class OffsetLinkage(BaseLink):
 
 
 class Linkage(BaseLink):
+    """
+    :type lst_tgt: list[LinkRef]
+    :type src: int|None
+    :type is_extern: bool
+    """
     def __init__(self):
         self.lst_tgt = []
         self.src = None
@@ -497,6 +506,13 @@ class Linkage(BaseLink):
 
 
 class BaseCmplObj(object):
+    """
+    :type memory: bytearray
+    :type linkages: dict[str,Linkage]
+    :type string_pool: dict[bytes,Linkage]
+    :type data_segment_start: int|None
+    :type code_segment_end: int|None
+    """
     def __init__(self):
         self.memory = bytearray()
         self.linkages = {}
@@ -538,23 +554,21 @@ class LinkerOptions(object):
 
 
 class CompilerOptions(object):
-    __slots__ = ["link_opts", "merge_and_link"]
+    __slots__ = ["link_opts", "merge_and_link", "keep_local_syms"]
 
-    def __init__(self, link_opts, merge_and_link=True):
-        """
-        :param LinkerOptions link_opts:
-        :param bool merge_and_link:
-        """
+    def __init__(self, link_opts: LinkerOptions, merge_and_link: bool=True, keep_local_syms: bool=False):
         self.link_opts = link_opts
         self.merge_and_link = merge_and_link
+        self.keep_local_syms = keep_local_syms
 
 
 class Compilation(BaseCmplObj):
     """
     :type objects: dict[str, CompileObject]
     """
-    def __init__(self):
+    def __init__(self, keep_local_syms: bool):
         super(Compilation, self).__init__()
+        self.keep_local_syms = keep_local_syms
         self.objects = {}
         self.code_segment_end = None
         self.data_segment_start = None
