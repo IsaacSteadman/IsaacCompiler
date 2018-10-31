@@ -2,7 +2,7 @@ from Parsing import Compilation, CMPL_T_FUNCTION
 from CompilingUtils import assemble
 
 
-lib_utils_abi = Compilation()
+lib_utils_abi = Compilation(False)
 # declared as `void *memcpy(void *dest, const void *src, unsigned long long size)`
 mem_cpy = lib_utils_abi.spawn_compile_object(CMPL_T_FUNCTION, "?FPvPCvyzmemcpy")
 assemble(mem_cpy, {"dest": (0x10, 8), "src": (0x18, 8), "size": (0x20, 8), "res": (0x28, 8)}, """\
