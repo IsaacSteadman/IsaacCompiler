@@ -2,7 +2,25 @@ int print(const char *str);
 void *memset(void *ptr, unsigned char value, unsigned long long num);
 void *memmove(void *dest, void *src, unsigned long long num);
 void *memcpy(void *dest, const void *src, unsigned long long size);
-double pow(double base, int exponent);
+// double pow(double base, int exponent); // no longer imported
+double pow(double base, int exponent) {
+    double rtn = 1.0;
+    bool is_neg = exponent < 0;
+    int exp = exponent;
+    if (is_neg) {
+        exp = 1 + ~exponent;
+    }
+    double tmp = base;
+    while (exp) {
+        if (exp & 1) {
+            rtn *= tmp;
+        }
+        tmp *= tmp;
+        // exp >>= 1;
+        exp /= 2;
+    }
+    return rtn;
+}
 
 unsigned long long strlen(const char *str) {
     char *ptr = str;
