@@ -86,9 +86,11 @@ if __name__ == "__main__" and run_opt == 5:
     # with open(test_files_dir + "/floats_with_classes.cpp", "r") as fl:
     #    tokens = get_list_tokens(fl)
     # "/floats_and_ints.cpp"
+    # "/main_ns_typedefs.cpp"
+    # "/test_print.cpp"
 
-    with open(test_files_dir + "/main_ns.cpp", "r") as fl:
-       tokens = get_list_tokens(fl)
+    with open(test_files_dir + "/floats_with_classes.cpp", "r") as fl:
+        tokens = get_list_tokens(fl)
     # print tokens
     link_opts = LinkerOptions(LNK_OPT_ALL, 4096, lib_utils_abi.objects, LNK_RUN_STANDALONE)
     cmpl_opts = CompilerOptions(link_opts, True)
@@ -102,15 +104,15 @@ if __name__ == "__main__" and run_opt == 5:
     print("END CODEGEN RESULTS")
     print("code_segment_end, data_segment_start = %u, %u" % (CmplObj.code_segment_end, CmplObj.data_segment_start))
     print("len(CmplObj.memory) = %u" % len(CmplObj.memory))
-    MyStackVM = VM()
+    vm = VM()
     print("INIT_STATE: ip = %u, bp = %u, sp = %u, len(memory) = %u" % (
-        MyStackVM.ip, MyStackVM.bp, MyStackVM.sp, len(MyStackVM.memory)))
-    MyStackVM.load_program(CmplObj.memory, 0)
+        vm.ip, vm.bp, vm.sp, len(vm.memory)))
+    vm.load_program(CmplObj.memory, 0)
     EndProg = len(CmplObj.memory)
     CmdArgs = ["Hello.exe"]
-    MyStackVM.push(4, 0) # return value allocation
-    add_cmd_argv_vm(MyStackVM, EndProg, CmdArgs)
-    MyDbg = Debugger(MyStackVM, 0, End, Links)
+    vm.push(4, 0) # return value allocation
+    add_cmd_argv_vm(vm, EndProg, CmdArgs)
+    MyDbg = Debugger(vm, 0, End, Links)
     Tmp0Obj = CmplObj.objects.get("?FyPcyzStrFromNumber", None)
     if Tmp0Obj is not None:
         Tmp0Lnk = CmplObj.linkages["?FyPcyzStrFromNumber"]
