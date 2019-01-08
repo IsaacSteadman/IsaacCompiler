@@ -2595,6 +2595,7 @@ def get_base_prim_type(typ):
     :param BaseType|IdentifiedQualType typ:
     :rtype: BaseType
     """
+    assert typ is not None
     if isinstance(typ, IdentifiedQualType):
         typ = typ.typ
     base_comp_types = {QualType.QUAL_FN, QualType.QUAL_PTR, QualType.QUAL_ARR, QualType.QUAL_REF}
@@ -5824,70 +5825,6 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
     if typ is None:
         raise NotImplementedError("Not Implemented: op_fn_type = %u" % expr.op_fn_type)
     assert (1 << sz_cls) == sz_type
-    '''if expr.op_fn_type == OP_TYP_PTR_GENERIC:
-        inc_by = SizeOf(typ.tgt_type)
-        if expr.type_id in AssignmentOps:
-            sz = CompileExpr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
-            assert sz == 8, "Expression should be a reference"
-            cmpl_obj.memory.extend([
-                BC_LOAD, BCR_TOS | BCR_SZ_8])
-            if expr.type_id != BINARY_ASSGN:
-                cmpl_obj.memory.extend([
-                    BC_LOAD, BCR_TOS | BCR_SZ_8,
-                    BC_LOAD, BCR_ABS_S8 | BCR_SZ_8
-                ])
-            sz = CompileExpr(cmpl_obj, expr.b, context, cmpl_data, None, temp_links)
-            if expr.type_id != BINARY_ASSGN:
-                op_code = {
-                    BINARY_ASSGN_MINUS: BC_SUB8,
-                    BINARY_ASSGN_PLUS: BC_ADD8
-                }[expr.type_id]
-                EmitLoadIConst(cmpl_obj.memory, inc_by, False, 3)
-                cmpl_obj.memory.extend([
-                    BC_MUL8,
-                    op_code
-                ])
-            cmpl_obj.memory.extend([
-                BC_SWAP, BCS_SZ8_B | BCS_SZ8_A,
-                BC_STOR, BCR_ABS_S8 | BCR_SZ_8
-            ])
-        else:
-            sz = CompileExpr(cmpl_obj, expr.a, context, cmpl_data, typ, temp_links)
-            assert sz == 8, "Expression should be a pointer"
-            sz1 = CompileExpr(cmpl_obj, expr.b, context, cmpl_data, None, temp_links)
-            assert sz1 == 8, "right expression should be pointer or sizel"
-            if expr.type_id == BINARY_PLUS:
-                if inc_by != 1:
-                    EmitLoadIConst(cmpl_obj.memory, inc_by, False, 3)
-                    cmpl_obj.memory.extend([
-                        BC_MUL8, BC_ADD8
-                    ])
-                else:
-                    cmpl_obj.memory.extend([
-                        BC_ADD8
-                    ])
-            elif expr.type_id == BINARY_MINUS:
-                if expr.op_fn_data == 0:  # using SizeL type like BINARY_PLUS
-                    if inc_by != 1:
-                        EmitLoadIConst(cmpl_obj.memory, inc_by, False, 3)
-                        cmpl_obj.memory.extend([
-                            BC_MUL8, BC_SUB8
-                        ])
-                    else:
-                        cmpl_obj.memory.extend([
-                            BC_SUB8
-                        ])
-                else:
-                    assert expr.op_fn_data == 1, "op_fn_data must be 0 or 1 for pointer BINARY_MINUS: got " + repr(
-                        expr.op_fn_data)
-                    cmpl_obj.memory.extend([
-                        BC_SUB8,
-                    ])
-                    if inc_by != 1:
-                        EmitLoadIConst(cmpl_obj.memory, inc_by, True, 3)
-                        cmpl_obj.memory.extend([
-                            BC_DIV8S])
-        return sz, ResType'''
     sz1 = 0
     if expr.type_id in ASSIGNMENT_OPS:
         sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
@@ -6792,6 +6729,8 @@ def flatify_dep_desc(dep_dct, start_k):
         rtn |= set_get
         set_next = set()
         for k in set_get:
+            if k not in dep_dct:
+                raise KeyError("Unresolved External Symbol: " + k)
             set_next.update(dep_dct[k])
         set_next -= rtn
     return rtn
