@@ -930,6 +930,16 @@ def disassembly_lst_lines(memory, start, end, named_indices):
             sz_cls_res = (typ0 & BCRE_RES_SZ_MASK) >> 3
             sz_cls_rst_sp = (typ0 & BCRE_RST_SP_SZ_MASK) >> 5
             s = "RET_E-RES_SZ%u|RST_SP_SZ%u" % (1 << sz_cls_res, 1 << sz_cls_rst_sp)
+        elif byt == BC_CALL_E:
+            c += 1
+            typ0 = memory[c]
+            if typ0 & BCCE_SYSCALL:
+                sysn_sz_cls = typ0 >> 5
+                s = "CALL_E-SYSCALL|S_SYSN_%u" % (1 << sysn_sz_cls)
+            elif typ0 & BCCE_N_REL:
+                s = "CALL_E-N_REL"
+            else:
+                s = "CALL_E-1x0"
         elif byt == BC_SYSRET:
             raise ValueError("Unrecognized ByteCode at c = %u: BC_SYSRET" % c)
         else:
@@ -1412,7 +1422,7 @@ def assemble(cmpl_unit, rel_bp_names, str_asm):
                         else:
                             cur_def_code_type = "BCR"
                     if byts is None:
-                        raise SyntaxError("No byts gotten")
+                        raise SyntaxError("No bytes gotten")
                     else:
                         cmpl_unit.memory.extend(byts)
                     cur_part = cur_part[end:]
