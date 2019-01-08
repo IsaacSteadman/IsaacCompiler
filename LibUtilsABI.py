@@ -300,28 +300,64 @@ RET
 # declared as `int print(const char *str);`
 print_fn = lib_utils_abi.spawn_compile_object(CMPL_T_FUNCTION, "?FPCczprint")
 assemble(print_fn, {"res": (0x18, 4), "str": (0x10, 8)}, """\
+8d0
+
+8d0
+8d0
+8d0
 @str
-1x09
-INT-1x(21)
-1d9
+8x21
+gRa*?Fyyyyyzsyscall
+CALL
+1d40
 RST_SP1
-4d0
+
 lRa*res
 STOR-ABS_S8|SZ_4
+
 RET
 """)
+# assemble(print_fn, {"res": (0x18, 4), "str": (0x10, 8)}, """\
+# @str
+# 1x09
+# INT-1x(21)
+# 1d9
+# RST_SP1
+# 4d0
+# lRa*res
+# STOR-ABS_S8|SZ_4
+# RET
+# """)
 # declared as `double pow(double base, int exponent);`
-pow_fn = lib_utils_abi.spawn_compile_object(CMPL_T_FUNCTION, "?Fdizpow")
-assemble(pow_fn, {"base": (0x10, 8), "exponent": (0x18, 4), "res": (0x1C, 8)}, """\
-8d0
-@base
-@exponent
-1x0
-INT-1x(29)
-1d13
-RST_SP1
+# pow_fn = lib_utils_abi.spawn_compile_object(CMPL_T_FUNCTION, "?Fdizpow")
+# assemble(pow_fn, {"base": (0x10, 8), "exponent": (0x18, 4), "res": (0x1C, 8)}, """\
+# 8d0
+# @base
+# @exponent
+# 1x0
+# INT-1x(29)
+# 1d13
+# RST_SP1
+# lRa*res
+# STOR-ABS_S8|SZ_8
+# RET
+# """)
+# draw_fn = lib_utils_abi.spawn_compile_object(CMPL_T_FUNCTION, "")
+# declared as `unsigned long long syscall(unsigned long long sys_n, unsigned long long arg0, unsigned long long arg1, unsigned long long arg2, unsigned long long arg3)`
+syscall_fn = lib_utils_abi.spawn_compile_object(CMPL_T_FUNCTION, "?Fyyyyyzsyscall")
+assemble(syscall_fn, {"sys_n": (0x10, 8), "arg0": (0x18, 8), "arg1": (0x20, 8), "arg2": (0x28, 8), "arg3": (0x30, 8), "res": (0x38, 8)}, """\
+@arg3
+@arg2
+@arg1
+@arg0
+8d32
+INT-1x(21)
+@sys_n
+CALL_E-SYSCALL|S_SYSN_SZ8
+8d8
+SUB8
+RST_SP8
 lRa*res
 STOR-ABS_S8|SZ_8
 RET
 """)
-# draw_fn = lib_utils_abi.spawn_compile_object(CMPL_T_FUNCTION, "")
