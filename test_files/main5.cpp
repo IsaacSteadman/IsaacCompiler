@@ -1,22 +1,23 @@
 
+typedef unsigned long long size_t
 
 struct FreeRegion {
-    unsigned long long start;
-    unsigned long long end;
+    size_t start;
+    size_t end;
 };
-const unsigned long long sizeof_FreeRegion = 16;
+const size_t sizeof_FreeRegion = 16;
 
 
 struct IdAllocator {
     FreeRegion *lst_free;
-    unsigned long long n_free_entries;
+    size_t n_free_entries;
 };
 
 
-unsigned long long reserve_region(IdAllocator *allocation, unsigned long long size) {
+size_t reserve_region(IdAllocator *allocation, size_t size) {
     FreeRegion *lst_free = allocation->lst_free;
     FreeRegion *end_free = lst_free + allocation->n_free_entries;
-    unsigned long long rtn;
+    size_t rtn;
     for (;lst_free < end_free; ++lst_free) {
         rtn = lst_free->start;
         if (lst_free->end - rtn >= size) {
@@ -36,13 +37,13 @@ unsigned long long reserve_region(IdAllocator *allocation, unsigned long long si
 }
 
 
-bool try_expand_region(IdAllocator *allocation, unsigned long long start, unsigned long long old_size, unsigned long long new_size) {
+bool try_expand_region(IdAllocator *allocation, size_t start, size_t old_size, size_t new_size) {
     FreeRegion *lst_free = allocation->lst_free;
     FreeRegion *end_free = lst_free + allocation->n_free_entries;
-    unsigned long long old_end = start + old_size;
-    unsigned long long new_end = start + new_size;
+    size_t old_end = start + old_size;
+    size_t new_end = start + new_size;
     for (;lst_free < end_free; ++lst_free) {
-        unsigned long long rtn = lst_free->start;
+        size_t rtn = lst_free->start;
         if (rtn > start) {
             // usually the case is lst_free->start == old_end
             if (lst_free->start <= old_end & lst_free->end >= new_end) {
@@ -64,14 +65,14 @@ bool try_expand_region(IdAllocator *allocation, unsigned long long start, unsign
 
 
 int free(void *data);
-void *malloc(unsigned long long size);
-bool try_realloc(void *data, unsigned long long size);
+void *malloc(size_t size);
+bool try_realloc(void *data, size_t size);
 
 
-int release_region(IdAllocator *allocation, unsigned long long start, unsigned long long size) {
+int release_region(IdAllocator *allocation, size_t start, size_t size) {
     FreeRegion *lst_free = allocation->lst_free;
     FreeRegion *end_free = lst_free + allocation->n_free_entries;
-    unsigned long long end = start + size;
+    size_t end = start + size;
     for (;lst_free < end_free; ++lst_free) {
         if (lst_free->start == end) {
             lst_free->start = start; // no need to create a new FreeRegion
@@ -85,10 +86,10 @@ int release_region(IdAllocator *allocation, unsigned long long start, unsigned l
     }
 
     // note: this assumes that malloc includes allocation size before the block of memory that is allocated
-    unsigned long long n_ent_alloc = *((unsigned long long *)allocation->lst_free - 1) / sizeof_FreeRegion;
+    size_t n_ent_alloc = *((size_t *)allocation->lst_free - 1) / sizeof_FreeRegion;
     FreeRegion *lst_free_to_free = (FreeRegion *)0;
     if (allocation->n_free_entries >= n_ent_alloc) {
-        unsigned long long new_n_bytes_alloc = (n_ent_alloc << 1) * sizeof_FreeRegion;
+        size_t new_n_bytes_alloc = (n_ent_alloc << 1) * sizeof_FreeRegion;
         if (try_realloc(allocation->lst_free, )) {
             n_ent_alloc <<= 1;
         } else {
@@ -130,29 +131,29 @@ int release_region(IdAllocator *allocation, unsigned long long start, unsigned l
 
 
 IdAllocator MallocData;
-void *malloc(unsigned long long size) {
-    unsigned long long rtn = reserve_region(&MallocData, size + 8);
-    *(unsigned long long *) rtn = size;
+void *malloc(size_t size) {
+    size_t rtn = reserve_region(&MallocData, size + 8);
+    *(size_t *) rtn = size;
     return (void *)(rtn + 8);
 }
-bool try_realloc(void *data, unsigned long long size) {
-    unsigned long long old_size = *((unsigned long long *)data - 1) + 8;
-    bool rtn = try_expand_region(&MallocData, (unsigned long long)data - 8, old_size, size + 8)
+bool try_realloc(void *data, size_t size) {
+    size_t old_size = *((size_t *)data - 1) + 8;
+    bool rtn = try_expand_region(&MallocData, (size_t )data - 8, old_size, size + 8)
     if (rtn) {
-        *((unsigned long long *)data - 1) = size;
+        *((size_t *)data - 1) = size;
     }
     return rtn;
 }
 int free(void *data) {
-    return release_region(&MallocData, (unsigned long long)data - 8, *((unsigned long long *) data - 1) + 8);
+    return release_region(&MallocData, (size_t )data - 8, *((size_t *) data - 1) + 8);
 }
 
 
 int main(int argc, char **argv) {
     {
-        unsigned long long start = (unsigned long long)@(environ::heap_start);
-        unsigned long long end = (unsigned long long)@(environ::heap_end);
-        *(unsigned long long *)start = sizeof_FreeRegion * 16;
+        size_t start = (size_t )@(environ::heap_start);
+        size_t end = (size_t )@(environ::heap_end);
+        *(size_t *)start = sizeof_FreeRegion * 16;
         FreeRegion *lst_free = (FreeRegion *)(start + 8);
         lst_free->start = start + 8 + sizeof_FreeRegion * 16;
         lst_free->end = end;

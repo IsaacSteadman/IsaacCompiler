@@ -88,8 +88,11 @@ if __name__ == "__main__" and run_opt == 5:
     # "/floats_and_ints.cpp"
     # "/main_ns_typedefs.cpp"
     # "/test_print.cpp"
+    # "/floats_with_classes.cpp"
+    # "/test_bug_rsh.cpp"
+    # "/floats_with_classes.cpp"
 
-    with open(test_files_dir + "/floats_with_classes.cpp", "r") as fl:
+    with open(test_files_dir + "/pygame_test.cpp", "r") as fl:
         tokens = get_list_tokens(fl)
     # print tokens
     link_opts = LinkerOptions(LNK_OPT_ALL, 4096, lib_utils_abi.objects, LNK_RUN_STANDALONE)

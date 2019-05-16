@@ -450,6 +450,7 @@ class SingleVarDecl(PrettyRepr):
         self.var_name = var_name
         self.op_fn_type = OP_TYP_FUNCTION
         self.op_fn_data = None
+        # TODO: add support for curly initialization (arrays and structs)
         if type_name.type_class_id in [TYP_CLS_QUAL, TYP_CLS_PRIM]:
             fn_types = type_name.get_ctor_fn_types()
             if len(fn_types):
@@ -1084,7 +1085,7 @@ class PrimitiveType(BaseType):
         return lst
 
     def pretty_repr(self):
-        return ["PrimitiveType", ".", "FromTypeCode", "("] + [
+        return ["PrimitiveType", ".", "from_type_code", "("] + [
             LST_TYPE_CODES[self.typ],
             ",",
             "0" if SIZE_SIGN_MAP[self.typ][1] == self.sign else ("-1" if self.sign else "1"),
@@ -1625,7 +1626,7 @@ class QualType(BaseType):
                 if from_vt.qual_id == QualType.QUAL_PTR:
                     return compile_expr(cmpl_obj, expr, context, cmpl_data, from_vt, temp_links)
                 elif from_vt.qual_id == QualType.QUAL_ARR:
-                    # TODO: maybe TypeCoerce = from_type (the reference)
+                    # TODO: maybe type_coerce = from_type (the reference)
                     return compile_expr(cmpl_obj, expr, context, cmpl_data, self, temp_links)
                 elif from_type.qual_id == QualType.QUAL_REF and is_fn_type(from_vt):
                     # assert CompareNoCVR(from_type.tgt_type, self.tgt_type)
@@ -1925,6 +1926,8 @@ def get_base_type(tokens, c, end, context):
         base_type = PrimitiveType.from_str_name(str_name[:c0])
         # assert c0 == len(str_name), "expected c0 = len(str_name), c0=%u, str_name=%r" % (c0, str_name)
         str_name = str_name[c0:]
+    if base_type is None:
+        print("BASE_TYPE NONE:", tokens[c - 2])
     assert isinstance(base_type, BaseType), "type = %s" % base_type.__class__.__name__
     for s in str_name:
         base_type = QualType(QualType.QUAL_Dct[s], base_type)
@@ -2042,6 +2045,12 @@ def proc_typed_decl(tokens, c, end, context, base_type=None):
                 ext_inf = []
                 c += 1
                 n_start = c
+                if tokens[c].str == ")":
+                    lvl = 0
+                    c += 1
+                elif tokens[c].str == "void" and tokens[c + 1].str == ")":
+                    lvl = 0
+                    c += 2
                 while c < end and lvl > 0:
                     if tokens[c].str in OPEN_GROUPS:
                         lvl += 1
@@ -2216,16 +2225,19 @@ class CurlyExpr(BaseExpr):
                 lvl -= 1
             elif s == ",":
                 comma_count += 1
+            c += 1
         self.lst_expr = [None] * (comma_count + 1)
         n_expr = 0
         end_t = c
         end_p = end_t - 1
-        c = start
+        c = start + 1
         while c < end_p and n_expr < len(self.lst_expr):
             self.lst_expr[n_expr], c = get_expr(tokens, c, ",", end_p, context)
             n_expr += 1
             c += 1
-        assert c == end_t, "You need to verify this code"
+        for i in range(c - 5, c + 5):
+            print("%03u: %s" % (i, tokens[i].str))
+        assert c == end_t, "You need to verify this code, c = %u, end_t = %u" % (c, end_t)
         return c
 
 
@@ -3421,7 +3433,18 @@ class CastOpPart(BaseOpPart):
         res = get_standard_conv_expr(operands[0], self.type_name)
         if res is not None:
             return CastOpExpr(self.type_name, res[0])
-        raise TypeError("Could not cast")
+        else:
+            # TODO: may cause issues
+            print("WARN: cast from (%s) to (%s) is not going through standard_conv_expr" % (
+                get_user_str_from_type(operands[0].t_anot),
+                get_user_str_from_type(self.type_name)
+            ))
+            pt, vt, is_ref = get_tgt_ref_type(operands[0].t_anot)
+            res = operands[0]
+            if is_ref:
+                res = CastOpExpr(vt, res)
+            return CastOpExpr(self.type_name, res)
+        # raise TypeError("Could not cast")
 
 
 class ParenthOpPart(BaseOpPart):
@@ -5780,11 +5803,14 @@ def try_catch_wrapper_co_expr(fn):
             return fn(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_links)
         except Exception as exc:
             del exc
-            print("%s: cmpl_obj = %r, expr = %r, context = %r, cmpl_data = %r, TypeCoerce = %r, temp_links = %r" % (
+            print("%s: cmpl_obj = %r, expr = %r, context = %r, cmpl_data = %r, type_coerce = %r, temp_links = %r" % (
                 fn.__name__, cmpl_obj, expr, context, cmpl_data, type_coerce, temp_links))
             raise
     new_fn.__name__ = new_fn.__name__ = fn.__name__ + "__wrapped"
     return new_fn
+
+
+parsing_vars = {}
 
 
 def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_links, res_type):
@@ -5843,14 +5869,33 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
                 BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)
             ])
             sz1 += sz_type
-        assert compare_no_cvr(expr.b.t_anot, typ), "expr.b.t_anot = %s, typ = %s" % (
-            get_user_str_from_type(expr.b.t_anot), get_user_str_from_type(typ))
-        sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, typ, temp_links)
+        try:
+            if expr.type_id not in [BINARY_ASSGN_LSHIFT, BINARY_ASSGN_RSHIFT]:
+                assert compare_no_cvr(expr.b.t_anot, typ), "expr.b.t_anot = %s, typ = %s, expr = %s" % (
+                    get_user_str_from_type(expr.b.t_anot), get_user_str_from_type(typ),
+                    format_pretty(expr)
+                )
+            else:
+                assert compare_no_cvr(expr.b.t_anot, PrimitiveType.from_type_code(INT_C, 1)), "expr.b.t_anot = %s, typ = %s, expr = %s" % (
+                    get_user_str_from_type(expr.b.t_anot), get_user_str_from_type(typ),
+                    format_pretty(expr)
+                )
+        except:
+            parsing_vars["expr"] = expr
+            parsing_vars["context"] = context
+            parsing_vars["cmpl_obj"] = cmpl_obj
+            raise
+        sz_type1 = sz_type
+        if expr.type_id in [BINARY_ASSGN_LSHIFT, BINARY_ASSGN_RSHIFT]:
+            sz_type1 = 1
+            sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, PrimitiveType.from_type_code(INT_C, 1), temp_links)
+        else:
+            sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, typ, temp_links)
         if inc_by != 1 and inc_by_before:
             emit_load_i_const(cmpl_obj.memory, inc_by, is_sign, sz_cls)
             cmpl_obj.memory.extend([BC_MUL1 + 2 * sz_cls + int(is_sign)])
         sz1 += sz
-        assert sz_type == sz, "sz_type = %u, sz = %u; expr.b.t_anot = %s, typ = %s, expr.b = %r" % (
+        assert sz_type1 == sz, "sz_type1 = %u, sz = %u; expr.b.t_anot = %s, typ = %s, expr.b = %r" % (
             sz_type, sz, get_user_str_from_type(expr.b.t_anot), get_user_str_from_type(typ), expr.b)
         if expr.type_id != BINARY_ASSGN:
             op_code_u, op_code_s, op_code_f = {
@@ -5876,7 +5921,7 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
             if op_code == BC_NOP:
                 raise ValueError("Unsupported operator %s" % LST_BIN_OP_ID_MAP[expr.type_id])
             cmpl_obj.memory.append(op_code)
-            sz1 -= sz_type
+            sz1 -= sz_type1
         cmpl_obj.memory.extend([
             BC_SWAP, (sz_cls << 3) | BCS_SZ8_A,
             BC_STOR, BCR_ABS_S8 | (sz_cls << 5)
@@ -5891,11 +5936,15 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
         sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
         assert sz == sz_type, "Expected typ = %r, expr.a.t_anot = %r, expr.a = %r, got sz = %u" % (
             typ, expr.a.t_anot, expr.a, sz)
+        sz_type1 = sz_type
+        if expr.type_id in [BINARY_LSHIFT, BINARY_RSHIFT]:
+            sz_type1 = 1
         sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, None, temp_links)
         if inc_by != 1 and inc_by_before:
             emit_load_i_const(cmpl_obj.memory, inc_by, is_sign, sz_cls)
             cmpl_obj.memory.extend([BC_MUL1 + 2 * sz_cls + int(is_sign)])
-        assert sz == sz_type
+        assert sz == sz_type1, "sz = %u, sz_type1 = %u" % (sz, sz_type1)
+        sz = sz_type
         op_code_u, op_code_s, op_code_f = {
             BINARY_MOD: (BC_MOD1, BC_MOD1S, BC_FMOD_2),
             BINARY_DIV: (BC_DIV1, BC_DIV1S, BC_FDIV_2),
@@ -5942,6 +5991,20 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
     return sz, res_type
 
 
+class Counter(object):
+
+    def __init__(self):
+        self.count = 0
+
+    def __call__(self):
+        count = self.count
+        self.count = count + 1
+        return count
+
+
+my_counter = Counter()
+
+
 @try_catch_wrapper_co_expr
 def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp_links=None):
     """
@@ -5960,6 +6023,9 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
         temp_links = setup_temp_links(cmpl_obj, expr, context, cmpl_data)
     sz = 0 if expr.t_anot is None else size_of(expr.t_anot)
     res_type = expr.t_anot
+    # count = my_counter()
+    # print("compile_expr: %u\n expr = \n  " % count + format_pretty(expr).replace("\n", "\n  "))
+    # print("\n res_type = \n  " + format_pretty(res_type).replace("\n", "\n  "))
     assert isinstance(res_type, BaseType)
     if expr.expr_id == EXPR_LITERAL:
         assert isinstance(expr, LiteralExpr)
@@ -6032,7 +6098,7 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
                     sz = 8
                     res_type = prim_type
                 else:
-                    raise TypeError("Unsupported TypeCoerce = %s" % get_user_str_from_type(type_coerce))
+                    raise TypeError("Unsupported type_coerce = %s" % get_user_str_from_type(type_coerce))
             else:
                 raise TypeError("Unknown annotated type: %r" % expr.t_anot)
     elif expr.expr_id == EXPR_PARENTH:
@@ -6174,7 +6240,7 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
                     lnk.emit_load(cmpl_obj.memory, sz, cmpl_obj, byte_copy_cmpl_intrinsic)
                 else:
                     raise TypeError(
-                        "Expected TypeCoerce to be reference or value type: TypeCoerce = %r, val_type = %r" % (
+                        "Expected type_coerce to be reference or value type: type_coerce = %r, val_type = %r" % (
                             type_coerce, val_type
                         )
                     )
@@ -6310,8 +6376,12 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
         # res_type = Void_T
         sz = 0
     elif type_coerce is not None and not compare_no_cvr(res_type, type_coerce):
-        raise TypeError("The Expression result type is %s and cannot coerce to %s; expr = %r" % (
-            get_user_str_from_type(res_type), get_user_str_from_type(type_coerce), expr))
+        parsing_vars["expr"] = expr
+        parsing_vars["type_coerce"] = type_coerce
+        parsing_vars["res_type"] = res_type
+        # print("compile_expr(%u):\n  res_type = %s" % (count, format_pretty(res_type)))
+        raise TypeError("The Expression result type is %s and cannot coerce to %s; expr = %r, sz = %d" % (
+            get_user_str_from_type(res_type), get_user_str_from_type(type_coerce), expr, sz))
     return sz
 
 

@@ -1,9 +1,11 @@
 int print(const char *str);
-void *memset(void *ptr, unsigned char value, unsigned long long num);
-void *memmove(void *dest, void *src, unsigned long long num);
-void *memcpy(void *dest, const void *src, unsigned long long size);
+// void *memset(void *ptr, unsigned char value, unsigned long long num);
+// void *memmove(void *dest, void *src, unsigned long long num);
+// void *memcpy(void *dest, const void *src, unsigned long long size);
 typedef unsigned long long size_t;
 typedef signed long long ptrdiff_t;
+size_t syscall(size_t sys_n, size_t arg0, size_t arg1, size_t arg2, size_t arg3);
+
 // int memcmp ( const void * ptr1, const void * ptr2, size_t num );
 // double pow(double base, int exponent); // no longer imported
 double pow(double base, int exponent) {
@@ -19,8 +21,8 @@ double pow(double base, int exponent) {
             rtn *= tmp;
         }
         tmp *= tmp;
-        exp /= 2;
-        // exp = exp >> 1;
+        // exp /= 2; // TODO: fix pickyness of which operator is used DONE
+        exp = exp >> 1;
         // exp >>= 1;
     }
     return rtn;
@@ -141,7 +143,7 @@ struct HelloStruct {
         this->y = in_y;
         this->z = in_z;
     }*/
-}
+};
 
 // driver program to test above funtion
 int main(int argc, char **argv)
@@ -171,6 +173,10 @@ int main(int argc, char **argv)
     double n3 = zzyz.z;
     dtoa(n3, res, 17);
     print("\nzzyz.z = ");
+    print(res);
+    print("\n");
+    ptrdiff_t res1 = (ptrdiff_t)syscall(0x01, 1, 2, 3, 4);
+    longlongToStr(res1, res, 39);
     print(res);
     print("\n");
     return 0;
