@@ -2317,7 +2317,8 @@ class LiteralExpr(BaseExpr):
     LIT_FLOAT = 1
     LIT_CHR = 2
     LIT_STR = 3
-    LIT_lst = ["LIT_INT", "LIT_FLOAT", "LIT_CHR", "LIT_STR"]
+    LIT_BOOL = 4
+    LIT_lst = ["LIT_INT", "LIT_FLOAT", "LIT_CHR", "LIT_STR", "LIT_BOOL"]
 
     @classmethod
     def parse_char_part(cls, c, v_lit, uni_spec=0, backslash_strict=True):
@@ -2573,6 +2574,17 @@ class LiteralExpr(BaseExpr):
                 QualType(QualType.QUAL_CONST, ch_type),
                 len(lst_vals) + 1  # plus 1 for null terminator
             ))
+        elif tokens[c].type_id == CLS_NAME:
+            self.t_lit = LiteralExpr.LIT_BOOL
+            if s == "true":
+                self.l_val = True
+            elif s == "false":
+                self.l_val = False
+            else:
+                raise ParsingError(
+                    tokens, c,
+                    "Expected a boolean literal (true or false)"
+                )
         self.v_lit = s
         c += 1
         return c
@@ -5339,7 +5351,7 @@ def my_get_expr_part(tokens, c, end, context):
     :rtype: (BaseOpPart, int)
     """
     s = tokens[c].str
-    if tokens[c].type_id in LITERAL_TYPES:
+    if tokens[c].type_id in LITERAL_TYPES or (tokens[c].type_id == CLS_NAME and (s == "true" or s == "false")):
         rtn = LiteralExpr()
         c = rtn.build(tokens, c, end, context)
         return ExprOpPart(rtn), c
