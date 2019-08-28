@@ -91,6 +91,7 @@ if __name__ == "__main__" and run_opt == 5:
     # "/floats_with_classes.cpp"
     # "/test_bug_rsh.cpp"
     # "/floats_with_classes.cpp"
+    # "/OS/memory/virt_mem.c"
 
     with open(test_files_dir + "/pygame_test.cpp", "r") as fl:
         tokens = get_list_tokens(fl)
@@ -107,9 +108,12 @@ if __name__ == "__main__" and run_opt == 5:
     print("END CODEGEN RESULTS")
     print("code_segment_end, data_segment_start = %u, %u" % (CmplObj.code_segment_end, CmplObj.data_segment_start))
     print("len(CmplObj.memory) = %u" % len(CmplObj.memory))
-    vm = VM()
+    vm = VM(65536)
+    vm.dbg_walk_page = False
     print("INIT_STATE: ip = %u, bp = %u, sp = %u, len(memory) = %u" % (
         vm.ip, vm.bp, vm.sp, len(vm.memory)))
+    vm_alloc = PageAllocator(len(vm.memory) >> 12)
+    enable_virt_mem(vm, vm_alloc, vm.priv_lvl, 0, CmplObj.data_segment_start, CmplObj.data_segment_start, None)
     vm.load_program(CmplObj.memory, 0)
     EndProg = len(CmplObj.memory)
     CmdArgs = ["Hello.exe"]

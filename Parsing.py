@@ -2125,6 +2125,56 @@ def proc_typed_decl(tokens, c, end, context, base_type=None):
 # TODO:     Figure out that 'Pt a = {0, 12};' is a declaration
 
 
+class AsmStmnt(BaseStmnt):
+    stmnt_type = STMNT_ASM
+
+    def __init__(self, inner_asm=None):
+        """
+        :param list[str] inner_asm:
+        """
+        self.inner_asm = [] if inner_asm is None else inner_asm
+        self.condition = None
+
+    def build(self, tokens, c, end, context):
+        """
+        :param list[ParseClass] tokens:
+        :param int c:
+        :param int end:
+        :param CompileContext context:
+        :rtype: int
+        """
+        assert tokens[c].str == "asm"
+        c += 1
+        if tokens[c].str == "(":
+            self.condition = {}
+            c += 1
+            while tokens[c].str != ")":
+                tok_key = tokens[c]
+                tok_eq = tokens[c + 1]
+                tok_val = tokens[c + 2]
+                assert tok_key.type_id == CLS_NAME and tok_eq.str == "=" and LiteralExpr.is_literal_token(tok_val), "expected syntax <name>=<literal>\n got %r, %r, %r" % (tok_key, tok_eq, tok_val)
+                self.condition[tok_key.str] = LiteralExpr.literal_to_value(tok_val)
+                c += 3
+                if tokens[c].str == ",":
+                    c += 1
+            c += 1
+        print(self.condition)
+        assert tokens[c].str == "{", tokens[c].str
+        c += 1
+        while c < end:
+            assert tokens[c].type_id == CLS_DBL_QUOTE, tokens[c]
+            self.inner_asm.append(LiteralExpr.literal_to_value(tokens[c]))
+            c += 1
+            tok = tokens[c]
+            if tok.str == ",":
+                c += 1
+                continue
+            elif tok.str == "}":
+                c += 1
+                break
+        assert tokens[c - 1].str == "}", tokens[c-2:c+2]
+        return c
+
 @try_catch_wrapper0
 def get_stmnt(tokens, c, end, context):
     """
@@ -2181,6 +2231,9 @@ def get_stmnt(tokens, c, end, context):
         # print "Before c = %u, end = %u, STMNT_DECL" % (c, end)
         c = rtn.build(tokens, c, end, context)
         # print "After c = %u, end = %u, STMNT_DECL" % (c, end)
+    elif pos == STMNT_ASM:
+        rtn = AsmStmnt()
+        c = rtn.build(tokens, c, end, context)
     elif pos == STMNT_SEMI_COLON:
         # NOTE: Make sure that DeclStmnt would not work here
         rtn = SemiColonStmnt()
@@ -2321,6 +2374,61 @@ class LiteralExpr(BaseExpr):
     LIT_lst = ["LIT_INT", "LIT_FLOAT", "LIT_CHR", "LIT_STR", "LIT_BOOL"]
 
     @classmethod
+    def is_literal_token(cls, tok):
+        """
+        :param ParseClass tok:
+        :rtype: bool
+        """
+        return tok.type_id in LITERAL_TYPES or (tok.type_id == CLS_NAME and (tok.str == "true" or tok.str == "false"))
+
+    @classmethod
+    def literal_to_value(cls, tok):
+        """
+        :param ParseClass tok:
+        :rtype: str|int|float
+        """
+        s = tok.str
+        if tok.type_id == CLS_DBL_QUOTE:
+            vals, uni_spec = cls.parse_str_lit(s)
+            return "".join(map(chr, vals))
+        elif tok.type_id == CLS_UNI_QUOTE:
+            uni_spec = 0
+            if s.startswith("u"):
+                uni_spec = 2
+            elif s.startswith("U"):
+                uni_spec = 3
+            elif s.startswith("b"):
+                uni_spec = 1
+            elif not s.startswith("'"):
+                raise ValueError("Unrecognized literal prefix")
+            s_q = s.find('\'') + 1
+            e_q = s.rfind('\'')
+            lst_res, c1 = cls.parse_char_part(s_q, s, uni_spec)
+            if len(lst_res) != 1 or c1 < e_q:
+                raise ValueError("Expected only one char")
+            return lst_res[0]
+        elif tok.type_id == CLS_BIN_INT:
+            assert s.startswith("0b") or s.startswith("0B")
+            return int(s[2:], 2)
+        elif tok.type_id == CLS_DEC_INT:
+            return int(s)
+        elif tok.type_id == CLS_OCT_INT:
+            assert s.startswith("0o") or s.startswith("0O") or s.startswith("0")
+            return int(s[2:], 8)
+        elif tok.type_id == CLS_HEX_INT:
+            assert s.startswith("0x") or s.startswith("0X")
+            return int(s[2:], 16)
+        elif tok.type_id == CLS_FLOAT:
+            return float(s)
+        elif tok.type_id == CLS_NAME:
+            if s == "true":
+                return True
+            elif s == "false":
+                return False
+            else:
+                raise ValueError("Expected boolean")
+
+    @classmethod
     def parse_char_part(cls, c, v_lit, uni_spec=0, backslash_strict=True):
         if uni_spec == 0:
             uni_spec = 1
@@ -2429,9 +2537,9 @@ class LiteralExpr(BaseExpr):
     def build(self, tokens, c, end, context):
         del end
         del context
-        if tokens[c].type_id not in LITERAL_TYPES:
-            raise ParsingError(tokens, c, "Expected literal")
         s = tokens[c].str
+        if not self.is_literal_token(tokens[c]):
+            raise ParsingError(tokens, c, "Expected literal")
         if tokens[c].type_id in {CLS_DEC_INT, CLS_HEX_INT, CLS_BIN_INT, CLS_OCT_INT}:
             self.t_lit = LiteralExpr.LIT_INT
             end_pos = len(s)
@@ -2585,6 +2693,7 @@ class LiteralExpr(BaseExpr):
                     tokens, c,
                     "Expected a boolean literal (true or false)"
                 )
+            self.t_anot = PrimitiveType.from_type_code(TYP_BOOL)
         self.v_lit = s
         c += 1
         return c
@@ -3130,7 +3239,7 @@ class SpecialDotExpr(BaseExpr):
             return
         src_pt, src_vt, is_src_ref = get_tgt_ref_type(self.obj.t_anot)
         if src_vt.type_class_id not in [TYP_CLS_STRUCT, TYP_CLS_UNION, TYP_CLS_CLASS]:
-            raise TypeError("Cannot use '.' operator on non-class/struct/union types")
+            raise TypeError("Cannot use '.' operator on non-class/struct/union types, got src_vt = %s, obj = %s" % (get_user_str_from_type(src_vt), obj))
         assert isinstance(src_vt, (StructType, UnionType, ClassType))
         ctx_var = None
         if src_vt.type_class_id == TYP_CLS_UNION:
@@ -3174,6 +3283,7 @@ class CastOpExpr(BaseExpr):
         :param BaseExpr expr:
         :param int cast_type:
         """
+        assert expr.t_anot is not None, repr(expr)
         src_pt, src_vt, is_src_ref = get_tgt_ref_type(expr.t_anot)
         tgt_pt, tgt_vt, is_tgt_ref = get_tgt_ref_type(type_name)
         self.type_name = type_name
@@ -3842,7 +3952,8 @@ def get_user_def_conv_expr(expr, to_type):
             tgt_pt1 = tgt_pt.tgt_type
             if tgt_pt1.type_class_id in [TYP_CLS_CLASS, TYP_CLS_STRUCT, TYP_CLS_UNION]:
                 assert isinstance(tgt_pt1, (StructType, ClassType, UnionType))
-                raise NotImplementedError("Not Implemented")
+                if not compare_no_cvr(src_pt, tgt_pt):
+                    raise NotImplementedError("Not Implemented: %s -> %s" % (get_user_str_from_type(expr.t_anot), get_user_str_from_type(to_type)))
     elif src_pt.type_class_id == TYP_CLS_QUAL:
         assert isinstance(src_pt, QualType)
         if src_pt.qual_id == QualType.QUAL_REF:
@@ -4975,7 +5086,10 @@ class ClassType(CompileContext, BaseType):
 
 class StructType(CompileContext, BaseType):
     def to_user_str(self):
-        raise NotImplementedError("Not Implemented")
+        """
+        :rtype: str
+        """
+        return "struct " + self.name
 
     def get_ctor_fn_types(self):
         raise NotImplementedError("Not Implemented")
@@ -5351,7 +5465,7 @@ def my_get_expr_part(tokens, c, end, context):
     :rtype: (BaseOpPart, int)
     """
     s = tokens[c].str
-    if tokens[c].type_id in LITERAL_TYPES or (tokens[c].type_id == CLS_NAME and (s == "true" or s == "false")):
+    if LiteralExpr.is_literal_token(tokens[c]):
         rtn = LiteralExpr()
         c = rtn.build(tokens, c, end, context)
         return ExprOpPart(rtn), c
@@ -6478,6 +6592,7 @@ class LocalCompileData(object):
         self.bp_off = 0 if parent is None else parent.bp_off
         self.vars = []
         self.local_links = {}
+        self.sizes = {}
         self.parent = parent
         self.local_labels = {} if parent is None else parent.local_labels
         self.cur_breakable = None if parent is None else parent.cur_breakable
@@ -6626,6 +6741,22 @@ def compile_stmnt1(cmpl_obj, stmnt, context, cmpl_data=None):
         raise Exc.__class__(*(tuple(Exc.args) + ("In Statement at line:col = %u:%u" % stmnt.position,)))
 
 
+CURRENT_CMPL_CONDITIONS = {
+    "arch": "StackVM-64"
+}
+
+
+def get_vars_from_compile_data(cmpl_data):
+    """
+    :param LocalCompileData cmpl_data:
+    :rtype: list[(ContextVariable, LocalRef)]
+    """
+    if cmpl_data.parent is None:
+        return cmpl_data.vars
+    else:
+        return get_vars_from_compile_data(cmpl_data.parent) + cmpl_data.vars
+
+
 # NoLineColMsg
 def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
     """
@@ -6634,7 +6765,17 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
     :param CompileContext context:
     :param LocalCompileData|None cmpl_data:
     """
-    if stmnt.stmnt_type == STMNT_CURLY_STMNT:
+    if stmnt.stmnt_type == STMNT_ASM:
+        assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
+        assert isinstance(stmnt, AsmStmnt)
+        if stmnt.condition is None or stmnt.condition.get("arch", CURRENT_CMPL_CONDITIONS["arch"]) == CURRENT_CMPL_CONDITIONS["arch"]:
+            rel_bp_names = {}
+            for ctx_var, local_ref in get_vars_from_compile_data(cmpl_data):
+                rel_bp_names[ctx_var.get_link_name()] = (local_ref.rel_addr, local_ref.sz)
+            if stmnt.condition is not None and stmnt.condition.get("display_links", False):
+                print("Links for assembly named '%s' are as follows: %s" % (stmnt.condition.get("name", "<UNNAMED>"), format_pretty(rel_bp_names)))
+            assemble(cmpl_obj, rel_bp_names, "\n".join(stmnt.inner_asm))
+    elif stmnt.stmnt_type == STMNT_CURLY_STMNT:
         assert isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, CurlyStmnt)
         return compile_curly(cmpl_obj, stmnt, context, cmpl_data)
@@ -6764,8 +6905,9 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
     elif stmnt.stmnt_type == STMNT_SEMI_COLON:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, SemiColonStmnt)
-        sz = compile_expr(cmpl_obj, stmnt.expr, context, cmpl_data, void_t)
-        assert sz == 0
+        if stmnt.expr is not None:
+            sz = compile_expr(cmpl_obj, stmnt.expr, context, cmpl_data, void_t)
+            assert sz == 0
     elif stmnt.stmnt_type == STMNT_NAMESPACE:
         assert isinstance(stmnt, NamespaceStmnt)
         for inner_stmnt in stmnt.lst_stmnts:

@@ -74,9 +74,9 @@ KEYWORDS = {
     "struct", "class", "union", "enum", "typedef",
     "private", "public", "protected", "static",
     "inline", "extern", "using", "namespace", "operator",
-    "implicit", "explicit", "template", "typename"
+    "implicit", "explicit", "template", "typename", "asm"
     } | MODIFIERS | BASE_TYPE_MODS | INT_TYPES | SINGLE_TYPES
-LST_STMNT_NAMES = ["{", "if", "while", "for", "return", "break", "continue", "namespace", "typedef", "<DECL_STMNT>"]
+LST_STMNT_NAMES = ["{", "if", "while", "for", "return", "break", "continue", "namespace", "typedef", "<DECL_STMNT>", "asm"]
 STMNT_CURLY_STMNT = 0
 STMNT_IF = 1
 STMNT_WHILE = 2
@@ -87,7 +87,8 @@ STMNT_CONTINUE = 6
 STMNT_NAMESPACE = 7
 STMNT_TYPEDEF = 8
 STMNT_DECL = 9
-STMNT_SEMI_COLON = 10  # always at end ('expr;' expression)
+STMNT_ASM = 10
+STMNT_SEMI_COLON = len(LST_STMNT_NAMES)  # always at end ('expr;' expression)
 EXPR_LITERAL = 0
 EXPR_NAME = 1
 EXPR_BIN_OP = 2

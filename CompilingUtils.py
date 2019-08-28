@@ -862,6 +862,10 @@ def disassembly_lst_lines(memory, start, end, named_indices):
                 if data[-1] >= 0x80:
                     s += " signed = %i" % (num - (1 << (sz * 8)))
                 c += sz
+            elif typ1 == BCR_SYSREG:
+                data = memory[c + 1]
+                c += 1
+                s = "%s-SYSREG-%s" % ("LOAD" if byt == BC_LOAD else "STOR", LstStackVM_sysregs[data])
             else:
                 s = "%s-%s|SZ_%u" % (LstStackVM_Codes[byt], LstStackVM_BCR_Types[typ1], sz)
                 if typ1 == BCR_REG_BP:
@@ -1173,6 +1177,14 @@ def do_map_reduce_lookup_stack_vm(lookup, s):
 
 
 def parse_aux_codes(part, def_code_type, c=0):
+    """
+    :param str part:
+    :param str|None def_code_type:
+    :param int c:
+    :rtype: bytearray
+    """
+    # TODO: this may be extended in the future to support
+    # TODO:   arbitrary inline machine code with syntax like "(8d0)" for 8 BC_NOP instructions
     end = part.find("-", c)
     if end == -1:
         end = len(part)
@@ -1189,22 +1201,25 @@ def parse_aux_codes(part, def_code_type, c=0):
             raise SyntaxError("Expected ')' to terminate Auxiliary codes")
     rtn = bytearray()
     s = part[c:end]
-    first_try = None if parenth else StackVM_Codes.get(s, None)
-    if first_try is not None:
-        rtn.append(first_try)
+    last_instr = None if parenth else StackVM_Codes.get(s, None)
+    if last_instr is not None:
+        code_type = None
     elif code_type == "BCR":
-        rtn.append(do_map_reduce_lookup_stack_vm(StackVM_BCR_Codes, s))
+        last_instr = do_map_reduce_lookup_stack_vm(StackVM_BCR_Codes, s)
     elif code_type == "BCS":
-        rtn.append(do_map_reduce_lookup_stack_vm(StackVM_BCS_Codes, s))
+        last_instr = do_map_reduce_lookup_stack_vm(StackVM_BCS_Codes, s)
     elif code_type == "BCC":
-        rtn.append(do_map_reduce_lookup_stack_vm(StackVM_BCC_Codes, s))
+        last_instr = do_map_reduce_lookup_stack_vm(StackVM_BCC_Codes, s)
     elif code_type == "BCRE":
-        rtn.append(do_map_reduce_lookup_stack_vm(StackVM_BCRE_Codes, s))
+        last_instr = do_map_reduce_lookup_stack_vm(StackVM_BCRE_Codes, s)
     elif code_type == "BCCE":
-        rtn.append(do_map_reduce_lookup_stack_vm(StackVM_BCCE_Codes, s))
+        last_instr = do_map_reduce_lookup_stack_vm(StackVM_BCCE_Codes, s)
+    elif code_type == "SVSR":
+        last_instr = do_map_reduce_lookup_stack_vm(StackVM_SVSR_Codes, s)
     else:
         raise SyntaxError("Unrecognized code type: '%s'" % code_type)
-    return rtn, end + int(parenth), first_try
+    rtn.append(last_instr)
+    return rtn, end + int(parenth), last_instr, code_type
 
 
 def remove_comment_asm(line: str) -> str:
@@ -1217,7 +1232,7 @@ def remove_comment_asm(line: str) -> str:
 def assemble(cmpl_unit, rel_bp_names, str_asm):
     """
     :param BaseCmplObj cmpl_unit:
-    :param dict[str,(int, int)] rel_bp_names:
+    :param dict[str,(int, int)] rel_bp_names: a dictionary mapping variable names to 2-tuples of (base pointer offset, variable size)
     :param str str_asm:
     """
     lines = str_asm.split("\n")
@@ -1414,21 +1429,24 @@ def assemble(cmpl_unit, rel_bp_names, str_asm):
                         else:
                             byts = sz_cls_align_long(num, sign, sz_cls)
                     else:
-                        byts, end, last_instr = parse_aux_codes(cur_part, cur_def_code_type)
+                        byts, end, last_instr, prev_code_type = parse_aux_codes(cur_part, cur_def_code_type)
                         if last_instr is None:
                             cur_def_code_type = "BCR"
-                        elif last_instr == BC_LOAD:
-                            cur_def_code_type = "BCR"
-                        elif last_instr == BC_CONV:
-                            cur_def_code_type = "BCC"
-                        elif last_instr == BC_SWAP:
-                            cur_def_code_type = "BCS"
-                        elif last_instr == BC_RET_E:
-                            cur_def_code_type = "BCRE"
-                        elif last_instr == BC_CALL_E:
-                            cur_def_code_type = "BCCE"
-                        else:
-                            cur_def_code_type = "BCR"
+                        elif prev_code_type is None:
+                            if last_instr == BC_LOAD:
+                                cur_def_code_type = "BCR"
+                            elif last_instr == BC_CONV:
+                                cur_def_code_type = "BCC"
+                            elif last_instr == BC_SWAP:
+                                cur_def_code_type = "BCS"
+                            elif last_instr == BC_RET_E:
+                                cur_def_code_type = "BCRE"
+                            elif last_instr == BC_CALL_E:
+                                cur_def_code_type = "BCCE"
+                            else:
+                                cur_def_code_type = "BCR"
+                        elif prev_code_type == "BCR" and last_instr & BCR_TYP_MASK == BCR_SYSREG:
+                            cur_def_code_type = "SVSR"
                     if byts is None:
                         raise SyntaxError("No bytes gotten")
                     else:
