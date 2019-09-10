@@ -1,6 +1,11 @@
+import sys
+import os
+sys.path[:0] = map(lambda x: os.path.join(os.path.dirname(__file__), x), [
+    "PyIsaacUtils",
+    "StackVM"
+])
 from Parsing import *
 import time
-import sys
 from LibUtilsABI import lib_utils_abi
 
 

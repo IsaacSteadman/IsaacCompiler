@@ -1,0 +1,6 @@
+[submodule "PyIsaacUtils"]
+	path = PyIsaacUtils
+	url = git@github.com-IsaacSteadman:IsaacSteadman/PyIsaacUtils.git
+[submodule "StackVM"]
+	path = StackVM
+	url = git@github.com-IsaacSteadman:IsaacSteadman/StackVM.git
