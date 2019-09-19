@@ -1,6 +1,10 @@
 import sys
 import os
-sys.path[:0] = map(lambda x: os.path.join(os.path.dirname(__file__), x), [
+try:
+    base_dir = os.path.dirname(__file__)
+except NameError:
+    base_dir = os.getcwd()
+sys.path[:0] = map(lambda x: os.path.join(base_dir, x), [
     "PyIsaacUtils",
     "StackVM"
 ])
