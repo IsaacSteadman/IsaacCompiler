@@ -1006,7 +1006,25 @@ class Debugger(object):
         self.code_start = code_start
         self.code_end = code_end
         self.vm_inst = vm_inst
-        self.lst_code = disassembly_lst_lines(vm_inst.memory, code_start, code_end, named_indices)
+        self.ip_offset = 0
+        if vm_inst.virt_mem_mode == VM_DISABLED:
+            memory = vm_inst.memory
+        elif vm_inst.virt_mem_mode == VM_4_LVL_9_BIT:
+            memory = bytearray(code_end - code_start)
+            assert code_start & 0xFFF == 0, "code must start at page boundary"
+            part_pg_code_end = (code_end | 0xFFF) ^ 0xFFF
+            if part_pg_code_end == code_end:
+                full_pg_code_end = part_pg_code_end
+            else:
+                full_pg_code_end = part_pg_code_end + 0x1000
+            for addr in range(code_start, part_pg_code_end, 4096):
+                mv = vm_inst.get_mv_as_priv(vm_inst.priv_lvl, 4096, addr, MRQ_DONT_CHECK)
+                memory[addr: addr + 4096] = mv
+            memory[part_pg_code_end: code_end] = vm_inst.get_mv_as_priv(
+                vm_inst.priv_lvl, code_end - part_pg_code_end, part_pg_code_end, MRQ_DONT_CHECK
+            )
+            self.ip_offset = code_start
+        self.lst_code = disassembly_lst_lines(memory, code_start, code_end, named_indices)
         self.cur_loc = len(self.lst_code)
         self.set_of_brks = set()
         self.calc_loc()
@@ -1019,6 +1037,7 @@ class Debugger(object):
         self.set_of_brks.add(addr)
 
     def calc_loc_from_ip(self, ip):
+        ip -= self.ip_offset
         # returns lvl = 1 for splitting loc - 1 and loc
         # returns lvl = 2 for greater than the address of the last LOC
         # returns lvl = 3 for
@@ -1037,6 +1056,7 @@ class Debugger(object):
 
     def calc_loc(self):
         ip = self.vm_inst.ip
+        ip -= self.ip_offset
         lst_code = self.lst_code
         begin, end = bisect_search_base(lst_code, ip, lst_code_key_fn)
         if begin == end:
