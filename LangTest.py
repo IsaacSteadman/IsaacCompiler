@@ -118,6 +118,8 @@ if __name__ == "__main__" and run_opt == 5:
     print("code_segment_end, data_segment_start = %u, %u" % (CmplObj.code_segment_end, CmplObj.data_segment_start))
     print("len(CmplObj.memory) = %u" % len(CmplObj.memory))
     vm = VM(65536)
+    # vm.watch_memory = 1
+    # vm.watch_points.append((MRQ_WRITE, 0x11))
     vm.dbg_walk_page = False
     print("INIT_STATE: ip = %u, bp = %u, sp = %u, len(memory) = %u" % (
         vm.ip, vm.bp, vm.sp, len(vm.memory)))
@@ -126,7 +128,7 @@ if __name__ == "__main__" and run_opt == 5:
     vm.load_program(CmplObj.memory, 0)
     EndProg = len(CmplObj.memory)
     CmdArgs = ["Hello.exe"]
-    vm.push(4, 0) # return value allocation
+    vm.push(4, 0)  # return value allocation
     add_cmd_argv_vm(vm, EndProg, CmdArgs)
     MyDbg = Debugger(vm, 0, End, Links)
     Tmp0Obj = CmplObj.objects.get("?FyPcyzStrFromNumber", None)
@@ -141,6 +143,14 @@ if __name__ == "__main__" and run_opt == 5:
         Tmp0Lvl, Tmp0LOC = MyDbg.calc_loc_from_ip(Tmp0Start)
         assert Tmp0Lvl == 0, "Tmp0Lvl = %u, must be zero for no errors" % Tmp0Lvl
         # MyDbg.AddBrkPoint(Tmp0LOC)
+    lnk_main = CmplObj.get_link("?FiPPczmain")
+    print("Stepping until main")
+    while vm.ip < lnk_main.src:
+        vm.step()
+    print("Found main at ip = 0x%04X lnk_main.src = 0x%04X" % (vm.ip, lnk_main.src))
+    # print("setting watchpoint at base pointer")
+    # vm.watch_points.append((MRQ_WRITE, vm.bp))
+    # vm.watch_points.append((MRQ_WRITE, 20))
     MyDbg.debug()
     #  print "START(0): STACK_TRACE"
     #  MyStackVM.PrintStackTrace()
