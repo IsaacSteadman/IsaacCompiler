@@ -6864,7 +6864,7 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
         cmpl_obj.memory.extend([BC_EQ0])
         lnk_end_loop.emit_lea(cmpl_obj.memory)
         cmpl_obj.memory.extend([BC_JMPIF])
-        compile_stmnt(cmpl_obj, stmnt.stmnt, context, cmpl_data)
+        compile_stmnt(cmpl_obj, stmnt.stmnt, context, cmpl_data1)
         lnk_begin_loop.emit_lea(cmpl_obj.memory)
         cmpl_obj.memory.extend([BC_JMP])
         lnk_end_loop.src = len(cmpl_obj.memory)
@@ -6958,6 +6958,17 @@ def flatify_dep_desc(dep_dct, start_k):
             set_next.update(dep_dct[k])
         set_next -= rtn
     return rtn
+
+
+def get_lst_stmnts(tokens, ctx: Optional[CompileContext] = None):
+    lst_stmnt = []
+    c = 0
+    end = len(tokens)
+    global_ctx = ctx if ctx is not None else CompileContext("", None)
+    while c < end:
+        stmnt, c = get_stmnt(tokens, c, end, global_ctx)
+        lst_stmnt.append(stmnt)
+    return lst_stmnt, global_ctx
 
 
 # TODO: add support for DataSegment alignment to pages so that the code can be shared
