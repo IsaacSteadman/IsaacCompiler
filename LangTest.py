@@ -49,7 +49,7 @@ def do_test():
     assert obj.t_anot is not None
     pt, vt, is_ref = get_tgt_ref_type(obj.t_anot)
     assert is_ref
-    assert vt.type_class_id == TYP_CLS_QUAL
+    assert vt.type_class_id == TypeClass.QUAL
     assert isinstance(vt, QualType)
     assert vt.qual_id == QualType.QUAL_ARR
     assert vt.ext_inf == 12

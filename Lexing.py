@@ -1,4 +1,4 @@
-from TextAlgo import *
+from PyIsaacUtils.TextAlgo import *
 from ParseConstants import *
 from io import TextIOBase
 from typing import Union, Tuple, Optional
@@ -43,7 +43,7 @@ class ParseClass(object):
 
 
 class LnCommentClass(ParseClass):
-    type_id = CLS_LN_COMMENT
+    type_id = TokenClass.LN_COMMENT
     done = False
 
     def take(self, cur_cls: ParseClass):
@@ -56,7 +56,7 @@ class LnCommentClass(ParseClass):
 
 
 class BlkCommentClass(ParseClass):
-    type_id = CLS_BLK_COMMENT
+    type_id = TokenClass.BLK_COMMENT
     done = False
 
     def take(self, cur_cls: ParseClass):
@@ -69,7 +69,7 @@ class BlkCommentClass(ParseClass):
 
 
 class UniQuoteClass(ParseClass):
-    type_id = CLS_UNI_QUOTE
+    type_id = TokenClass.UNI_QUOTE
     done = False
     backslash = False
 
@@ -89,14 +89,14 @@ class UniQuoteClass(ParseClass):
             return None
 
     def can_prev_take(self, prev_cls: ParseClass):
-        if prev_cls.type_id == CLS_NAME:
+        if prev_cls.type_id == TokenClass.NAME:
             return UniQuoteClass
         else:
             return None
 
 
 class DblQuoteClass(ParseClass):
-    type_id = CLS_DBL_QUOTE
+    type_id = TokenClass.DBL_QUOTE
     done = False
     backslash = False
 
@@ -115,14 +115,14 @@ class DblQuoteClass(ParseClass):
             return None
 
     def can_prev_take(self, prev_cls: ParseClass):
-        if prev_cls.type_id == CLS_NAME:
+        if prev_cls.type_id == TokenClass.NAME:
             return UniQuoteClass
         else:
             return None
 
 
 class BackslashClass(ParseClass):
-    type_id = CLS_BACK_SLASH
+    type_id = TokenClass.BACK_SLASH
     Done = False
 
     def take(self, cur_cls: ParseClass):
@@ -135,7 +135,7 @@ class BackslashClass(ParseClass):
 
 
 class BlankClass(ParseClass):
-    type_id = CLS_BLANK
+    type_id = TokenClass.BLANK
 
     def __init__(self, ln: int, col: int):
         super(BlankClass, self).__init__("", ln, col)
@@ -148,9 +148,9 @@ class BlankClass(ParseClass):
 
 
 def promote_type(cur_cls: ParseClass) -> ParseClass:
-    if cur_cls.type_id == CLS_DOT:
+    if cur_cls.type_id == TokenClass.DOT:
         return BreakSymClass(cur_cls.str, cur_cls.line, cur_cls.col)
-    elif cur_cls.type_id == CLS_PLUS_MINUS:
+    elif cur_cls.type_id == TokenClass.PLUS_MINUS:
         return OperatorClass(cur_cls.str, cur_cls.line, cur_cls.col)
     else:
         return cur_cls
@@ -189,18 +189,18 @@ def classify(ch, ln, col):
 
 
 class DotClass(ParseClass):
-    type_id = CLS_DOT
+    type_id = TokenClass.DOT
 
     def can_prev_take(self, prev_cls):
         Rtn = super(DotClass, self).can_prev_take(prev_cls)
         if Rtn is not None: return Rtn
-        if prev_cls.type_id in {CLS_DEC_INT}:
+        if prev_cls.type_id in {TokenClass.DEC_INT}:
             return DecimalClass
         return None
 
 
 class WSClass(ParseClass):
-    type_id = CLS_WS
+    type_id = TokenClass.WS
 
     def can_prev_take(self, prev_cls):
         Rtn = super(WSClass, self).can_prev_take(prev_cls)
@@ -212,7 +212,7 @@ class WSClass(ParseClass):
 
 
 class DecimalClass(ParseClass):
-    type_id = CLS_FLOAT
+    type_id = TokenClass.FLOAT
 
     def can_prev_take(self, prev_cls):
         Rtn = super(DecimalClass, self).can_prev_take(prev_cls)
@@ -221,40 +221,40 @@ class DecimalClass(ParseClass):
 
 
 class HexIntClass(ParseClass):
-    type_id = CLS_HEX_INT
+    type_id = TokenClass.HEX_INT
 
 
 class BinIntClass(ParseClass):
-    type_id = CLS_BIN_INT
+    type_id = TokenClass.BIN_INT
 
 
 class OctIntClass(ParseClass):
-    type_id = CLS_OCT_INT
+    type_id = TokenClass.OCT_INT
 
 
 class DecIntClass(ParseClass):
-    type_id = CLS_DEC_INT
+    type_id = TokenClass.DEC_INT
 
     def can_prev_take(self, prev_cls):
         Rtn = super(DecIntClass, self).can_prev_take(prev_cls)
         if Rtn is not None: return Rtn
-        if prev_cls.type_id == CLS_DEC_INT and prev_cls.str == "0":
+        if prev_cls.type_id == TokenClass.DEC_INT and prev_cls.str == "0":
             return OctIntClass
-        elif prev_cls.type_id in {CLS_NAME, CLS_OCT_INT, CLS_BIN_INT, CLS_DEC_INT, CLS_FLOAT, CLS_HEX_INT}:
+        elif prev_cls.type_id in {TokenClass.NAME, TokenClass.OCT_INT, TokenClass.BIN_INT, TokenClass.DEC_INT, TokenClass.FLOAT, TokenClass.HEX_INT}:
             return prev_cls.__class__
-        elif prev_cls.type_id == CLS_DOT:
+        elif prev_cls.type_id == TokenClass.DOT:
             return DecimalClass
 
 
 class NameClass(ParseClass):
-    type_id = CLS_NAME
+    type_id = TokenClass.NAME
 
     def can_prev_take(self, prev_cls):
         rtn = super(NameClass, self).can_prev_take(prev_cls)
         if rtn is not None: return rtn
-        if prev_cls.type_id in {CLS_DEC_INT, CLS_FLOAT} and self.str.lower() in {'e', 'j'}:
+        if prev_cls.type_id in {TokenClass.DEC_INT, TokenClass.FLOAT} and self.str.lower() in {'e', 'j'}:
             return DecimalClass
-        elif prev_cls.type_id == CLS_DEC_INT and prev_cls.str == "0":
+        elif prev_cls.type_id == TokenClass.DEC_INT and prev_cls.str == "0":
             cmp = self.str.lower()
             if cmp == "x":
                 return HexIntClass
@@ -262,18 +262,18 @@ class NameClass(ParseClass):
                 return OctIntClass
             elif cmp == "b":
                 return BinIntClass
-        elif prev_cls.type_id in {CLS_NAME, CLS_FLOAT, CLS_HEX_INT, CLS_DEC_INT, CLS_OCT_INT, CLS_BIN_INT}:
+        elif prev_cls.type_id in {TokenClass.NAME, TokenClass.FLOAT, TokenClass.HEX_INT, TokenClass.DEC_INT, TokenClass.OCT_INT, TokenClass.BIN_INT}:
             return prev_cls.__class__
         return None
 
 
 class OperatorClass(ParseClass):
-    type_id = CLS_OPERATOR
+    type_id = TokenClass.OPERATOR
 
     def can_prev_take(self, prev_cls):
         rtn = super(OperatorClass, self).can_prev_take(prev_cls)
         if rtn is not None: return rtn
-        if prev_cls.type_id in {CLS_PLUS_MINUS, CLS_OPERATOR}:
+        if prev_cls.type_id in {TokenClass.PLUS_MINUS, TokenClass.OPERATOR}:
             test = prev_cls.str + self.str
             if test == "//": return LnCommentClass
             elif test == "/*": return BlkCommentClass
@@ -284,15 +284,15 @@ class OperatorClass(ParseClass):
 
 
 class PlusMinusClass(ParseClass):
-    type_id = CLS_PLUS_MINUS
+    type_id = TokenClass.PLUS_MINUS
 
     def can_prev_take(self, prev_cls):
         rtn = super(PlusMinusClass, self).can_prev_take(prev_cls)
         if rtn is not None: return rtn
-        if ((prev_cls.type_id in {CLS_DEC_INT, CLS_FLOAT}) and
+        if ((prev_cls.type_id in {TokenClass.DEC_INT, TokenClass.FLOAT}) and
             prev_cls.str[-1].lower() == "e"):
             return DecimalClass
-        elif prev_cls.type_id in {CLS_OPERATOR, CLS_PLUS_MINUS}:
+        elif prev_cls.type_id in {TokenClass.OPERATOR, TokenClass.PLUS_MINUS}:
             test = prev_cls.str + self.str
             if any(map(lambda x: x.startswith(test), LST_OPS)):
                 return OperatorClass
@@ -301,7 +301,7 @@ class PlusMinusClass(ParseClass):
 
 
 class BreakSymClass(ParseClass):
-    type_id = CLS_BRK_OP
+    type_id = TokenClass.BRK_OP
 
     def can_prev_take(self, prev_cls):
         rtn = super(BreakSymClass, self).can_prev_take(prev_cls)
@@ -463,7 +463,7 @@ def is_not_ign_tok(tok: ParseClass) -> bool:
     returns True if `tok` is not supposed to be ignored by the parser
     it returns False only for comments and whitespace
     """
-    return tok.type_id != CLS_WS and tok.type_id != CLS_BLK_COMMENT and tok.type_id != CLS_LN_COMMENT
+    return tok.type_id != TokenClass.WS and tok.type_id != TokenClass.BLK_COMMENT and tok.type_id != TokenClass.LN_COMMENT
 
 
 def is_ign_tok(tok: ParseClass) -> bool:
@@ -471,7 +471,7 @@ def is_ign_tok(tok: ParseClass) -> bool:
     returns True if `tok` is supposed to be ignored by the parser
     it returns True only for comments and whitespace
     """
-    return tok.type_id == CLS_WS or tok.type_id == CLS_BLK_COMMENT or tok.type_id == CLS_LN_COMMENT
+    return tok.type_id == TokenClass.WS or tok.type_id == TokenClass.BLK_COMMENT or tok.type_id == TokenClass.LN_COMMENT
 
 
 def get_list_tokens(data):

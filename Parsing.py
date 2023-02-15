@@ -2,13 +2,12 @@ from Lexing import *
 from PrettyRepr import *
 from CompilingUtils import *
 import traceback
+from typing import List
 
 
-def try_catch_wrapper0(fn):
-    """
-    :param (list[ParseClass], int, int, CompileContext) -> any, int fn:
-    :rtype: (list[ParseClass], int, int, CompileContext) -> any, int
-    """
+def try_catch_wrapper0(
+        fn: Callable[[List[ParseClass], int, int, "CompileContext"], Tuple[Any, int]]
+) -> Callable[[List[ParseClass], int, int, "CompileContext"], Tuple[Any, int]]:
     def new_fn(tokens, c, end, context):
         try:
             return fn(tokens, c, end, context)
@@ -20,11 +19,9 @@ def try_catch_wrapper0(fn):
     return new_fn
 
 
-def try_catch_wrapper1(fn):
-    """
-    :param (list[ParseClass], int, str|None, int, CompileContext) -> any, int fn:
-    :rtype: (list[ParseClass], int, str|None, int, CompileContext) -> any, int
-    """
+def try_catch_wrapper1(
+        fn: Callable[[List[ParseClass], int, Optional[str], int, "CompileContext"], Tuple[Any, int]]
+) -> Callable[[List[ParseClass], int, Optional[str], int, "CompileContext"], Tuple[Any, int]]:
     def new_fn(tokens, c, delim, end, context):
         # noinspection PyBareException,PyPep8
         try:
@@ -90,26 +87,16 @@ def twos_comp(i, n_bits):
 
 
 class BaseExpr(PrettyRepr):
-    """
-    :type t_anot: BaseType|None
-    :type expr_id: int
-    :type temps: list[BaseType]|None
-    :type temps_off: int
-    """
-    t_anot = None
-    expr_id = -1
+    t_anot: Optional["BaseType"] = None
+    expr_id: ExprType = -1
     # temps is a list of the types of the temporaries owned by the parent Expression Object only (ie 'self')
-    temps = None
-    temps_off = 0
+    temps: Optional[List["BaseType"]] = None
+    temps_off: int = 0
 
     def pretty_repr(self):
         return [self.__class__.__name__, "(", ")"]
 
-    def init_temps(self, main_temps):
-        """
-        :param list[BaseType]|None main_temps:
-        :rtype list[BaseType]|None
-        """
+    def init_temps(self, main_temps: Optional[List["BaseType"]]) -> Optional[List["BaseType"]]:
         self.temps_off = 0 if main_temps is None else len(main_temps)
         if main_temps is None:
             main_temps = []
@@ -120,7 +107,7 @@ class BaseExpr(PrettyRepr):
 
 
 class BaseStmnt(PrettyRepr):
-    stmnt_type = None
+    stmnt_type: StmntType = None
     position = (-1, -1)
 
 
@@ -139,16 +126,16 @@ def get_bool_expr(cond):
 
 
 class ForLoop(BaseStmnt):
-    stmnt_type = STMNT_FOR
+    stmnt_type = StmntType.FOR
     # init-args added for __repr__
 
-    def __init__(self, init=None, cond=None, incr=None, stmnt=None):
-        """
-        :param BaseStmnt|None init:
-        :param BaseExpr|None cond:
-        :param BaseExpr|None incr:
-        :param BaseStmnt|None stmnt:
-        """
+    def __init__(
+            self,
+            init: Optional[BaseStmnt] = None,
+            cond: Optional[BaseExpr] = None,
+            incr: Optional[BaseExpr] = None,
+            stmnt: Optional[BaseStmnt] = None
+    ):
         self.init = init
         self.cond = None if cond is None else get_bool_expr(cond)
         if self.cond is not None:
@@ -163,7 +150,7 @@ class ForLoop(BaseStmnt):
         return [self.__class__.__name__] + get_pretty_repr((
             self.init, self.cond, self.incr, self.stmnt))
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         c += 1
         if tokens[c].str != "(":
             raise ParsingError(tokens, c, "Expected '(' to open for-loop")
@@ -190,21 +177,17 @@ class ForLoop(BaseStmnt):
             raise ParsingError(tokens, c, "Expected ')' to delimit [increment] in for-loop")
         c += 1
         self.stmnt, c = get_stmnt(tokens, c, end, self.context)
-        if self.stmnt.stmnt_type not in {STMNT_SEMI_COLON, STMNT_CURLY_STMNT}:
+        if self.stmnt.stmnt_type not in {StmntType.SEMI_COLON, StmntType.CURLY_STMNT}:
             cls_name = self.stmnt.__class__.__name__
             raise ParsingError(tokens, c, "Cannot directly use '%s' as body for for-loop" % cls_name)
         return c
 
 
 class WhileLoop(BaseStmnt):
-    stmnt_type = STMNT_WHILE
+    stmnt_type = StmntType.WHILE
     # init-args added for __repr__
 
-    def __init__(self, cond=None, stmnt=None):
-        """
-        :param BaseExpr|None cond:
-        :param BaseStmnt|None stmnt:
-        """
+    def __init__(self, cond: Optional[BaseExpr] = None, stmnt: Optional[BaseStmnt] = None):
         self.cond = None if cond is None else get_bool_expr(cond)
         if self.cond is not None:
             self.cond.init_temps(None)
@@ -213,7 +196,7 @@ class WhileLoop(BaseStmnt):
     def pretty_repr(self):
         return [self.__class__.__name__] + get_pretty_repr((self.cond, self.stmnt))
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         c += 1
         if tokens[c].str != "(":
             raise ParsingError(tokens, c, "Expected '(' to open while-loop")
@@ -226,22 +209,22 @@ class WhileLoop(BaseStmnt):
             raise ParsingError(tokens, c, "Expected ')' to delimit [condition] in while-loop")
         c += 1
         self.stmnt, c = get_stmnt(tokens, c, end, context)
-        if self.stmnt.stmnt_type not in {STMNT_SEMI_COLON, STMNT_CURLY_STMNT}:
+        if self.stmnt.stmnt_type not in {StmntType.SEMI_COLON, StmntType.CURLY_STMNT}:
             cls_name = self.stmnt.__class__.__name__
             raise ParsingError(tokens, c, "Cannot directly use '%s' as body for while-loop" % cls_name)
         return c
 
 
 class IfElse(BaseStmnt):
-    stmnt_type = STMNT_IF
+    stmnt_type = StmntType.IF
     # init-args added for __repr__
 
-    def __init__(self, cond=None, stmnt=None, else_stmnt=None):
-        """
-        :param BaseExpr|None cond:
-        :param BaseStmnt|None stmnt:
-        :param BaseStmnt|None else_stmnt:
-        """
+    def __init__(
+            self,
+            cond: Optional[BaseExpr] = None,
+            stmnt: Optional[BaseStmnt] = None,
+            else_stmnt: Optional[BaseStmnt] = None
+    ):
         self.cond = None if cond is None else get_bool_expr(cond)
         if self.cond is not None:
             self.cond.init_temps(None)
@@ -251,7 +234,7 @@ class IfElse(BaseStmnt):
     def pretty_repr(self):
         return [self.__class__.__name__] + get_pretty_repr((self.cond, self.stmnt, self.else_stmnt))
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         c += 1
         if tokens[c].str != "(":
             raise ParsingError(tokens, c, "Expected '(' to open if-statement")
@@ -264,24 +247,21 @@ class IfElse(BaseStmnt):
             raise ParsingError(tokens, c, "Expected ')' to delimit [condition] in while-loop")
         c += 1
         self.stmnt, c = get_stmnt(tokens, c, end, context)
-        if self.stmnt.stmnt_type == STMNT_DECL:
+        if self.stmnt.stmnt_type == StmntType.DECL:
             raise ParsingError(tokens, c, "Cannot directly use 'DeclStmnt' as body for if statement")
-        if tokens[c].type_id == CLS_NAME and tokens[c].str == "else":
+        if tokens[c].type_id == TokenClass.NAME and tokens[c].str == "else":
             c += 1
             self.else_stmnt, c = get_stmnt(tokens, c, end, context)
-            if self.else_stmnt.stmnt_type == STMNT_DECL:
+            if self.else_stmnt.stmnt_type == StmntType.DECL:
                 raise ParsingError(tokens, c, "Cannot directly use 'DeclStmnt' as body for if statement")
         return c
 
 
 class CurlyStmnt(BaseStmnt):
-    stmnt_type = STMNT_CURLY_STMNT
+    stmnt_type = StmntType.CURLY_STMNT
     # init-args added for __repr__
 
-    def __init__(self, stmnts=None, name=""):
-        """
-        :param list[BaseStmnt]|None stmnts:
-        """
+    def __init__(self, stmnts: Optional[List[BaseStmnt]]=None, name: str=""):
         self.stmnts = stmnts
         self.name = name
         self.context = None
@@ -292,7 +272,7 @@ class CurlyStmnt(BaseStmnt):
             rtn[-1:-1] = get_pretty_repr(self.name)
         return rtn
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         self.stmnts = []
         self.context = context.new_scope(LocalScope(self.name))
         c += 1
@@ -304,7 +284,7 @@ class CurlyStmnt(BaseStmnt):
 
 
 class ReturnStmnt(BaseStmnt):
-    stmnt_type = STMNT_RTN
+    stmnt_type = StmntType.RTN
 
     def __init__(self, expr=None):
         """
@@ -317,7 +297,7 @@ class ReturnStmnt(BaseStmnt):
     def pretty_repr(self):
         return [self.__class__.__name__, "("] + get_pretty_repr(self.expr) + [")"]
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         c += 1
         self.expr, c = get_expr(tokens, c, ";", end, context)
         if self.expr is not None:
@@ -329,18 +309,11 @@ class ReturnStmnt(BaseStmnt):
 
 
 class BreakStmnt(BaseStmnt):
-    stmnt_type = STMNT_BRK
+    stmnt_type = StmntType.BRK
     # default pretty_repr
     # default __init__
 
-    def build(self, tokens, c, end, context):
-        """
-        :param list[ParseClass] tokens:
-        :param int c:
-        :param int end:
-        :param CompileContext context:
-        :rtype: int
-        """
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         del self, end, context
         c += 1
         if tokens[c].str != ";":
@@ -350,9 +323,9 @@ class BreakStmnt(BaseStmnt):
 
 
 class ContinueStmnt(BaseStmnt):
-    stmnt_type = STMNT_CONTINUE
+    stmnt_type = StmntType.CONTINUE
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         """
         :param list[ParseClass] tokens:
         :param int c:
@@ -371,23 +344,15 @@ class ContinueStmnt(BaseStmnt):
 
 
 class NamespaceStmnt(BaseStmnt):
-    stmnt_type = STMNT_NAMESPACE
+    stmnt_type = StmntType.NAMESPACE
 
-    def __init__(self, lst_stmnts=None):
-        self.lst_stmnts = [] if lst_stmnts is None else lst_stmnts
-        """ :type: list[BaseStmnt|None]"""
+    def __init__(self, lst_stmnts: Optional[List[BaseStmnt]] = None):
+        self.lst_stmnts: List[BaseStmnt] = [] if lst_stmnts is None else lst_stmnts
         self.ns = None
 
-    def build(self, tokens, c, end, context):
-        """
-        :param list[ParseClass] tokens:
-        :param int c:
-        :param int end:
-        :param CompileContext context:
-        :rtype: int
-        """
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         c += 1
-        if tokens[c].type_id != CLS_NAME:
+        if tokens[c].type_id != TokenClass.NAME:
             raise ParsingError(tokens, c, "Expected name for namespace")
         name = tokens[c].str
         ns = context.namespace_strict(name)
@@ -413,13 +378,10 @@ class NamespaceStmnt(BaseStmnt):
 
 
 class SemiColonStmnt(BaseStmnt):
-    stmnt_type = STMNT_SEMI_COLON
+    stmnt_type = StmntType.SEMI_COLON
     # init-args added for __repr__
 
-    def __init__(self, expr=None):
-        """
-        :param BaseExpr|None expr:
-        """
+    def __init__(self, expr: Optional[BaseExpr] = None):
         self.expr = expr
         if self.expr is not None:
             self.expr.init_temps(None)
@@ -427,7 +389,7 @@ class SemiColonStmnt(BaseStmnt):
     def pretty_repr(self):
         return [self.__class__.__name__, "("] + get_pretty_repr(self.expr) + [")"]
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         self.expr, c = get_expr(tokens, c, ";", end, context)
         if self.expr is not None:
             self.expr.init_temps(None)
@@ -436,12 +398,10 @@ class SemiColonStmnt(BaseStmnt):
         c += 1
         return c
 
-
 class SingleVarDecl(PrettyRepr):
-    def __init__(self, type_name, var_name, init_args, ext_spec, init_type=INIT_NONE):
+    # used to declare variables (init_args is list of expressions) and define functions (init_args is list of statements)
+    def __init__(self, type_name: "BaseType", var_name: str, init_args, ext_spec, init_type=INIT_NONE):
         """
-        :param BaseType type_name:
-        :param str var_name:
         :param list[BaseExpr]|list[CurlyStmnt] init_args:
         :param int ext_spec:
         :param int init_type:
@@ -451,7 +411,7 @@ class SingleVarDecl(PrettyRepr):
         self.op_fn_type = OP_TYP_FUNCTION
         self.op_fn_data = None
         # TODO: add support for curly initialization (arrays and structs)
-        if type_name.type_class_id in [TYP_CLS_QUAL, TYP_CLS_PRIM]:
+        if type_name.type_class_id in [TypeClass.QUAL, TypeClass.PRIM]:
             fn_types = type_name.get_ctor_fn_types()
             if len(fn_types):
                 index_fn_t, lst_conv = abstract_overload_resolver(init_args, fn_types)
@@ -484,14 +444,14 @@ def is_array_type(typ):
     :param BaseType typ:
     :rtype: bool
     """
-    if typ.type_class_id == TYP_CLS_QUAL:
+    if typ.type_class_id == TypeClass.QUAL:
         assert isinstance(typ, QualType)
         return typ.qual_id == QualType.QUAL_ARR
     return False
 
 
 class TypeDefStmnt(BaseStmnt):
-    stmnt_type = STMNT_TYPEDEF
+    stmnt_type = StmntType.TYPEDEF
 
     def __init__(self, id_qual_types=None):
         """
@@ -502,7 +462,7 @@ class TypeDefStmnt(BaseStmnt):
     def pretty_repr(self):
         return [self.__class__.__name__, "("] + get_pretty_repr(self.id_qual_types) + [")"]
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         """
         :param list[ParseClass] tokens:
         :param int c:
@@ -551,7 +511,7 @@ class TypeDefStmnt(BaseStmnt):
 
 
 class DeclStmnt(BaseStmnt):
-    stmnt_type = STMNT_DECL
+    stmnt_type = StmntType.DECL
     # decl_lst added to init-args for __repr__
 
     def __init__(self, decl_lst=None):
@@ -563,7 +523,7 @@ class DeclStmnt(BaseStmnt):
     def pretty_repr(self):
         return [self.__class__.__name__, "("] + get_pretty_repr(self.decl_lst) + [")"]
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         """
         :param list[ParseClass] tokens:
         :param int c:
@@ -572,7 +532,7 @@ class DeclStmnt(BaseStmnt):
         :rtype: int
         """
         ext_spec = 0
-        if tokens[c].type_id == CLS_NAME:
+        if tokens[c].type_id == TokenClass.NAME:
             if tokens[c].str == "static":
                 ext_spec = 1
                 c += 1
@@ -581,7 +541,7 @@ class DeclStmnt(BaseStmnt):
                 c += 1
         if (
                 isinstance(context, BaseType) and
-                context.type_class_id in [TYP_CLS_STRUCT, TYP_CLS_CLASS, TYP_CLS_UNION] and
+                context.type_class_id in [TypeClass.STRUCT, TypeClass.CLASS, TypeClass.UNION] and
                 tokens[c].str == context.name and c + 1 < len(tokens) and tokens[c + 1].str == "("
         ):
 
@@ -593,7 +553,7 @@ class DeclStmnt(BaseStmnt):
             assert isinstance(context, (StructType, ClassType, UnionType))
             typ = named_qual_type.typ
             assert isinstance(typ, BaseType)
-            if named_qual_type.name == context.name and typ.type_class_id == TYP_CLS_QUAL:
+            if named_qual_type.name == context.name and typ.type_class_id == TypeClass.QUAL:
                 assert isinstance(typ, QualType)
                 if typ.qual_id == QualType.QUAL_FN:
                     if ext_spec != 0:
@@ -617,7 +577,7 @@ class DeclStmnt(BaseStmnt):
                             if isinstance(param, IdentifiedQualType):
                                 fn_ctx.new_var(
                                     param.name,
-                                    ContextVariable(param.name, param.typ, None, ContextVariable.MOD_IS_ARG)
+                                    ContextVariable(param.name, param.typ, None, VarDeclMods.IS_ARG)
                                 )
                         new_c = stmnt.build(tokens, new_c, end, fn_ctx)
                     self.decl_lst = [
@@ -680,7 +640,7 @@ class DeclStmnt(BaseStmnt):
                 init_args = []
                 prim_type = get_base_prim_type(named_qual_type.typ)
                 start = c
-                if prim_type.type_class_id == TYP_CLS_QUAL:
+                if prim_type.type_class_id == TypeClass.QUAL:
                     assert isinstance(prim_type, QualType)
                     if prim_type.qual_id == QualType.QUAL_FN:
                         stmnt = CurlyStmnt()
@@ -691,7 +651,7 @@ class DeclStmnt(BaseStmnt):
                         params = prim_type.ext_inf
                         if prim_type.qual_id == QualType.QUAL_CL_FN:
                             assert isinstance(context, BaseType)
-                            assert context.type_class_id in [TYP_CLS_STRUCT, TYP_CLS_CLASS, TYP_CLS_UNION]
+                            assert context.type_class_id in [TypeClass.STRUCT, TypeClass.CLASS, TypeClass.UNION]
                             assert isinstance(context, (StructType, ClassType, UnionType))
                             params.insert(
                                 0,
@@ -705,7 +665,7 @@ class DeclStmnt(BaseStmnt):
                             if isinstance(param, IdentifiedQualType):
                                 fn_ctx.new_var(
                                     param.name,
-                                    ContextVariable(param.name, param.typ, None, ContextVariable.MOD_IS_ARG)
+                                    ContextVariable(param.name, param.typ, None, VarDeclMods.IS_ARG)
                                 )
                         c = stmnt.build(tokens, c, end, fn_ctx)
                         is_non_semi_colon_end = True
@@ -842,16 +802,16 @@ class BaseType(PrettyRepr):
 
 set_pt_int_mods = {"short", "long"}
 dct_pt_s_type_codes = {
-    "int": INT_I,
-    "float": FLT_F,
-    "double": FLT_D,
-    "void": TYP_VOID,
-    "auto": TYP_AUTO,
-    "char": INT_C,
-    "char16_t": INT_C16,
-    "char32_t": INT_C32,
-    "wchar_t": INT_WC,
-    "bool": TYP_BOOL
+    "int": PrimitiveTypeId.INT_I,
+    "float": PrimitiveTypeId.FLT_F,
+    "double": PrimitiveTypeId.FLT_D,
+    "void": PrimitiveTypeId.TYP_VOID,
+    "auto": PrimitiveTypeId.TYP_AUTO,
+    "char": PrimitiveTypeId.INT_C,
+    "char16_t": PrimitiveTypeId.INT_C16,
+    "char32_t": PrimitiveTypeId.INT_C32,
+    "wchar_t": PrimitiveTypeId.INT_WC,
+    "bool": PrimitiveTypeId.TYP_BOOL
 }
 
 
@@ -862,7 +822,7 @@ def get_bc_conv_bits(typ):
     """
     out_bits = None
     typ = get_base_prim_type(typ)
-    if typ.type_class_id == TYP_CLS_PRIM:
+    if typ.type_class_id == TypeClass.PRIM:
         assert isinstance(typ, PrimitiveType)
         sz_cls = typ.size.bit_length() - 1
         if 1 << sz_cls != typ.size or sz_cls > 3:
@@ -873,7 +833,7 @@ def get_bc_conv_bits(typ):
         elif typ.typ in FLT_TYPE_CODES:
             sz_cls -= 1
             out_bits = sz_cls | 0x08
-    elif typ.type_class_id == TYP_CLS_QUAL:
+    elif typ.type_class_id == TypeClass.QUAL:
         assert isinstance(typ, QualType)
         if typ.qual_id == QualType.QUAL_PTR:
             out_bits = 3
@@ -890,7 +850,7 @@ class PrimitiveType(BaseType):
         """
         raise NotImplementedError("Not Implemented")
 
-    type_class_id = TYP_CLS_PRIM
+    type_class_id = TypeClass.PRIM
     # Takes lists like (does not take access specifiers
     # for LL, L, C, WC, C16, C32, S: int is optional
     #   ["unsigned", "long", "long", "int"] -> Sign=False, Size=LL_Sz
@@ -917,71 +877,71 @@ class PrimitiveType(BaseType):
 
     @classmethod
     def get_size_l_type(cls, is_sign=False):
-        return PrimitiveType.from_type_code(INT_LL, -1 if is_sign else 1)
-    lst_user_str_map = [
-        ["int"],  # "INT_I",
-        ["long"],  # "INT_L",
-        ["long", "long"],  # "INT_LL",
-        ["short"],  # "INT_S",
-        ["char"],  # "INT_C",
-        ["char16_t"],  # "INT_C16",
-        ["char32_t"],  # "INT_C32",
-        ["wchar_t"],  # "INT_WC",
-        ["float"],  # "FLT_F",
-        ["double"],  # "FLT_D",
-        ["long", "double"],  # "FLT_LD",
-        ["bool"],  # "TYP_BOOL",
-        ["void"],  # "TYP_VOID",
-        ["auto"],  # "TYP_AUTO"
-    ]
+        return PrimitiveType.from_type_code(PrimitiveTypeId.INT_LL, -1 if is_sign else 1)
+    lst_user_str_map = {
+        PrimitiveTypeId.INT_I: ["int"],
+        PrimitiveTypeId.INT_L: ["long"],
+        PrimitiveTypeId.INT_LL: ["long", "long"],
+        PrimitiveTypeId.INT_S: ["short"],
+        PrimitiveTypeId.INT_C: ["char"],
+        PrimitiveTypeId.INT_C16: ["char16_t"],
+        PrimitiveTypeId.INT_C32: ["char32_t"],
+        PrimitiveTypeId.INT_WC: ["wchar_t"],
+        PrimitiveTypeId.FLT_F: ["float"],
+        PrimitiveTypeId.FLT_D: ["double"],
+        PrimitiveTypeId.FLT_LD: ["long", "double"],
+        PrimitiveTypeId.TYP_BOOL: ["bool"],
+        PrimitiveTypeId.TYP_VOID: ["void"],
+        PrimitiveTypeId.TYP_AUTO: ["auto"],
+    }
     mangle_captures = {
-        "v": (TYP_VOID, 0),
-        "b": (TYP_BOOL, 0),
-        "w": (INT_WC, 1),  # gcc calls it plain old wchar_t
-        "h": (INT_WC, -1),  # gcc calls it unsigned char
-        "a": (INT_C, -1),
-        "c": (INT_C, 1),  # gcc calls it plain old char
-        "s": (INT_S, -1),
-        "t": (INT_S, 1),
-        "i": (INT_I, -1),
-        "j": (INT_I, 1),
-        "l": (INT_L, -1),
-        "m": (INT_L, 1),
-        "x": (INT_LL, -1),
-        "y": (INT_LL, 1),
+        "v": (PrimitiveTypeId.TYP_VOID, 0),
+        "b": (PrimitiveTypeId.TYP_BOOL, 0),
+        "w": (PrimitiveTypeId.INT_WC, 1),  # gcc calls it plain old wchar_t
+        "h": (PrimitiveTypeId.INT_WC, -1),  # gcc calls it unsigned char
+        "a": (PrimitiveTypeId.INT_C, -1),
+        "c": (PrimitiveTypeId.INT_C, 1),  # gcc calls it plain old char
+        "s": (PrimitiveTypeId.INT_S, -1),
+        "t": (PrimitiveTypeId.INT_S, 1),
+        "i": (PrimitiveTypeId.INT_I, -1),
+        "j": (PrimitiveTypeId.INT_I, 1),
+        "l": (PrimitiveTypeId.INT_L, -1),
+        "m": (PrimitiveTypeId.INT_L, 1),
+        "x": (PrimitiveTypeId.INT_LL, -1),
+        "y": (PrimitiveTypeId.INT_LL, 1),
         # "n": ["__int128"],
         # "o": ["unsigned", "__int128"],
         # "e": ["short", "float"], # gcc __float80, but here is __float16
-        "f": (FLT_F, 0),
-        "d": (FLT_D, 0),
-        "g": (FLT_LD, 0),  # __float128
+        "f": (PrimitiveTypeId.FLT_F, 0),
+        "d": (PrimitiveTypeId.FLT_D, 0),
+        "g": (PrimitiveTypeId.FLT_LD, 0),  # __float128
         "D": None,
-        "Ds": (INT_C16, -1),
-        "Dt": (INT_C16, 1),
-        "Di": (INT_C32, -1),
-        "Dj": (INT_C32, 1)}
+        "Ds": (PrimitiveTypeId.INT_C16, -1),
+        "Dt": (PrimitiveTypeId.INT_C16, 1),
+        "Di": (PrimitiveTypeId.INT_C32, -1),
+        "Dj": (PrimitiveTypeId.INT_C32, 1)}
     inv_mangle_captures = {
-        (INT_I, True): "i",
-        (INT_I, False): "j",
-        (INT_L, True): "l",
-        (INT_L, False): "m",
-        (INT_LL, True): "x",
-        (INT_LL, False): "y",
-        (INT_S, True): "s",
-        (INT_S, False): "t",
-        (INT_C, True): "a",
-        (INT_C, False): "c",
-        (INT_C16, True): "Ds",
-        (INT_C16, False): "Dt",
-        (INT_C32, True): "Di",
-        (INT_C32, False): "Dj",
-        (INT_WC, False): "w",
-        (INT_WC, True): "h",
-        (FLT_F, True): "f",
-        (FLT_D, True): "d",
-        (FLT_LD, True): "g",
-        (TYP_BOOL, False): "b",
-        (TYP_VOID, False): "v"}
+        (PrimitiveTypeId.INT_I, True): "i",
+        (PrimitiveTypeId.INT_I, False): "j",
+        (PrimitiveTypeId.INT_L, True): "l",
+        (PrimitiveTypeId.INT_L, False): "m",
+        (PrimitiveTypeId.INT_LL, True): "x",
+        (PrimitiveTypeId.INT_LL, False): "y",
+        (PrimitiveTypeId.INT_S, True): "s",
+        (PrimitiveTypeId.INT_S, False): "t",
+        (PrimitiveTypeId.INT_C, True): "a",
+        (PrimitiveTypeId.INT_C, False): "c",
+        (PrimitiveTypeId.INT_C16, True): "Ds",
+        (PrimitiveTypeId.INT_C16, False): "Dt",
+        (PrimitiveTypeId.INT_C32, True): "Di",
+        (PrimitiveTypeId.INT_C32, False): "Dj",
+        (PrimitiveTypeId.INT_WC, False): "w",
+        (PrimitiveTypeId.INT_WC, True): "h",
+        (PrimitiveTypeId.FLT_F, True): "f",
+        (PrimitiveTypeId.FLT_D, True): "d",
+        (PrimitiveTypeId.FLT_LD, True): "g",
+        (PrimitiveTypeId.TYP_BOOL, False): "b",
+        (PrimitiveTypeId.TYP_VOID, False): "v"}
 
     @classmethod
     def from_mangle(cls, s, c):
@@ -998,11 +958,7 @@ class PrimitiveType(BaseType):
         return PrimitiveType.inv_mangle_captures[(self.typ, self.sign)]
 
     @classmethod
-    def from_str_name(cls, str_name):
-        """
-        :param list[str] str_name:
-        :rtype: PrimitiveType
-        """
+    def from_str_name(cls, str_name: List[str]) -> "PrimitiveType":
         signed = 0
         lst_int_mods = []
         typ = None
@@ -1021,36 +977,34 @@ class PrimitiveType(BaseType):
             else:
                 raise SyntaxError("Unexpected Token '%s'" % s)
         if typ is None:
-            typ = INT_I
-        if signed != 0 and (typ == TYP_BOOL or typ not in INT_TYPE_CODES):
+            typ = PrimitiveTypeId.INT_I
+        if signed != 0 and (typ == PrimitiveTypeId.TYP_BOOL or typ not in INT_TYPE_CODES):
             raise SyntaxError("Unexpected signed specifier for %s" % LST_TYPE_CODES[typ])
         for IntMod in lst_int_mods:
             if IntMod == "long":
-                if typ == INT_I:
-                    typ = INT_L
-                elif typ == INT_L:
-                    typ = INT_LL
-                elif typ == FLT_D:
-                    typ = FLT_LD
+                if typ == PrimitiveTypeId.INT_I:
+                    typ = PrimitiveTypeId.INT_L
+                elif typ == PrimitiveTypeId.INT_L:
+                    typ = PrimitiveTypeId.INT_LL
+                elif typ == PrimitiveTypeId.FLT_D:
+                    typ = PrimitiveTypeId.FLT_LD
                 else:
                     raise SyntaxError("Unexpected int modifier '%s' for %s" % (IntMod, LST_TYPE_CODES[typ]))
             elif IntMod == "short":
-                if typ == INT_I:
-                    typ = INT_S
+                if typ == PrimitiveTypeId.INT_I:
+                    typ = PrimitiveTypeId.INT_S
                 else:
                     raise SyntaxError("Unexpected int modifier '%s' for %s" % (IntMod, LST_TYPE_CODES[typ]))
         return cls.from_type_code(typ, signed)
 
     @classmethod
-    def from_type_code(cls, typ, signed=0):
+    def from_type_code(cls, typ: PrimitiveTypeId, signed: int=0) -> "PrimitiveType":
         """
-        :param int typ:
-        :param int signed: -1, 0 or 1 representing the signed-ness
-        :rtype: PrimitiveType
+        :param signed: -1, 0 or 1 representing the signed-ness
         """
         size, sign = SIZE_SIGN_MAP[typ]
         if signed != 0:
-            if typ in FLT_TYPE_CODES or typ in [TYP_VOID, TYP_BOOL]:
+            if typ in FLT_TYPE_CODES or typ in [PrimitiveTypeId.TYP_VOID, PrimitiveTypeId.TYP_BOOL]:
                 raise TypeError(
                     "Cannot Explicitly specify the signed-ness for Type=%s" % LST_TYPE_CODES[typ])
             sign = signed < 0
@@ -1068,11 +1022,7 @@ class PrimitiveType(BaseType):
             ]
         ]
 
-    def __init__(self, typ, sign):
-        """
-        :param int typ:
-        :param bool sign:
-        """
+    def __init__(self, typ: PrimitiveTypeId, sign: bool):
         self.sign = sign
         self.typ = typ
         self.size = SIZE_SIGN_MAP[typ][0]
@@ -1086,20 +1036,22 @@ class PrimitiveType(BaseType):
 
     def pretty_repr(self):
         return ["PrimitiveType", ".", "from_type_code", "("] + [
-            LST_TYPE_CODES[self.typ],
+            "PrimitiveTypeId",
+            ".",
+            self.typ.name,
             ",",
             "0" if SIZE_SIGN_MAP[self.typ][1] == self.sign else ("-1" if self.sign else "1"),
             ")"]
 
-    def compile_var_init(self, cmpl_obj, init_args, context, ref, cmpl_data=None, temp_links=None):
-        """
-        :param BaseCmplObj cmpl_obj:
-        :param list[BaseExpr|CurlyStmnt] init_args:
-        :param CompileContext context:
-        :param VarRef ref:
-        :param LocalCompileData|None cmpl_data:
-        :param list[(BaseType,BaseLink)]|None temp_links:
-        """
+    def compile_var_init(
+            self,
+            cmpl_obj: BaseCmplObj,
+            init_args: List[Union[BaseExpr, CurlyStmnt]],
+            context: "CompileContext",
+            ref: VarRef,
+            cmpl_data: Optional["LocalCompileData"] = None,
+            temp_links: Optional[List[Tuple[BaseType, BaseLink]]] = None
+    ):
         # TODO: result allocation for temp links of expressions used as init_args
         # actually maybe not
         sz_var = size_of(self)
@@ -1170,7 +1122,7 @@ class PrimitiveType(BaseType):
                 return sz_var
             link = ref.lnk
             sz = compile_expr(
-                cmpl_obj, CastOpExpr(self, init_args[0], CastOpExpr.CAST_IMPLICIT), context, cmpl_data)
+                cmpl_obj, CastOpExpr(self, init_args[0], CastType.IMPLICIT), context, cmpl_data)
             assert sz == sz_var
             link.emit_stor(cmpl_obj.memory, sz_var, cmpl_obj, byte_copy_cmpl_intrinsic)
             return sz_var
@@ -1180,14 +1132,14 @@ class PrimitiveType(BaseType):
     def compile_var_de_init(self, cmpl_obj, context, ref, cmpl_data=None):
         return -1
 
-    def compile_conv(self, cmpl_obj, expr, context, cmpl_data=None, temp_links=None):
-        """
-        :param BaseCmplObj cmpl_obj:
-        :param BaseExpr expr:
-        :param CompileContext context:
-        :param LocalCompileData|None cmpl_data:
-        :param list[(BaseType,BaseLink)]|None temp_links:
-        """
+    def compile_conv(
+            self,
+            cmpl_obj: BaseCmplObj,
+            expr: BaseExpr,
+            context: "CompileContext",
+            cmpl_data: Optional["LocalCompileData"] = None,
+            temp_links: Optional[List[Tuple[BaseType, BaseLink]]] = None
+    ):
         from_type = get_value_type(expr.t_anot)
         err_msg = "error with expression type and size"
         err_msg += "\n  sz = %u\n  size_of(from_type) = %u\n  expr = %s\n  from_type = %s\n  self = %s"
@@ -1210,7 +1162,7 @@ class PrimitiveType(BaseType):
             out_bits = sz_cls | 0x08
         else:
             raise TypeError("Cannot cast to Type %s" % repr(self))
-        if from_type.type_class_id == TYP_CLS_PRIM:
+        if from_type.type_class_id == TypeClass.PRIM:
             assert isinstance(from_type, PrimitiveType)
             if from_type.typ in INT_TYPE_CODES:
                 sz_cls = from_type.size.bit_length() - 1
@@ -1223,7 +1175,7 @@ class PrimitiveType(BaseType):
                 inp_bits = sz_cls | 0x08
             else:
                 raise TypeError("Cannot cast from Type %s" % repr(from_type))
-        elif from_type.type_class_id == TYP_CLS_QUAL:
+        elif from_type.type_class_id == TypeClass.QUAL:
             assert isinstance(from_type, QualType)
             if from_type.qual_id == QualType.QUAL_PTR:
                 assert sz == 8
@@ -1233,7 +1185,7 @@ class PrimitiveType(BaseType):
         else:
             raise TypeError("Cannot cast from Type %s" % repr(from_type))
 
-        if self.typ == TYP_BOOL:
+        if self.typ == PrimitiveTypeId.TYP_BOOL:
             emit_load_i_const(cmpl_obj.memory, 0, False, 0)
             cmpl_obj.memory.extend([
                 BC_CONV, (inp_bits << 4),  # input bits (for this BC_CONV, not inp_bits) are all zero
@@ -1344,7 +1296,7 @@ def compile_conv_general(cmpl_obj, conv_expr, context, cmpl_data=None, temp_link
         elif is_tgt_ref:  # DO temporary materialization
             raise TypeError("cannot do temporary materialization passing the wrong type of argument")
         elif is_src_ref:  # Do argument initialization given a reference
-            if src_vt.type_class_id == TYP_CLS_QUAL and tgt_vt.type_class_id == TYP_CLS_QUAL:
+            if src_vt.type_class_id == TypeClass.QUAL and tgt_vt.type_class_id == TypeClass.QUAL:
                 assert isinstance(src_vt, QualType)
                 assert isinstance(tgt_vt, QualType)
                 if tgt_vt.qual_id == QualType.QUAL_PTR:
@@ -1379,16 +1331,16 @@ def try_get_as_name(tokens, c, end, context):
     """
     del context
     start = c
-    if tokens[c].type_id != CLS_NAME and tokens[c].str != "::":
+    if tokens[c].type_id != TokenClass.NAME and tokens[c].str != "::":
         return None, start
     c += 1
     while c < end:
-        if tokens[c-1].type_id == CLS_NAME:
+        if tokens[c-1].type_id == TokenClass.NAME:
             if tokens[c].str != "::":
                 return tokens[start:c], c
             c += 1
         elif tokens[c-1].str == "::":
-            if tokens[c].type_id != CLS_NAME or tokens[c].str in KEYWORDS:
+            if tokens[c].type_id != TokenClass.NAME or tokens[c].str in KEYWORDS:
                 return tokens[start:c], c
             c += 1
     return tokens[start:c], c
@@ -1432,7 +1384,7 @@ class ExprLocalVars(object):
 
 
 class QualType(BaseType):
-    type_class_id = TYP_CLS_QUAL
+    type_class_id = TypeClass.QUAL
     QUAL_DEF = 0
     QUAL_CONST = 1
     QUAL_PTR = 2
@@ -1576,7 +1528,7 @@ class QualType(BaseType):
         if expr.t_anot is None:
             raise TypeError("Expected Expression to have a type")
         if self.qual_id == QualType.QUAL_REF:
-            if expr.t_anot.type_class_id != TYP_CLS_QUAL:
+            if expr.t_anot.type_class_id != TypeClass.QUAL:
                 pass
             if not compare_no_cvr(self.tgt_type, get_value_type(expr.t_anot)):
                 raise TypeError("Bad Reference: %r, %r" % (self, expr.t_anot))
@@ -1584,7 +1536,7 @@ class QualType(BaseType):
         else:
             if not compare_no_cvr(self, get_value_type(expr.t_anot)):
                 raise TypeError("Bad Type: %r, %r" % (self, expr.t_anot))
-        return CastOpExpr(self, expr, CastOpExpr.CAST_IMPLICIT)
+        return CastOpExpr(self, expr, CastType.IMPLICIT)
 
     def compile_conv(self, cmpl_obj, expr, context, cmpl_data=None, temp_links=None):
         """
@@ -1595,7 +1547,7 @@ class QualType(BaseType):
         :param list[(BaseType,BaseLink)]|None temp_links:
         """
         from_type = expr.t_anot
-        if from_type.type_class_id == TYP_CLS_PRIM:
+        if from_type.type_class_id == TypeClass.PRIM:
             assert isinstance(from_type, PrimitiveType)
             if from_type.typ in INT_TYPE_CODES:
                 sz_cls = from_type.size.bit_length() - 1
@@ -1617,7 +1569,7 @@ class QualType(BaseType):
                     BC_CONV, inp_bits | (out_bits << 4)
                 ])
             return 8
-        elif from_type.type_class_id == TYP_CLS_QUAL:
+        elif from_type.type_class_id == TypeClass.QUAL:
             assert isinstance(from_type, QualType)
             from_vt = from_type.tgt_type if from_type.qual_id == QualType.QUAL_REF else from_type
             if self.qual_id == QualType.QUAL_REF and from_type.qual_id == QualType.QUAL_REF:
@@ -1658,7 +1610,7 @@ class QualType(BaseType):
             ctx_var = ref.ctx_var
             if ctx_var is not None:
                 assert isinstance(ctx_var, ContextVariable)
-                if ctx_var.typ.type_class_id == TYP_CLS_MULTI:
+                if ctx_var.typ.type_class_id == TypeClass.MULTI:
                     assert isinstance(ctx_var, OverloadedCtxVar)
                     assert ctx_var.specific_ctx_vars is not None
                     for var in ctx_var.specific_ctx_vars:
@@ -1688,7 +1640,7 @@ class QualType(BaseType):
                 cmpl_obj1 = cmpl_obj.spawn_compile_object(CMPL_T_FUNCTION, name)
             elif not is_local:
                 assert isinstance(cmpl_obj, Compilation)
-                if ctx_var.mods != ContextVariable.MOD_EXTERN:
+                if ctx_var.mods != VarDeclMods.EXTERN:
                     cmpl_obj1 = cmpl_obj.spawn_compile_object(CMPL_T_GLOBAL, name)
         elif ref.ref_type == VAR_REF_LNK_PREALLOC:
             assert isinstance(ref, VarRefLnkPrealloc)
@@ -1849,7 +1801,7 @@ def get_base_type(tokens, c, end, context):
     base_type = None
     is_prim = False
     while c < end:
-        if tokens[c].type_id == CLS_NAME and tokens[c].str in KEYWORDS:
+        if tokens[c].type_id == TokenClass.NAME and tokens[c].str in KEYWORDS:
             meta_type_type = -1
             try:
                 meta_type_type = META_TYPE_LST.index(tokens[c].str)
@@ -1973,7 +1925,7 @@ def proc_typed_decl(tokens, c, end, context, base_type=None):
     is_operator = False
     # collect tokens before the 'identifier' and place them in the pseudo-stack
     while c < end:
-        if tokens[c].type_id == CLS_BRK_OP:
+        if tokens[c].type_id == TokenClass.BRK_OP:
             if tokens[c].str == "(":
                 s_end = c
                 c += 1
@@ -1989,18 +1941,18 @@ def proc_typed_decl(tokens, c, end, context, base_type=None):
                 i_type = 1
                 break
         elif (
-                (tokens[c].type_id == CLS_NAME and tokens[c].str not in {"const", "auto", "volatile", "register"}) or
+                (tokens[c].type_id == TokenClass.NAME and tokens[c].str not in {"const", "auto", "volatile", "register"}) or
                 tokens[c].str == "::"):
             i_type = 2
             i_start = c
             s_end = c
             c += 1
             while c < end:
-                if tokens[c - 1].type_id == CLS_NAME:
+                if tokens[c - 1].type_id == TokenClass.NAME:
                     if tokens[c - 1].str == "operator":
-                        if tokens[c].type_id == CLS_OPERATOR:
+                        if tokens[c].type_id == TokenClass.OPERATOR:
                             c += 1
-                        elif tokens[c].type_id == CLS_BRK_OP:
+                        elif tokens[c].type_id == TokenClass.BRK_OP:
                             if tokens[c].str == ",":
                                 c += 1
                             elif tokens[c].str == "(":
@@ -2020,7 +1972,7 @@ def proc_typed_decl(tokens, c, end, context, base_type=None):
                     elif tokens[c].str != "::":
                         break
                 elif tokens[c - 1].str == "::":
-                    if tokens[c].type_id != CLS_NAME:
+                    if tokens[c].type_id != TokenClass.NAME:
                         raise ParsingError(tokens, c, "Expected name to follow '::'")
                     elif tokens[c].str in KEYWORDS:
                         raise ParsingError(tokens, c, "Unexpected keyword following '::'")
@@ -2038,7 +1990,7 @@ def proc_typed_decl(tokens, c, end, context, base_type=None):
             raise ParsingError(tokens, c0, "Unexpected token")
     # process items after the identifier by creating QualType instances
     while c < end:
-        if tokens[c].type_id == CLS_BRK_OP:
+        if tokens[c].type_id == TokenClass.BRK_OP:
             if tokens[c].str == "(":
                 cancel = False
                 lvl = 1
@@ -2103,7 +2055,7 @@ def proc_typed_decl(tokens, c, end, context, base_type=None):
                 break
             else:
                 raise ParsingError(tokens, c, "Unsupported Breaking operator")
-        elif tokens[c].type_id == CLS_OPERATOR and tokens[c].str == "=":
+        elif tokens[c].type_id == TokenClass.OPERATOR and tokens[c].str == "=":
             break
         else:
             raise ParsingError(tokens, c, "Unexpected token")
@@ -2126,7 +2078,7 @@ def proc_typed_decl(tokens, c, end, context, base_type=None):
 
 
 class AsmStmnt(BaseStmnt):
-    stmnt_type = STMNT_ASM
+    stmnt_type = StmntType.ASM
 
     def __init__(self, inner_asm=None):
         """
@@ -2135,7 +2087,7 @@ class AsmStmnt(BaseStmnt):
         self.inner_asm = [] if inner_asm is None else inner_asm
         self.condition = None
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         """
         :param list[ParseClass] tokens:
         :param int c:
@@ -2152,7 +2104,7 @@ class AsmStmnt(BaseStmnt):
                 tok_key = tokens[c]
                 tok_eq = tokens[c + 1]
                 tok_val = tokens[c + 2]
-                assert tok_key.type_id == CLS_NAME and tok_eq.str == "=" and LiteralExpr.is_literal_token(tok_val), "expected syntax <name>=<literal>\n got %r, %r, %r" % (tok_key, tok_eq, tok_val)
+                assert tok_key.type_id == TokenClass.NAME and tok_eq.str == "=" and LiteralExpr.is_literal_token(tok_val), "expected syntax <name>=<literal>\n got %r, %r, %r" % (tok_key, tok_eq, tok_val)
                 self.condition[tok_key.str] = LiteralExpr.literal_to_value(tok_val)
                 c += 3
                 if tokens[c].str == ",":
@@ -2162,7 +2114,7 @@ class AsmStmnt(BaseStmnt):
         assert tokens[c].str == "{", tokens[c].str
         c += 1
         while c < end:
-            assert tokens[c].type_id == CLS_DBL_QUOTE, tokens[c]
+            assert tokens[c].type_id == TokenClass.DBL_QUOTE, tokens[c]
             self.inner_asm.append(LiteralExpr.literal_to_value(tokens[c]))
             c += 1
             tok = tokens[c]
@@ -2186,60 +2138,56 @@ def get_stmnt(tokens, c, end, context):
     """
     start = c
     position = tokens[c].line, tokens[c].col
-    pos = len(LST_STMNT_NAMES)
-    if tokens[c].type_id == CLS_NAME and is_type_name_part(tokens[c].str, context):
-        pos = STMNT_DECL
-    if pos == len(LST_STMNT_NAMES):
-        try:
-            pos = LST_STMNT_NAMES.index(tokens[c].str)
-        except ValueError:
-            pass
+    if tokens[c].type_id == TokenClass.NAME and is_type_name_part(tokens[c].str, context):
+        pos = StmntType.DECL
+    else:
+        pos = STMNT_KEY_TO_ID.get(tokens[c].str, StmntType.SEMI_COLON)
     rtn = None
-    if pos == STMNT_CURLY_STMNT:
+    if pos == StmntType.CURLY_STMNT:
         rtn = CurlyStmnt()
         c = rtn.build(tokens, c, end, context)
         if start == c:
+            pos = StmntType.SEMI_COLON
             rtn = SemiColonStmnt()
-            pos = len(LST_STMNT_NAMES)
             c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_IF:
+    elif pos == StmntType.IF:
         rtn = IfElse()
         c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_WHILE:
+    elif pos == StmntType.WHILE:
         rtn = WhileLoop()
         c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_FOR:
+    elif pos == StmntType.FOR:
         rtn = ForLoop()
         c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_RTN:
+    elif pos == StmntType.RTN:
         rtn = ReturnStmnt()
         c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_BRK:
+    elif pos == StmntType.BRK:
         rtn = BreakStmnt()
         c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_CONTINUE:
+    elif pos == StmntType.CONTINUE:
         rtn = ContinueStmnt()
         c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_NAMESPACE:
+    elif pos == StmntType.NAMESPACE:
         rtn = NamespaceStmnt()
         c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_TYPEDEF:
+    elif pos == StmntType.TYPEDEF:
         rtn = TypeDefStmnt()
         c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_DECL:
+    elif pos == StmntType.DECL:
         rtn = DeclStmnt()
-        # print "Before c = %u, end = %u, STMNT_DECL" % (c, end)
+        # print "Before c = %u, end = %u, StmntType.DECL" % (c, end)
         c = rtn.build(tokens, c, end, context)
-        # print "After c = %u, end = %u, STMNT_DECL" % (c, end)
-    elif pos == STMNT_ASM:
+        # print "After c = %u, end = %u, StmntType.DECL" % (c, end)
+    elif pos == StmntType.ASM:
         rtn = AsmStmnt()
         c = rtn.build(tokens, c, end, context)
-    elif pos == STMNT_SEMI_COLON:
+    elif pos == StmntType.SEMI_COLON:
         # NOTE: Make sure that DeclStmnt would not work here
         rtn = SemiColonStmnt()
-        # print "Before c = %u, end = %u, STMNT_SEMI_COLON" % (c, end)
+        # print "Before c = %u, end = %u, StmntType.SEMI_COLON" % (c, end)
         c = rtn.build(tokens, c, end, context)
-        # print "After c = %u, end = %u, STMNT_SEMI_COLON" % (c, end)
+        # print "After c = %u, end = %u, StmntType.SEMI_COLON" % (c, end)
     if rtn is None:
         raise LookupError("statement id: %u unaccounted for" % pos)
     rtn.position = position
@@ -2247,7 +2195,7 @@ def get_stmnt(tokens, c, end, context):
 
 
 class CurlyExpr(BaseExpr):
-    expr_id = EXPR_CURLY
+    expr_id = ExprType.CURLY
 
     def __init__(self, lst_expr=None):
         """
@@ -2265,7 +2213,7 @@ class CurlyExpr(BaseExpr):
     def pretty_repr(self):
         return [self.__class__.__name__, "("] + get_pretty_repr(self.lst_expr) + [")"]
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         lvl = 1
         start = c
         c += 1
@@ -2296,19 +2244,19 @@ class CurlyExpr(BaseExpr):
 
 def get_name_from_tokens(tokens, c):
     name = ""
-    if tokens[c].type_id == CLS_NAME:
+    if tokens[c].type_id == TokenClass.NAME:
         name += tokens[c].str
         c += 1
     while tokens[c].str == "::":
         name += "::"
         c += 1
-        if tokens[c].type_id == CLS_NAME:
+        if tokens[c].type_id == TokenClass.NAME:
             name += tokens[c].str
             if tokens[c].str == "operator":
                 c += 1
-                if tokens[c].type_id == CLS_OPERATOR:
+                if tokens[c].type_id == TokenClass.OPERATOR:
                     name += tokens[c].str
-                elif tokens[c].type_id == CLS_BRK_OP and tokens[c].str in ["[", "("]:
+                elif tokens[c].type_id == TokenClass.BRK_OP and tokens[c].str in ["[", "("]:
                     name += tokens[c].str
                     c += 1
                     if tokens[c].str not in ["[", "("]:
@@ -2323,7 +2271,7 @@ def get_name_from_tokens(tokens, c):
 
 
 class NameRefExpr(BaseExpr):
-    expr_id = EXPR_NAME
+    expr_id = ExprType.NAME
     # init-args added for __repr__
 
     def __init__(self, name=None):
@@ -2343,9 +2291,9 @@ class NameRefExpr(BaseExpr):
             self.ctx_var = name
             self.is_op_fn = name.is_op_fn
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         assert c < end
-        if tokens[c].type_id != CLS_NAME:
+        if tokens[c].type_id != TokenClass.NAME:
             raise ParsingError(tokens, c, "Expected a name")
         self.name, c = get_name_from_tokens(tokens, c)
         if self.name.rsplit("::", 1)[-1].startswith("operator"):
@@ -2356,7 +2304,7 @@ class NameRefExpr(BaseExpr):
         if not isinstance(ctx_var, ContextVariable):
             raise ParsingError(tokens, c, "Expected Variable")
         self.ctx_var = ctx_var
-        if ctx_var.typ.type_class_id != TYP_CLS_MULTI:
+        if ctx_var.typ.type_class_id != TypeClass.MULTI:
             self.t_anot = QualType(QualType.QUAL_REF, get_value_type(ctx_var.typ))
         return c
 
@@ -2365,7 +2313,7 @@ class NameRefExpr(BaseExpr):
 
 
 class LiteralExpr(BaseExpr):
-    expr_id = EXPR_LITERAL
+    expr_id = ExprType.LITERAL
     LIT_INT = 0
     LIT_FLOAT = 1
     LIT_CHR = 2
@@ -2379,7 +2327,7 @@ class LiteralExpr(BaseExpr):
         :param ParseClass tok:
         :rtype: bool
         """
-        return tok.type_id in LITERAL_TYPES or (tok.type_id == CLS_NAME and (tok.str == "true" or tok.str == "false"))
+        return tok.type_id in LITERAL_TYPES or (tok.type_id == TokenClass.NAME and (tok.str == "true" or tok.str == "false"))
 
     @classmethod
     def literal_to_value(cls, tok):
@@ -2388,10 +2336,10 @@ class LiteralExpr(BaseExpr):
         :rtype: str|int|float
         """
         s = tok.str
-        if tok.type_id == CLS_DBL_QUOTE:
+        if tok.type_id == TokenClass.DBL_QUOTE:
             vals, uni_spec = cls.parse_str_lit(s)
             return "".join(map(chr, vals))
-        elif tok.type_id == CLS_UNI_QUOTE:
+        elif tok.type_id == TokenClass.UNI_QUOTE:
             uni_spec = 0
             if s.startswith("u"):
                 uni_spec = 2
@@ -2407,20 +2355,20 @@ class LiteralExpr(BaseExpr):
             if len(lst_res) != 1 or c1 < e_q:
                 raise ValueError("Expected only one char")
             return lst_res[0]
-        elif tok.type_id == CLS_BIN_INT:
+        elif tok.type_id == TokenClass.BIN_INT:
             assert s.startswith("0b") or s.startswith("0B")
             return int(s[2:], 2)
-        elif tok.type_id == CLS_DEC_INT:
+        elif tok.type_id == TokenClass.DEC_INT:
             return int(s)
-        elif tok.type_id == CLS_OCT_INT:
+        elif tok.type_id == TokenClass.OCT_INT:
             assert s.startswith("0o") or s.startswith("0O") or s.startswith("0")
             return int(s[2:], 8)
-        elif tok.type_id == CLS_HEX_INT:
+        elif tok.type_id == TokenClass.HEX_INT:
             assert s.startswith("0x") or s.startswith("0X")
             return int(s[2:], 16)
-        elif tok.type_id == CLS_FLOAT:
+        elif tok.type_id == TokenClass.FLOAT:
             return float(s)
-        elif tok.type_id == CLS_NAME:
+        elif tok.type_id == TokenClass.NAME:
             if s == "true":
                 return True
             elif s == "false":
@@ -2534,13 +2482,13 @@ class LiteralExpr(BaseExpr):
         rtn.extend([","] + get_pretty_repr(self.v_lit) + [")"])
         return rtn
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         del end
         del context
         s = tokens[c].str
         if not self.is_literal_token(tokens[c]):
             raise ParsingError(tokens, c, "Expected literal")
-        if tokens[c].type_id in {CLS_DEC_INT, CLS_HEX_INT, CLS_BIN_INT, CLS_OCT_INT}:
+        if tokens[c].type_id in {TokenClass.DEC_INT, TokenClass.HEX_INT, TokenClass.BIN_INT, TokenClass.OCT_INT}:
             self.t_lit = LiteralExpr.LIT_INT
             end_pos = len(s)
             for c0 in range(len(s) - 1, -1, -1):
@@ -2568,25 +2516,24 @@ class LiteralExpr(BaseExpr):
             assert 0 <= i_lvl <= 2
             data = None
             int_base_type = tokens[c].type_id
-            if int_base_type == CLS_DEC_INT:
+            if int_base_type == TokenClass.DEC_INT:
                 data = int(s[:end_pos])
-            elif int_base_type == CLS_HEX_INT:
+            elif int_base_type == TokenClass.HEX_INT:
                 data = int(s[2:end_pos], 16)
-            elif int_base_type == CLS_BIN_INT:
+            elif int_base_type == TokenClass.BIN_INT:
                 data = int(s[2:end_pos], 2)
-            elif int_base_type == CLS_OCT_INT:
+            elif int_base_type == TokenClass.OCT_INT:
                 if s.startswith('0o'):
                     data = int(s[2:end_pos], 8)
                 else:
                     data = int(s[1:end_pos], 8)
             assert data is not None
             self.l_val = data
-            lst_opts = (
-                [(INT_I, unsign), (INT_L, unsign), (INT_LL, unsign)][i_lvl:]
-                if int_base_type == CLS_DEC_INT or unsign else
-                [(INT_I, 0), (INT_I, 1), (INT_L, 0), (INT_L, 1), (INT_LL, 0), (INT_LL, 1)][2 * i_lvl:]
+            lst_opts: List[Tuple[PrimitiveTypeId, int]] = (
+                [(PrimitiveTypeId.INT_I, unsign), (PrimitiveTypeId.INT_L, unsign), (PrimitiveTypeId.INT_LL, unsign)][i_lvl:]
+                if int_base_type == TokenClass.DEC_INT or unsign else
+                [(PrimitiveTypeId.INT_I, 0), (PrimitiveTypeId.INT_I, 1), (PrimitiveTypeId.INT_L, 0), (PrimitiveTypeId.INT_L, 1), (PrimitiveTypeId.INT_LL, 0), (PrimitiveTypeId.INT_LL, 1)][2 * i_lvl:]
             )
-            """ :type: list[(int, int)] """
             typ = None
             for TypeCode, Unsigned in lst_opts:
                 typ = PrimitiveType.from_type_code(TypeCode, 1 if Unsigned else -1)
@@ -2603,7 +2550,7 @@ class LiteralExpr(BaseExpr):
             if typ is None:
                 raise ParsingError(tokens, c, "Integer too large, Opts = %r" % lst_opts)
             self.t_anot = typ
-        elif tokens[c].type_id == CLS_FLOAT:
+        elif tokens[c].type_id == TokenClass.FLOAT:
             self.t_lit = LiteralExpr.LIT_FLOAT
             end_pos = len(s)
             ch = s[-1].lower()
@@ -2619,20 +2566,20 @@ class LiteralExpr(BaseExpr):
                     end_pos -= 1
             if ch == 'f':
                 end_pos -= 1
-                self.t_anot = PrimitiveType.from_type_code(FLT_F)
+                self.t_anot = PrimitiveType.from_type_code(PrimitiveTypeId.FLT_F)
             elif ch == 's':
                 end_pos -= 1
                 self.t_anot = PrimitiveType.from_str_name(["short", "float"])
             elif ch == 'd':
                 end_pos -= 1
-                self.t_anot = PrimitiveType.from_type_code(FLT_D)
+                self.t_anot = PrimitiveType.from_type_code(PrimitiveTypeId.FLT_D)
             if ch == 'l':
                 end_pos -= 1
-                self.t_anot = PrimitiveType.from_type_code(FLT_LD)
+                self.t_anot = PrimitiveType.from_type_code(PrimitiveTypeId.FLT_LD)
             else:
-                self.t_anot = PrimitiveType.from_type_code(FLT_D)
+                self.t_anot = PrimitiveType.from_type_code(PrimitiveTypeId.FLT_D)
             self.l_val = float(s[:end_pos])
-        elif tokens[c].type_id == CLS_UNI_QUOTE:
+        elif tokens[c].type_id == TokenClass.UNI_QUOTE:
             self.t_lit = LiteralExpr.LIT_CHR
             uni_spec = 0
             if s.startswith("u"):
@@ -2645,13 +2592,13 @@ class LiteralExpr(BaseExpr):
                 raise ParsingError(tokens, c, "Unrecognized literal prefix")
             ch_type = None
             if uni_spec == 1:
-                ch_type = PrimitiveType.from_type_code(INT_C)
+                ch_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C)
             elif uni_spec == 2:
-                ch_type = PrimitiveType.from_type_code(INT_C16)
+                ch_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C16)
             elif uni_spec == 3:
-                ch_type = PrimitiveType.from_type_code(INT_C32)
+                ch_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C32)
             if ch_type is None:
-                ch_type = PrimitiveType.from_type_code(INT_C)
+                ch_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C)
             s_q = s.find('\'') + 1
             e_q = s.rfind('\'')
             lst_res, c1 = LiteralExpr.parse_char_part(s_q, s, uni_spec)
@@ -2664,25 +2611,25 @@ class LiteralExpr(BaseExpr):
                 )
             self.l_val = lst_res[0]
             self.t_anot = QualType(QualType.QUAL_CONST, ch_type)
-        elif tokens[c].type_id == CLS_DBL_QUOTE:
+        elif tokens[c].type_id == TokenClass.DBL_QUOTE:
             self.t_lit = LiteralExpr.LIT_STR
             lst_vals, uni_spec = LiteralExpr.parse_str_lit(s)
             self.l_val = lst_vals
             ch_type = None
             if uni_spec == 1:
-                ch_type = PrimitiveType.from_type_code(INT_C)
+                ch_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C)
             elif uni_spec == 2:
-                ch_type = PrimitiveType.from_type_code(INT_C16)
+                ch_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C16)
             elif uni_spec == 3:
-                ch_type = PrimitiveType.from_type_code(INT_C32)
+                ch_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C32)
             if ch_type is None:
-                ch_type = PrimitiveType.from_type_code(INT_C)
+                ch_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C)
             self.t_anot = QualType(QualType.QUAL_REF, QualType(
                 QualType.QUAL_ARR,
                 QualType(QualType.QUAL_CONST, ch_type),
                 len(lst_vals) + 1  # plus 1 for null terminator
             ))
-        elif tokens[c].type_id == CLS_NAME:
+        elif tokens[c].type_id == TokenClass.NAME:
             self.t_lit = LiteralExpr.LIT_BOOL
             if s == "true":
                 self.l_val = True
@@ -2693,7 +2640,7 @@ class LiteralExpr(BaseExpr):
                     tokens, c,
                     "Expected a boolean literal (true or false)"
                 )
-            self.t_anot = PrimitiveType.from_type_code(TYP_BOOL)
+            self.t_anot = PrimitiveType.from_type_code(PrimitiveTypeId.TYP_BOOL)
         self.v_lit = s
         c += 1
         return c
@@ -2715,7 +2662,7 @@ def get_tgt_ref_type(typ):
     """
     vt = pt = get_base_prim_type(typ)
     is_ref = False
-    if pt.type_class_id == TYP_CLS_QUAL:
+    if pt.type_class_id == TypeClass.QUAL:
         assert isinstance(pt, QualType)
         if pt.qual_id == QualType.QUAL_REF:
             is_ref = True
@@ -2734,10 +2681,10 @@ def get_base_prim_type(typ):
     base_comp_types = {QualType.QUAL_FN, QualType.QUAL_PTR, QualType.QUAL_ARR, QualType.QUAL_REF}
     pass_thru_types = {
         QualType.QUAL_REG, QualType.QUAL_CONST, QualType.QUAL_DEF, QualType.QUAL_VOLATILE}
-    if typ.type_class_id == TYP_CLS_PRIM:
+    if typ.type_class_id == TypeClass.PRIM:
         assert isinstance(typ, PrimitiveType)
         return typ
-    elif typ.type_class_id == TYP_CLS_QUAL:
+    elif typ.type_class_id == TypeClass.QUAL:
         assert isinstance(typ, QualType)
         if typ.qual_id in base_comp_types:
             return typ
@@ -2745,10 +2692,10 @@ def get_base_prim_type(typ):
             return get_base_prim_type(typ.tgt_type)
         else:
             raise ValueError("Bad qual_id = %u" % typ.qual_id)
-    elif typ.type_class_id == TYP_CLS_ENUM:
+    elif typ.type_class_id == TypeClass.ENUM:
         assert isinstance(typ, EnumType)
         return typ.the_base_type
-    elif typ.type_class_id in [TYP_CLS_CLASS, TYP_CLS_STRUCT, TYP_CLS_UNION]:
+    elif typ.type_class_id in [TypeClass.CLASS, TypeClass.STRUCT, TypeClass.UNION]:
         assert isinstance(typ, (ClassType, StructType, UnionType))
         return typ
     else:
@@ -2769,7 +2716,7 @@ def get_asgn_fn_type(typ, is_const_ref=False):
 
 
 def get_asgn_sh_fn_type(typ, is_const_ref=False):
-    arg_t = PrimitiveType.from_type_code(INT_C, 1)
+    arg_t = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C, 1)
     if is_const_ref:
         arg_t = QualType(QualType.QUAL_REF, QualType(QualType.QUAL_CONST, arg_t))
     lvalue_type = QualType(QualType.QUAL_REF, typ)
@@ -2819,7 +2766,7 @@ def get_arithmetic_op_fn_type(typ, is_const_ref=False):
 
 
 def get_sh_fn_type(typ):
-    return QualType(QualType.QUAL_FN, typ, [typ, PrimitiveType.from_type_code(INT_C, 1)])
+    return QualType(QualType.QUAL_FN, typ, [typ, PrimitiveType.from_type_code(PrimitiveTypeId.INT_C, 1)])
 
 
 def get_cmp_op_fn_type(typ, is_const_ref=False):
@@ -2829,7 +2776,7 @@ def get_cmp_op_fn_type(typ, is_const_ref=False):
     return QualType(QualType.QUAL_FN, bool_t, [arg_t, arg_t])
 
 
-void_t = PrimitiveType.from_type_code(TYP_VOID)
+void_t = PrimitiveType.from_type_code(PrimitiveTypeId.TYP_VOID)
 int_types = [PrimitiveType.from_str_name(x) for x in [
     ["unsigned", "char"],
     ["signed", "char"],
@@ -2878,35 +2825,21 @@ OP_TYP_GENERIC = 3
 
 
 class UnaryOpExpr(BaseExpr):
-    expr_id = EXPR_UNI_OP
-    lst_prim_fns = [
-        # "UNARY_BOOL_NOT",
-        [get_uni_op_fn_type_v__v(bool_t)],
-        # "UNARY_PRE_DEC",
-        list(map(get_uni_op_fn_type_r__r, prim_types)),
-        # "UNARY_POST_DEC",
-        list(map(get_uni_op_fn_type_r__v, prim_types)),
-        # "UNARY_PRE_INC",
-        list(map(get_uni_op_fn_type_r__r, prim_types)),
-        # "UNARY_POST_INC",
-        list(map(get_uni_op_fn_type_r__v, prim_types)),
-        # "UNARY_BIT_NOT",
-        list(map(get_uni_op_fn_type_v__v, int_types)),
-        # "UNARY_STAR",
-        None,
-        # "UNARY_REFERENCE",
-        None,
-        # "UNARY_MINUS",
-        list(map(get_uni_op_fn_type_v__v, signed_num_types)),
-        # "UNARY_PLUS",
-        list(map(get_uni_op_fn_type_v__v, prim_types))
-    ]
+    expr_id = ExprType.UNI_OP
+    lst_prim_fns = {
+        UnaryExprSubType.BOOL_NOT: [get_uni_op_fn_type_v__v(bool_t)],
+        UnaryExprSubType.PRE_DEC: list(map(get_uni_op_fn_type_r__r, prim_types)),
+        UnaryExprSubType.POST_DEC: list(map(get_uni_op_fn_type_r__v, prim_types)),
+        UnaryExprSubType.PRE_INC: list(map(get_uni_op_fn_type_r__r, prim_types)),
+        UnaryExprSubType.POST_INC: list(map(get_uni_op_fn_type_r__v, prim_types)),
+        UnaryExprSubType.BIT_NOT: list(map(get_uni_op_fn_type_v__v, int_types)),
+        UnaryExprSubType.STAR: None,
+        UnaryExprSubType.REFERENCE: None,
+        UnaryExprSubType.MINUS: list(map(get_uni_op_fn_type_v__v, signed_num_types)),
+        UnaryExprSubType.PLUS: list(map(get_uni_op_fn_type_v__v, prim_types))
+    }
 
-    def __init__(self, type_id, a):
-        """
-        :param int type_id:
-        :param BaseExpr a:
-        """
+    def __init__(self, type_id: UnaryExprSubType, a: BaseExpr):
         self.type_id = type_id
         self.op_fn_type = OP_TYP_NATIVE
         self.op_fn_data = None
@@ -2917,17 +2850,19 @@ class UnaryOpExpr(BaseExpr):
             if index_fn_t >= len(fn_types):
                 tgt_type = None
                 src_vt = None
-                if type_id in [UNARY_PRE_DEC, UNARY_POST_DEC, UNARY_PRE_INC, UNARY_POST_INC]:
+                if type_id in [UnaryExprSubType.PRE_DEC, UnaryExprSubType.POST_DEC, UnaryExprSubType.PRE_INC, UnaryExprSubType.POST_INC]:
                     src_pt, src_vt, is_src_ref = get_tgt_ref_type(a.t_anot)
-                    if src_vt.type_class_id == TYP_CLS_QUAL:
+                    if src_vt.type_class_id == TypeClass.QUAL:
                         assert isinstance(src_vt, QualType)
                         if src_vt.qual_id == QualType.QUAL_PTR and is_src_ref:
                             tgt_type = src_vt.tgt_type
                 if tgt_type is None:
                     raise TypeError("No overloaded operator function for %s exists for type: %s" % (
-                        LST_BIN_OP_ID_MAP[type_id], get_user_str_from_type(a.t_anot)))
+                        type_id.name,
+                        get_user_str_from_type(a.t_anot)
+                    ))
                 assert isinstance(src_vt, QualType)
-                if type_id in [UNARY_PRE_DEC, UNARY_PRE_INC]:
+                if type_id in [UnaryExprSubType.PRE_DEC, UnaryExprSubType.PRE_INC]:
                     self.t_anot = a.t_anot
                 else:
                     self.t_anot = src_vt
@@ -2937,21 +2872,21 @@ class UnaryOpExpr(BaseExpr):
                 self.op_fn_data = index_fn_t
                 a = lst_conv[0]
                 self.t_anot = fn_types[index_fn_t].tgt_type
-        elif type_id == UNARY_REFERENCE:
+        elif type_id == UnaryExprSubType.REFERENCE:
             src_pt, src_vt, is_src_ref = get_tgt_ref_type(a.t_anot)
             if not is_src_ref:
                 raise TypeError("Cannot get the pointer to a non-reference type %s" % get_user_str_from_type(a.t_anot))
             self.t_anot = QualType(QualType.QUAL_PTR, src_vt)
-        elif type_id == UNARY_STAR:
+        elif type_id == UnaryExprSubType.STAR:
             src_pt, src_vt, is_src_ref = get_tgt_ref_type(a.t_anot)
             tgt_type = None
-            if src_vt.type_class_id == TYP_CLS_QUAL:
+            if src_vt.type_class_id == TypeClass.QUAL:
                 assert isinstance(src_vt, QualType)
                 if src_vt.qual_id == QualType.QUAL_PTR:
                     tgt_type = src_vt.tgt_type
             if tgt_type is None:
                 err_fmt = "\n".join([
-                    "Expected a pointer type for UNARY_STAR, given complete type %s,",
+                    "Expected a pointer type for UnaryExprSubType.STAR, given complete type %s,",
                     "  obtained prim_type = %s",
                     "  val_type = %s"
                 ])
@@ -2963,97 +2898,60 @@ class UnaryOpExpr(BaseExpr):
                     )
                 )
             if is_src_ref:
-                a = CastOpExpr(src_vt, a, CastOpExpr.CAST_IMPLICIT)
+                a = CastOpExpr(src_vt, a, CastType.IMPLICIT)
             self.t_anot = QualType(QualType.QUAL_REF, src_vt.tgt_type)
         else:
-            raise NotImplementedError("type_id = %s, is not implemented" % LST_UNI_OP_ID_MAP[type_id])
+            raise NotImplementedError("type_id = %s, is not implemented" % type_id.name)
         self.a = a
 
     def init_temps(self, main_temps):
         main_temps = super(UnaryOpExpr, self).init_temps(main_temps)
         return self.a.init_temps(main_temps)
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         raise NotImplementedError("Cannot call 'build' on operator expressions")
 
     def pretty_repr(self):
-        type_id = self.type_id
-        if 0 <= type_id < len(LST_UNI_OP_ID_MAP):
-            type_id = LST_UNI_OP_ID_MAP[type_id]
-        else:
-            type_id = repr(type_id)
-        return [self.__class__.__name__, "(", type_id, ","] + get_pretty_repr(self.a) + [")"]
+        return [self.__class__.__name__, "(", "UnaryExprSubType", ".", self.type_id.name, ","] + get_pretty_repr(self.a) + [")"]
 
 
 class BinaryOpExpr(BaseExpr):
-    expr_id = EXPR_BIN_OP
-    lst_prim_fns = [
-        # "BINARY_ASSGN",
-        list(map(get_asgn_fn_type, prim_types)),
-        # "BINARY_ASSGN_MOD",
-        list(map(get_asgn_fn_type, prim_types)),
-        # "BINARY_ASSGN_DIV",
-        list(map(get_asgn_fn_type, prim_types)),
-        # "BINARY_ASSGN_MUL",
-        list(map(get_asgn_fn_type, prim_types)),
-        # "BINARY_ASSGN_MINUS",
-        list(map(get_asgn_fn_type, prim_types)),
-        # "BINARY_ASSGN_PLUS",
-        list(map(get_asgn_fn_type, prim_types)),
-        # "BINARY_ASSGN_AND",
-        list(map(get_asgn_fn_type, int_types)),
-        # "BINARY_ASSGN_OR",
-        list(map(get_asgn_fn_type, int_types)),
-        # "BINARY_ASSGN_XOR",
-        list(map(get_asgn_fn_type, int_types)),
-        # "BINARY_ASSGN_RSHIFT",
-        list(map(get_asgn_sh_fn_type, int_types)),
-        # "BINARY_ASSGN_LSHIFT",
-        list(map(get_asgn_sh_fn_type, int_types)),
-        # "BINARY_MUL",
-        list(map(get_arithmetic_op_fn_type, prim_types)),
-        # "BINARY_DIV",
-        list(map(get_arithmetic_op_fn_type, prim_types)),
-        # "BINARY_MOD",
-        list(map(get_arithmetic_op_fn_type, prim_types)),
-        # "BINARY_MINUS",
-        list(map(get_arithmetic_op_fn_type, prim_types)),
-        # "BINARY_PLUS",
-        list(map(get_arithmetic_op_fn_type, prim_types)),
-        # "BINARY_LT",
-        list(map(get_cmp_op_fn_type, prim_types)),
-        # "BINARY_GT",
-        list(map(get_cmp_op_fn_type, prim_types)),
-        # "BINARY_LE",
-        list(map(get_cmp_op_fn_type, prim_types)),
-        # "BINARY_GE",
-        list(map(get_cmp_op_fn_type, prim_types)),
-        # "BINARY_NE",
-        list(map(get_cmp_op_fn_type, prim_types)),
-        # "BINARY_EQ",
-        list(map(get_cmp_op_fn_type, prim_types)),
-        # "BINARY_AND",
-        list(map(get_arithmetic_op_fn_type, int_types)),
-        # "BINARY_OR",
-        list(map(get_arithmetic_op_fn_type, int_types)),
-        # "BINARY_XOR",
-        list(map(get_arithmetic_op_fn_type, int_types)),
-        # "BINARY_RSHIFT",
-        list(map(get_sh_fn_type, int_types)),
-        # "BINARY_LSHIFT",
-        list(map(get_sh_fn_type, int_types)),
-        # "BINARY_SS_AND", #SPECIAL
-        [get_cmp_op_fn_type(bool_t)],
-        # "BINARY_SS_OR", #SPECIAL
-        [get_cmp_op_fn_type(bool_t)],
-    ]
+    expr_id = ExprType.BIN_OP
+    lst_prim_fns = {
+        BinaryExprSubType.ASSGN: list(map(get_asgn_fn_type, prim_types)),
+        BinaryExprSubType.ASSGN_MOD: list(map(get_asgn_fn_type, prim_types)),
+        BinaryExprSubType.ASSGN_DIV: list(map(get_asgn_fn_type, prim_types)),
+        BinaryExprSubType.ASSGN_MUL: list(map(get_asgn_fn_type, prim_types)),
+        BinaryExprSubType.ASSGN_MINUS: list(map(get_asgn_fn_type, prim_types)),
+        BinaryExprSubType.ASSGN_PLUS: list(map(get_asgn_fn_type, prim_types)),
+        BinaryExprSubType.ASSGN_AND: list(map(get_asgn_fn_type, int_types)),
+        BinaryExprSubType.ASSGN_OR: list(map(get_asgn_fn_type, int_types)),
+        BinaryExprSubType.ASSGN_XOR: list(map(get_asgn_fn_type, int_types)),
+        BinaryExprSubType.ASSGN_RSHIFT: list(map(get_asgn_sh_fn_type, int_types)),
+        BinaryExprSubType.ASSGN_LSHIFT: list(map(get_asgn_sh_fn_type, int_types)),
+        BinaryExprSubType.MUL: list(map(get_arithmetic_op_fn_type, prim_types)),
+        BinaryExprSubType.DIV: list(map(get_arithmetic_op_fn_type, prim_types)),
+        BinaryExprSubType.MOD: list(map(get_arithmetic_op_fn_type, prim_types)),
+        BinaryExprSubType.MINUS: list(map(get_arithmetic_op_fn_type, prim_types)),
+        BinaryExprSubType.PLUS: list(map(get_arithmetic_op_fn_type, prim_types)),
+        BinaryExprSubType.LT: list(map(get_cmp_op_fn_type, prim_types)),
+        BinaryExprSubType.GT: list(map(get_cmp_op_fn_type, prim_types)),
+        BinaryExprSubType.LE: list(map(get_cmp_op_fn_type, prim_types)),
+        BinaryExprSubType.GE: list(map(get_cmp_op_fn_type, prim_types)),
+        BinaryExprSubType.NE: list(map(get_cmp_op_fn_type, prim_types)),
+        BinaryExprSubType.EQ: list(map(get_cmp_op_fn_type, prim_types)),
+        BinaryExprSubType.AND: list(map(get_arithmetic_op_fn_type, int_types)),
+        BinaryExprSubType.OR: list(map(get_arithmetic_op_fn_type, int_types)),
+        BinaryExprSubType.XOR: list(map(get_arithmetic_op_fn_type, int_types)),
+        BinaryExprSubType.RSHIFT: list(map(get_sh_fn_type, int_types)),
+        BinaryExprSubType.LSHIFT: list(map(get_sh_fn_type, int_types)),
+        # SPECIAL
+        BinaryExprSubType.SS_AND: [get_cmp_op_fn_type(bool_t)],
+        # SPECIAL
+        BinaryExprSubType.SS_OR: [get_cmp_op_fn_type(bool_t)],
+    }
 
-    def __init__(self, type_id, a, b):
-        """
-        :param int type_id:
-        :param BaseExpr a:
-        :param BaseExpr b:
-        """
+    def __init__(self, type_id: BinaryExprSubType, a: BaseExpr, b: BaseExpr):
         self.type_id = type_id
         self.op_fn_type = OP_TYP_NATIVE
         self.op_fn_data = None  # should be int for native or ctx_var for function
@@ -3067,23 +2965,25 @@ class BinaryOpExpr(BaseExpr):
             if index_fn_t >= len(fn_types):
                 ok = False
                 tgt_pt, tgt_vt, is_tgt_ref = get_tgt_ref_type(a.t_anot)
-                if tgt_vt.type_class_id == TYP_CLS_QUAL:
+                if tgt_vt.type_class_id == TypeClass.QUAL:
                     assert isinstance(tgt_vt, QualType)
                     if tgt_vt.qual_id == QualType.QUAL_PTR:
                         ok = True
                 if not ok:
                     raise TypeError("No overloaded operator function for %s exists for types: %s and %s" % (
-                        LST_BIN_OP_ID_MAP[type_id], get_user_str_from_type(a.t_anot), get_user_str_from_type(b.t_anot)))
+                        type_id.name,
+                        get_user_str_from_type(a.t_anot),
+                        get_user_str_from_type(b.t_anot)
+                    ))
                 self.op_fn_type = OP_TYP_PTR_GENERIC
-                # fn_types = []  # pycharm says this is unused
                 self.op_fn_data = 0
-                if type_id == BINARY_ASSGN:
+                if type_id == BinaryExprSubType.ASSGN:
                     ref_type = QualType(QualType.QUAL_REF, tgt_vt)
                     a = get_implicit_conv_expr(a, ref_type)[0]
                     b = get_implicit_conv_expr(b, tgt_vt)[0]
                     self.t_anot = ref_type
                     ok = True
-                elif type_id in [BINARY_ASSGN_MINUS, BINARY_ASSGN_PLUS]:
+                elif type_id in [BinaryExprSubType.ASSGN_MINUS, BinaryExprSubType.ASSGN_PLUS]:
                     ref_type = QualType(QualType.QUAL_REF, tgt_vt)
                     a = get_implicit_conv_expr(a, ref_type)[0]
                     res = get_implicit_conv_expr(b, snz_l_t)
@@ -3095,7 +2995,7 @@ class BinaryOpExpr(BaseExpr):
                     b = res[0]
                     self.t_anot = ref_type
                     ok = True
-                elif type_id == BINARY_PLUS:
+                elif type_id == BinaryExprSubType.PLUS:
                     a = get_implicit_conv_expr(a, tgt_vt)[0]
                     res = get_implicit_conv_expr(b, snz_l_t)
                     if res is None or res[1] == 0:
@@ -3106,7 +3006,7 @@ class BinaryOpExpr(BaseExpr):
                     b = res[0]
                     self.t_anot = tgt_vt
                     ok = True
-                elif type_id == BINARY_MINUS:
+                elif type_id == BinaryExprSubType.MINUS:
                     lst_try = [
                         size_l_t,
                         snz_l_t,
@@ -3138,11 +3038,14 @@ class BinaryOpExpr(BaseExpr):
                         b = best[0]
                         a = get_implicit_conv_expr(a, tgt_vt)[0]
                         ok = True
-                if not ok and type_id == BINARY_ASSGN:
+                if not ok and type_id == BinaryExprSubType.ASSGN:
                     self.op_fn_type = OP_TYP_GENERIC
                 if not ok:
                     raise TypeError("No overloaded operator function for %s exists for types: %s and %s" % (
-                        LST_BIN_OP_ID_MAP[type_id], get_user_str_from_type(a.t_anot), get_user_str_from_type(b.t_anot)))
+                        type_id.name,
+                        get_user_str_from_type(a.t_anot),
+                        get_user_str_from_type(b.t_anot)
+                    ))
             else:
                 self.op_fn_data = index_fn_t
                 a = lst_conv[0]
@@ -3155,16 +3058,11 @@ class BinaryOpExpr(BaseExpr):
         main_temps = super(BinaryOpExpr, self).init_temps(main_temps)
         return self.a.init_temps(self.b.init_temps(main_temps))
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         raise NotImplementedError("Cannot call 'build' on operator expressions")
 
     def pretty_repr(self):
-        type_id = self.type_id
-        if 0 <= type_id < len(LST_BIN_OP_ID_MAP):
-            type_id = LST_BIN_OP_ID_MAP[type_id]
-        else:
-            type_id = repr(type_id)
-        rtn = [self.__class__.__name__, "(", type_id]
+        rtn = [self.__class__.__name__, "(", "BinaryExprSubType", ".", self.type_id.name]
         for inst in (self.a, self.b):
             rtn.extend([","] + get_pretty_repr(inst))
         rtn.append(")")
@@ -3172,19 +3070,15 @@ class BinaryOpExpr(BaseExpr):
 
 
 class SpecialPtrMemberExpr(BaseExpr):
-    expr_id = EXPR_PTR_MEMBER
+    expr_id = ExprType.PTR_MEMBER
 
-    def __init__(self, obj, attr):
-        """
-        :param BaseExpr obj:
-        :param str attr:
-        """
+    def __init__(self, obj: BaseExpr, attr: str):
         self.obj = obj
         self.attr = attr
         if self.obj.t_anot is None:
             return
         src_ptr_pt, src_ptr_vt, is_src_ptr_ref = get_tgt_ref_type(self.obj.t_anot)
-        if src_ptr_vt.type_class_id != TYP_CLS_QUAL:
+        if src_ptr_vt.type_class_id != TypeClass.QUAL:
             raise TypeError("Expected Pointer type for '->' operator")
         assert isinstance(src_ptr_vt, QualType)
         if src_ptr_vt.qual_id != QualType.QUAL_PTR:
@@ -3192,11 +3086,11 @@ class SpecialPtrMemberExpr(BaseExpr):
         if is_src_ptr_ref:
             self.obj = CastOpExpr(src_ptr_vt, obj)
         src_vt = get_base_prim_type(src_ptr_vt.tgt_type)
-        if src_vt.type_class_id not in [TYP_CLS_STRUCT, TYP_CLS_UNION, TYP_CLS_CLASS]:
+        if src_vt.type_class_id not in [TypeClass.STRUCT, TypeClass.UNION, TypeClass.CLASS]:
             raise TypeError("Cannot use '->' operator on non-class/struct/union pointer types")
         assert isinstance(src_vt, (StructType, UnionType, ClassType))
         ctx_var = None
-        if src_vt.type_class_id == TYP_CLS_UNION:
+        if src_vt.type_class_id == TypeClass.UNION:
             assert isinstance(src_vt, UnionType)
             ctx_var = src_vt.definition.get(attr, ctx_var)
         else:
@@ -3217,7 +3111,7 @@ class SpecialPtrMemberExpr(BaseExpr):
         main_temps = super(SpecialPtrMemberExpr, self).init_temps(main_temps)
         return self.obj.init_temps(main_temps)
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         raise NotImplementedError("Cannot call 'build' on operator expressions")
 
     def pretty_repr(self):
@@ -3225,24 +3119,20 @@ class SpecialPtrMemberExpr(BaseExpr):
 
 
 class SpecialDotExpr(BaseExpr):
-    expr_id = EXPR_DOT
+    expr_id = ExprType.DOT
 
-    def __init__(self, obj, attr):
-        """
-        :param BaseExpr obj:
-        :param str attr:
-        """
+    def __init__(self, obj: BaseExpr, attr: str):
         self.obj = obj
         self.attr = attr
         self.do_deref = False
         if self.obj.t_anot is None:
             return
         src_pt, src_vt, is_src_ref = get_tgt_ref_type(self.obj.t_anot)
-        if src_vt.type_class_id not in [TYP_CLS_STRUCT, TYP_CLS_UNION, TYP_CLS_CLASS]:
+        if src_vt.type_class_id not in [TypeClass.STRUCT, TypeClass.UNION, TypeClass.CLASS]:
             raise TypeError("Cannot use '.' operator on non-class/struct/union types, got src_vt = %s, obj = %s" % (get_user_str_from_type(src_vt), obj))
         assert isinstance(src_vt, (StructType, UnionType, ClassType))
         ctx_var = None
-        if src_vt.type_class_id == TYP_CLS_UNION:
+        if src_vt.type_class_id == TypeClass.UNION:
             assert isinstance(src_vt, UnionType)
             ctx_var = src_vt.definition.get(attr, ctx_var)
         else:
@@ -3264,25 +3154,23 @@ class SpecialDotExpr(BaseExpr):
         main_temps = super(SpecialDotExpr, self).init_temps(main_temps)
         return self.obj.init_temps(main_temps)
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         raise NotImplementedError("Cannot call 'build' on operator expressions")
 
     def pretty_repr(self):
         return [self.__class__.__name__] + get_pretty_repr((self.obj, self.attr))
 
 
-class CastOpExpr(BaseExpr):
-    expr_id = EXPR_CAST
-    CAST_PROMOTION = 0
-    CAST_IMPLICIT = 1
-    CAST_EXPLICIT = 2
+class CastType(Enum):
+    PROMOTION = 0
+    IMPLICIT = 1
+    EXPLICIT = 2
 
-    def __init__(self, type_name, expr, cast_type=2):
-        """
-        :param BaseType type_name:
-        :param BaseExpr expr:
-        :param int cast_type:
-        """
+
+class CastOpExpr(BaseExpr):
+    expr_id = ExprType.CAST
+
+    def __init__(self, type_name: BaseType, expr: BaseExpr, cast_type: CastType = CastType.EXPLICIT):
         assert expr.t_anot is not None, repr(expr)
         src_pt, src_vt, is_src_ref = get_tgt_ref_type(expr.t_anot)
         tgt_pt, tgt_vt, is_tgt_ref = get_tgt_ref_type(type_name)
@@ -3300,19 +3188,18 @@ class CastOpExpr(BaseExpr):
         assert self.temps is self.expr.temps, "self.temps = %r, self.expr.temps = %r" % (self.temps, self.expr.temps)
         return res
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         raise NotImplementedError("Cannot call 'build' on C-Style Cast operator")
 
     def pretty_repr(self):
         rtn = [self.__class__.__name__] + get_pretty_repr((self.type_name, self.expr))
-        if self.cast_type != 2:
-            const_name = ["PROMOTION", "IMPLICIT", "EXPLICIT"]
-            rtn[-1:-1] = [",", rtn[0], ".", "CAST_%s" % const_name[self.cast_type]]
+        if self.cast_type != CastType.EXPLICIT:
+            rtn[-1:-1] = [",", "CastType", ".", self.cast_type.name]
         return rtn
 
 
 class FnCallExpr(BaseExpr):
-    expr_id = EXPR_FN_CALL
+    expr_id = ExprType.FN_CALL
 
     def __init__(self, fn, lst_args):
         """
@@ -3323,7 +3210,7 @@ class FnCallExpr(BaseExpr):
         self.lst_args = lst_args
         resolve_overloaded_fn(self)
         fn_vt = get_value_type(self.fn.t_anot)
-        assert fn_vt.type_class_id == TYP_CLS_QUAL
+        assert fn_vt.type_class_id == TypeClass.QUAL
         assert isinstance(fn_vt, QualType)
         assert fn_vt.qual_id == QualType.QUAL_FN
         self.t_anot = fn_vt.tgt_type
@@ -3338,12 +3225,12 @@ class FnCallExpr(BaseExpr):
     def pretty_repr(self):
         return [self.__class__.__name__] + get_pretty_repr((self.fn, self.lst_args))
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         raise NotImplementedError("Cannot call 'build' on FnCallExpr")
 
 
 class ParenthExpr(BaseExpr):
-    expr_id = EXPR_PARENTH
+    expr_id = ExprType.PARENTH
 
     def __init__(self, lst_expr):
         """
@@ -3362,13 +3249,13 @@ class ParenthExpr(BaseExpr):
     def pretty_repr(self):
         return [self.__class__.__name__, "("] + get_pretty_repr(self.lst_expr) + [")"]
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         raise NotImplementedError("Cannot call 'build' on ParenthExpr")
 
 
 # SParenth means '[' (Square)
 class SParenthExpr(BaseExpr):
-    expr_id = EXPR_SPARENTH
+    expr_id = ExprType.SPARENTH
 
     def __init__(self, left_expr, inner_expr):
         """
@@ -3377,11 +3264,11 @@ class SParenthExpr(BaseExpr):
         """
         if left_expr.t_anot is not None and inner_expr.t_anot is not None:
             p_t, l_t, is_l_ref = get_tgt_ref_type(left_expr.t_anot)
-            if l_t.type_class_id == TYP_CLS_QUAL:
+            if l_t.type_class_id == TypeClass.QUAL:
                 assert isinstance(l_t, QualType)
                 if l_t.qual_id == QualType.QUAL_PTR or (l_t.qual_id == QualType.QUAL_ARR and is_l_ref):
                     if l_t.qual_id == QualType.QUAL_PTR and is_l_ref:
-                        left_expr = CastOpExpr(l_t, left_expr, CastOpExpr.CAST_IMPLICIT)
+                        left_expr = CastOpExpr(l_t, left_expr, CastType.IMPLICIT)
                     self.t_anot = QualType(QualType.QUAL_REF, l_t.tgt_type)
                     res = get_implicit_conv_expr(inner_expr, size_l_t)
                     if res is None:
@@ -3418,12 +3305,12 @@ class SParenthExpr(BaseExpr):
     def pretty_repr(self):
         return [self.__class__.__name__] + get_pretty_repr((self.left_expr, self.inner_expr))
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         raise NotImplementedError("Cannot call 'build' on SParenthExpr")
 
 
 class InlineIfExpr(BaseExpr):
-    expr_id = EXPR_INLINE_IF
+    expr_id = ExprType.INLINE_IF
 
     def __init__(self, cond, if_true, if_false):
         """
@@ -3445,7 +3332,7 @@ class InlineIfExpr(BaseExpr):
     def pretty_repr(self):
         return [self.__class__.__name__] + get_pretty_repr((self.cond, self.if_true, self.if_false))
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         raise NotImplementedError("Cannot call 'build' on InlineIfExpr")
 
 
@@ -3518,7 +3405,7 @@ class SimpleOpPart(BaseOpPart):
         else:
             raise ValueError("cannot accept '%s'" % self.txt)
         super(SimpleOpPart, self).__init__()
-        # self.is_op = tok.type_id in [CLS_BRK_OP, CLS_OPERATOR]
+        # self.is_op = tok.type_id in [TokenClass.BRK_OP, TokenClass.OPERATOR]
         self.is_expr = not any([self.can_prefix, self.can_infix, self.can_postfix])
 
     def __repr__(self):
@@ -3718,21 +3605,24 @@ def mangle_decl(name, typ, is_local, is_op_fn=False):
             return "@".join(lst_rtn) + "?" + typ.to_mangle_str(True) + name
 
 
-class ContextVariable(ContextMember, PrettyRepr):
-    MOD_DEFAULT = 0
-    MOD_STATIC = 1
-    MOD_EXTERN = 2
-    MOD_IS_ARG = 3
+class VarDeclMods(Enum):
+    DEFAULT = 0
+    STATIC = 1
+    EXTERN = 2
+    IS_ARG = 3
 
-    def __init__(self, name, typ, init_expr=None, mods=0):
-        """
-        :param str name:
-        :param BaseType typ:
-        :param init_expr:
-        :param mods:
-        """
+
+class ContextVariable(ContextMember, PrettyRepr):
+
+    def __init__(
+            self,
+            name: str,
+            typ: BaseType,
+            init_expr: Optional[BaseExpr] = None,
+            mods: VarDeclMods = VarDeclMods.DEFAULT
+    ):
         super(ContextVariable, self).__init__(name, None)
-        # self.Size = SizeOf(typ, Mods == ContextVariable.MOD_IS_ARG)
+        # self.Size = SizeOf(typ, Mods == VarDeclMods.IS_ARG)
         self.init_expr = init_expr
         self.is_op_fn = False
         self.typ = typ
@@ -3832,7 +3722,7 @@ def is_prim_type_id(typ, type_id):
     :param int type_id:
     :rtype: bool
     """
-    if typ.type_class_id == TYP_CLS_PRIM:
+    if typ.type_class_id == TypeClass.PRIM:
         assert isinstance(typ, PrimitiveType)
         return typ.typ == type_id
     return False
@@ -3847,7 +3737,7 @@ def is_default(typ):
 
 
 class MultiType(BaseType):
-    type_class_id = TYP_CLS_MULTI
+    type_class_id = TypeClass.MULTI
 
 
 def get_ellipses_conv_expr(expr):
@@ -3858,29 +3748,29 @@ def get_ellipses_conv_expr(expr):
     src_pt = get_base_prim_type(expr.t_anot)
     to_type = expr.t_anot
     src_vt = src_pt
-    if src_pt.type_class_id == TYP_CLS_QUAL:
+    if src_pt.type_class_id == TypeClass.QUAL:
         assert isinstance(src_pt, QualType)
         if src_pt.qual_id == QualType.QUAL_REF:
             src_vt = src_pt.tgt_type
-    if src_vt.type_class_id == TYP_CLS_QUAL:
+    if src_vt.type_class_id == TypeClass.QUAL:
         assert isinstance(src_vt, QualType)
         if src_vt.qual_id == QualType.QUAL_FN:
             to_type = QualType(QualType.QUAL_PTR, src_vt)
-    elif src_vt.type_class_id == TYP_CLS_PRIM:
+    elif src_vt.type_class_id == TypeClass.PRIM:
         assert isinstance(src_vt, PrimitiveType)
         if src_vt.typ in INT_TYPE_CODES:
-            if src_vt.size < SIZE_SIGN_MAP[INT_I][0]:
-                to_type = PrimitiveType.from_type_code(INT_I, -1 if src_vt.sign else 1)
+            if src_vt.size < SIZE_SIGN_MAP[PrimitiveTypeId.INT_I][0]:
+                to_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_I, -1 if src_vt.sign else 1)
         elif src_vt.typ in FLT_TYPE_CODES:
-            if src_vt.size < SIZE_SIGN_MAP[FLT_D][0]:
-                to_type = PrimitiveType.from_type_code(FLT_D)
+            if src_vt.size < SIZE_SIGN_MAP[PrimitiveTypeId.FLT_D][0]:
+                to_type = PrimitiveType.from_type_code(PrimitiveTypeId.FLT_D)
         else:
             raise ValueError("Unexpected Primitive Type = %r" % src_vt)
     else:
         raise ValueError("Unexpected Type = %r" % src_vt)
     rtn = expr
     if to_type is not expr.t_anot:
-        rtn = CastOpExpr(to_type, expr, CastOpExpr.CAST_IMPLICIT)
+        rtn = CastOpExpr(to_type, expr, CastType.IMPLICIT)
     return rtn, 6
 
 
@@ -3940,25 +3830,25 @@ def get_user_def_conv_expr(expr, to_type):
     """
     src_pt = get_base_prim_type(expr.t_anot)
     tgt_pt = get_base_prim_type(to_type)
-    if tgt_pt.type_class_id in [TYP_CLS_CLASS, TYP_CLS_STRUCT, TYP_CLS_UNION]:
+    if tgt_pt.type_class_id in [TypeClass.CLASS, TypeClass.STRUCT, TypeClass.UNION]:
         assert isinstance(tgt_pt, (StructType, ClassType, UnionType))
         raise NotImplementedError("Not Implemented")
-    elif src_pt.type_class_id in [TYP_CLS_CLASS, TYP_CLS_STRUCT, TYP_CLS_UNION]:
+    elif src_pt.type_class_id in [TypeClass.CLASS, TypeClass.STRUCT, TypeClass.UNION]:
         assert isinstance(src_pt, (StructType, ClassType, UnionType))
         raise NotImplementedError("Not Implemented")
-    elif tgt_pt.type_class_id == TYP_CLS_QUAL:
+    elif tgt_pt.type_class_id == TypeClass.QUAL:
         assert isinstance(tgt_pt, QualType)
         if tgt_pt.qual_id == QualType.QUAL_REF:
             tgt_pt1 = tgt_pt.tgt_type
-            if tgt_pt1.type_class_id in [TYP_CLS_CLASS, TYP_CLS_STRUCT, TYP_CLS_UNION]:
+            if tgt_pt1.type_class_id in [TypeClass.CLASS, TypeClass.STRUCT, TypeClass.UNION]:
                 assert isinstance(tgt_pt1, (StructType, ClassType, UnionType))
                 if not compare_no_cvr(src_pt, tgt_pt):
                     raise NotImplementedError("Not Implemented: %s -> %s" % (get_user_str_from_type(expr.t_anot), get_user_str_from_type(to_type)))
-    elif src_pt.type_class_id == TYP_CLS_QUAL:
+    elif src_pt.type_class_id == TypeClass.QUAL:
         assert isinstance(src_pt, QualType)
         if src_pt.qual_id == QualType.QUAL_REF:
             src_pt1 = src_pt.tgt_type
-            if src_pt1.type_class_id in [TYP_CLS_CLASS, TYP_CLS_STRUCT, TYP_CLS_UNION]:
+            if src_pt1.type_class_id in [TypeClass.CLASS, TypeClass.STRUCT, TypeClass.UNION]:
                 assert isinstance(src_pt1, (StructType, ClassType, UnionType))
                 raise NotImplementedError("Not Implemented")
     return expr, 1
@@ -3982,7 +3872,7 @@ def get_user_def_conv_expr(expr, to_type):
 
 
 class DeclVarExpr(BaseExpr):
-    expr_id = EXPR_DECL_VAR
+    expr_id = ExprType.DECL_VAR
 
     def __init__(self, typ):
         self.t_anot = typ
@@ -3996,9 +3886,9 @@ def is_prim_or_ptr(typ):
     :param BaseType typ:
     :rtype: bool
     """
-    if typ.type_class_id == TYP_CLS_PRIM:
+    if typ.type_class_id == TypeClass.PRIM:
         return True
-    elif typ != TYP_CLS_QUAL:
+    elif typ != TypeClass.QUAL:
         return False
     assert isinstance(typ, QualType)
     return typ.qual_id == QualType.QUAL_PTR
@@ -4020,27 +3910,27 @@ def get_standard_conv_expr(expr, to_type):
     tgt_pt, tgt_vt, is_tgt_ref = get_tgt_ref_type(to_type)
     if compare_no_cvr(src_vt, tgt_vt):
         if is_tgt_ref ^ is_src_ref:
-            return CastOpExpr(to_type, expr, CastOpExpr.CAST_IMPLICIT), 2
+            return CastOpExpr(to_type, expr, CastType.IMPLICIT), 2
         return expr, 1
     elif is_src_ref and not is_tgt_ref and is_prim_or_ptr(src_vt):
-        return CastOpExpr(src_vt, expr, CastOpExpr.CAST_IMPLICIT), 4
-    if src_vt.type_class_id == TYP_CLS_PRIM and tgt_vt.type_class_id == TYP_CLS_PRIM:
+        return CastOpExpr(src_vt, expr, CastType.IMPLICIT), 4
+    if src_vt.type_class_id == TypeClass.PRIM and tgt_vt.type_class_id == TypeClass.PRIM:
         assert isinstance(src_vt, PrimitiveType)
         assert isinstance(tgt_vt, PrimitiveType)
         if src_vt.typ != tgt_vt.typ:
             if is_src_ref:
-                return CastOpExpr(src_vt, expr, CastOpExpr.CAST_IMPLICIT), 2
-            rtn = CastOpExpr(tgt_vt, expr, CastOpExpr.CAST_IMPLICIT)
+                return CastOpExpr(src_vt, expr, CastType.IMPLICIT), 2
+            rtn = CastOpExpr(tgt_vt, expr, CastType.IMPLICIT)
             if tgt_vt.size > src_vt.size:
                 if tgt_vt.typ in INT_TYPE_CODES and src_vt.typ in INT_TYPE_CODES:
-                    if tgt_vt.typ == INT_I:
+                    if tgt_vt.typ == PrimitiveTypeId.INT_I:
                         return rtn, 3
                 elif tgt_vt.typ in FLT_TYPE_CODES and src_vt.typ in FLT_TYPE_CODES:
-                    if tgt_vt.typ == FLT_D:
+                    if tgt_vt.typ == PrimitiveTypeId.FLT_D:
                         return rtn, 3
             return rtn, 4
         return expr, 1
-    if src_vt.type_class_id == TYP_CLS_QUAL and tgt_vt.type_class_id == TYP_CLS_QUAL:
+    if src_vt.type_class_id == TypeClass.QUAL and tgt_vt.type_class_id == TypeClass.QUAL:
         assert isinstance(src_vt, QualType)
         assert isinstance(tgt_vt, QualType)
         if tgt_vt.qual_id == QualType.QUAL_PTR:
@@ -4050,14 +3940,14 @@ def get_standard_conv_expr(expr, to_type):
                 if is_src_ref and is_tgt_ref:
                     return None
                 elif is_src_ref:
-                    return CastOpExpr(src_vt, expr, CastOpExpr.CAST_IMPLICIT), 2
+                    return CastOpExpr(src_vt, expr, CastType.IMPLICIT), 2
                 if compare_no_cvr(src_vt.tgt_type, tgt_vt.tgt_type):
                     if compare_no_cvr(src_vt, tgt_vt):
                         return expr, 1
                     else:
-                        return CastOpExpr(tgt_vt, expr, CastOpExpr.CAST_IMPLICIT), 2
-                elif is_prim_type_id(tgt_vt.tgt_type, TYP_VOID):
-                    return CastOpExpr(tgt_vt, expr, CastOpExpr.CAST_IMPLICIT), 4
+                        return CastOpExpr(tgt_vt, expr, CastType.IMPLICIT), 2
+                elif is_prim_type_id(tgt_vt.tgt_type, PrimitiveTypeId.TYP_VOID):
+                    return CastOpExpr(tgt_vt, expr, CastType.IMPLICIT), 4
                 if OVERLOAD_VERBOSE:
                     print("REASON: src_vt Pointer General")
                 return None
@@ -4066,10 +3956,10 @@ def get_standard_conv_expr(expr, to_type):
                     if OVERLOAD_VERBOSE:
                         print("REASON: Cannot cast function value")
                     return None
-                if is_prim_type_id(tgt_vt.tgt_type, TYP_VOID):
-                    return CastOpExpr(QualType(QualType.QUAL_PTR, src_vt), expr, CastOpExpr.CAST_IMPLICIT), 2
+                if is_prim_type_id(tgt_vt.tgt_type, PrimitiveTypeId.TYP_VOID):
+                    return CastOpExpr(QualType(QualType.QUAL_PTR, src_vt), expr, CastType.IMPLICIT), 2
                 elif compare_no_cvr(src_vt, tgt_vt.tgt_type):
-                    return CastOpExpr(tgt_vt, expr, CastOpExpr.CAST_IMPLICIT), 2
+                    return CastOpExpr(tgt_vt, expr, CastType.IMPLICIT), 2
                 if OVERLOAD_VERBOSE:
                     print("REASON: src_vt Function General")
                 return None
@@ -4079,9 +3969,9 @@ def get_standard_conv_expr(expr, to_type):
                         print("REASON: src_pt is not a reference to array")
                     return None
                 if compare_no_cvr(src_vt.tgt_type, tgt_vt.tgt_type):
-                    return CastOpExpr(tgt_vt, expr, CastOpExpr.CAST_IMPLICIT), 2
-                elif is_prim_type_id(tgt_vt.tgt_type, TYP_VOID):
-                    return CastOpExpr(QualType(QualType.QUAL_PTR, src_vt.tgt_type), expr, CastOpExpr.CAST_IMPLICIT), 2
+                    return CastOpExpr(tgt_vt, expr, CastType.IMPLICIT), 2
+                elif is_prim_type_id(tgt_vt.tgt_type, PrimitiveTypeId.TYP_VOID):
+                    return CastOpExpr(QualType(QualType.QUAL_PTR, src_vt.tgt_type), expr, CastType.IMPLICIT), 2
                 if OVERLOAD_VERBOSE:
                     print("REASON: src_vt Array General")
                 return None
@@ -4103,7 +3993,7 @@ def abstract_overload_resolver(lst_args, fn_types):
     lst_viable = [None] * len(fn_types)
     """ :type: list[(BaseType, list[(BaseExpr, int)])|None] """
     for c, typ in enumerate(fn_types):
-        assert typ.type_class_id == TYP_CLS_QUAL
+        assert typ.type_class_id == TypeClass.QUAL
         assert isinstance(typ, QualType)
         assert typ.qual_id == QualType.QUAL_FN
         variadic = False
@@ -4195,7 +4085,7 @@ def resolve_overloaded_fn(call_expr):
     :param FnCallExpr call_expr:
     """
     fn = call_expr.fn
-    if fn.expr_id != EXPR_NAME:
+    if fn.expr_id != ExprType.NAME:
         raise ValueError("Only named functions are directly referable")
     assert isinstance(fn, NameRefExpr)
     lst_args = call_expr.lst_args
@@ -4203,14 +4093,14 @@ def resolve_overloaded_fn(call_expr):
     ctx_var = fn.ctx_var
     lst_fns = [ctx_var]
     """ :type: list[ContextVariable] """
-    if ctx_var.typ.type_class_id == TYP_CLS_MULTI:
+    if ctx_var.typ.type_class_id == TypeClass.MULTI:
         assert isinstance(ctx_var, OverloadedCtxVar)
         lst_fns = ctx_var.specific_ctx_vars
     lst_viable = [None] * len(lst_fns)
     """ :type: list[(ContextVariable, list[(BaseExpr, int)])|None] """
     for c, TryFn in enumerate(lst_fns):
         typ = TryFn.typ
-        assert typ.type_class_id == TYP_CLS_QUAL
+        assert typ.type_class_id == TypeClass.QUAL
         assert isinstance(typ, QualType)
         assert typ.qual_id == QualType.QUAL_FN
         variadic = False
@@ -4330,7 +4220,7 @@ def is_fn_type(typ):
     :rtype: bool
     """
     v_type = get_base_prim_type(typ)
-    if v_type.type_class_id == TYP_CLS_QUAL:
+    if v_type.type_class_id == TypeClass.QUAL:
         assert isinstance(v_type, QualType)
         if v_type.qual_id == QualType.QUAL_FN:
             return True
@@ -4457,7 +4347,7 @@ class CompileContext(ContextMember):
             if not is_fn_type(inst.typ):
                 # raise NameError("Cannot have a function share the same name as a variable")
                 return var
-            if var.typ.type_class_id == TYP_CLS_MULTI:
+            if var.typ.type_class_id == TypeClass.MULTI:
                 assert isinstance(var, OverloadedCtxVar)
                 var.add_ctx_var(inst)
                 # print "AbsScopeGet(%r).NewVar(%r, %r) # OVERLOAD" % (self.GetFullName(), V, inst)
@@ -4710,7 +4600,7 @@ class LocalScope(CompileContext):
         :rtype: ContextVariable
         """
         vt = get_value_type(inst.typ)
-        if vt.type_class_id == TYP_CLS_QUAL:
+        if vt.type_class_id == TypeClass.QUAL:
             assert isinstance(vt, QualType)
             if vt.qual_id == QualType.QUAL_FN:
                 raise ValueError("Cannot define functions in LocalScope (attempt to define '%s')" % v)
@@ -4790,7 +4680,7 @@ class EnumType(CompileContext, BaseType):
     def get_expr_arg_type(self, expr):
         raise NotImplementedError("Not Implemented")
 
-    type_class_id = TYP_CLS_ENUM
+    type_class_id = TypeClass.ENUM
     mangle_captures = {
         'E': None
     }
@@ -4847,7 +4737,7 @@ class EnumType(CompileContext, BaseType):
         other.the_base_type = self.the_base_type
         other.defined = self.defined
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         # TODO: (mentioned later in this function)
         base_name, c = try_get_as_name(tokens, c, end, context)
         if base_name is not None:
@@ -4874,7 +4764,7 @@ class EnumType(CompileContext, BaseType):
             end_p = c - 1
             c = start
             while c < end_p:
-                if tokens[c].type_id == CLS_NAME:
+                if tokens[c].type_id == TokenClass.NAME:
                     name = tokens[c].str
                     if self.has_var_strict(name):
                         raise ParsingError(tokens, c, "Redefinition of enumerated name: '%s'" % name)
@@ -4882,7 +4772,7 @@ class EnumType(CompileContext, BaseType):
                     self.new_var(name, ContextVariable(name, self.the_base_type).const_init(expr))
                     # TODO: assert ConstExpr
                 else:
-                    raise ParsingError(tokens, c, "Expected type_id=CLS_NAME Token in enum")
+                    raise ParsingError(tokens, c, "Expected type_id=TokenClass.NAME Token in enum")
                 c += 1
             c = end_t
             self.defined = True
@@ -4900,32 +4790,28 @@ def get_strict_stmnt(tokens, c, end, context):
     assert isinstance(context, (ClassType, StructType, UnionType))
     # TODO: place all members in host_scopeable (allows for scoped 'using' [namespace])
     start = c
-    pos = len(LST_STMNT_NAMES)
-    if tokens[c].type_id == CLS_NAME and tokens[c].str == context.name and tokens[c + 1].str == "(":
-        pos = STMNT_DECL
-    elif tokens[c].type_id == CLS_NAME and is_type_name_part(tokens[c].str, context):
-        pos = STMNT_DECL
-    if pos == len(LST_STMNT_NAMES):
-        try:
-            pos = LST_STMNT_NAMES.index(tokens[c].str)
-        except ValueError:
-            pass
+    if tokens[c].type_id == TokenClass.NAME and tokens[c].str == context.name and tokens[c + 1].str == "(":
+        pos = StmntType.DECL
+    elif tokens[c].type_id == TokenClass.NAME and is_type_name_part(tokens[c].str, context):
+        pos = StmntType.DECL
+    else:
+        pos = STMNT_KEY_TO_ID.get(tokens[c].str, StmntType.SEMI_COLON)
     rtn = None
-    if pos == STMNT_CURLY_STMNT:
+    if pos == StmntType.CURLY_STMNT:
         rtn = CurlyStmnt()
         c = rtn.build(tokens, c, end, context)
         if start == c:
             raise ParsingError(tokens, c, "Expected only '{' statement (not expression)")
-    elif pos == STMNT_DECL:
+    elif pos == StmntType.DECL:
         rtn = DeclStmnt()
-        # print "Before c = %u, end = %u, STMNT_DECL" % (c, end)
+        # print "Before c = %u, end = %u, StmntType.DECL" % (c, end)
         c = rtn.build(tokens, c, end, context)
-        # print "After c = %u, end = %u, STMNT_DECL" % (c, end)
-    elif pos == STMNT_TYPEDEF:
+        # print "After c = %u, end = %u, StmntType.DECL" % (c, end)
+    elif pos == StmntType.TYPEDEF:
         rtn = TypeDefStmnt()
         c = rtn.build(tokens, c, end, context)
     if rtn is None:
-        raise ParsingError(tokens, c, "Expected only '{' statement or decl statement for strict statement")
+        raise ParsingError(tokens, c, "Expected only '{' statement or decl/typedef statement for strict statement")
     return rtn, c
 
 
@@ -4956,7 +4842,7 @@ class ClassType(CompileContext, BaseType):
     def get_expr_arg_type(self, expr):
         raise NotImplementedError("Not Implemented")
 
-    type_class_id = TYP_CLS_CLASS
+    type_class_id = TypeClass.CLASS
     mangle_captures = {
         'K': None
     }
@@ -5026,7 +4912,7 @@ class ClassType(CompileContext, BaseType):
         other.defined = self.defined
         other.the_base_type = self.the_base_type
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         base_name, c = try_get_as_name(tokens, c, end, context)
         if base_name is not None:
             self.name = "".join(map(tok_to_str, base_name))
@@ -5068,7 +4954,7 @@ class ClassType(CompileContext, BaseType):
         :param ContextVariable inst:
         :rtype: ContextVariable
         """
-        if inst.mods == ContextVariable.MOD_STATIC:
+        if inst.mods == VarDeclMods.STATIC:
             return super(ClassType, self).new_var(v, inst)
         self.definition[v] = len(self.var_order)
         self.var_order.append(inst)
@@ -5100,7 +4986,7 @@ class StructType(CompileContext, BaseType):
     def get_expr_arg_type(self, expr):
         raise NotImplementedError("Not Implemented")
 
-    type_class_id = TYP_CLS_STRUCT
+    type_class_id = TypeClass.STRUCT
     mangle_captures = {
         'B': None
     }
@@ -5170,7 +5056,7 @@ class StructType(CompileContext, BaseType):
         other.defined = self.defined
         other.the_base_type = self.the_base_type
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         base_name, c = try_get_as_name(tokens, c, end, context)
         if base_name is not None:
             self.name = "".join(map(tok_to_str, base_name))
@@ -5300,7 +5186,7 @@ class StructType(CompileContext, BaseType):
         :param ContextVariable inst:
         :rtype: ContextVariable
         """
-        if inst.mods == ContextVariable.MOD_STATIC:
+        if inst.mods == VarDeclMods.STATIC:
             return super(StructType, self).new_var(v, inst)
         self.definition[v] = len(self.var_order)
         self.var_order.append(inst)
@@ -5335,7 +5221,7 @@ class UnionType(CompileContext, BaseType):
     def get_expr_arg_type(self, expr):
         raise NotImplementedError("Not Implemented")
 
-    type_class_id = TYP_CLS_UNION
+    type_class_id = TypeClass.UNION
     mangle_captures = {
         'U': None
     }
@@ -5389,7 +5275,7 @@ class UnionType(CompileContext, BaseType):
         other.defined = self.defined
         other.the_base_type = self.the_base_type
 
-    def build(self, tokens, c, end, context):
+    def build(self, tokens: List[ParseClass], c: int, end: int, context: "CompileContext") -> int:
         base_name, c = try_get_as_name(tokens, c, end, context)
         if base_name is not None:
             self.name = "".join(map(tok_to_str, base_name))
@@ -5424,7 +5310,7 @@ class UnionType(CompileContext, BaseType):
 
     def new_var(self, v, inst):
         assert isinstance(inst, ContextVariable)
-        if inst.mods == ContextVariable.MOD_STATIC:
+        if inst.mods == VarDeclMods.STATIC:
             super(UnionType, self).new_var(v, inst)
         else:
             self.definition[v] = inst
@@ -5472,7 +5358,7 @@ def my_get_expr_part(tokens, c, end, context):
     elif s == ".":
         line, col = tokens[c].line, tokens[c].col
         c += 1
-        if tokens[c].type_id != CLS_NAME:
+        if tokens[c].type_id != TokenClass.NAME:
             raise ParsingError(tokens, c, "expected name after '.'")
         s += tokens[c].str
         c += 1
@@ -5480,7 +5366,7 @@ def my_get_expr_part(tokens, c, end, context):
     elif s == "->":
         line, col = tokens[c].line, tokens[c].col
         c += 1
-        if tokens[c].type_id != CLS_NAME:
+        if tokens[c].type_id != TokenClass.NAME:
             raise ParsingError(tokens, c, "expected name after '.'")
         s += tokens[c].str
         c += 1
@@ -5542,7 +5428,7 @@ def my_get_expr_part(tokens, c, end, context):
         expr, c = get_expr(tokens, c, ":", end, context)
         c += 1
         return InlineIfOpPart(expr), c
-    elif tokens[c].type_id == CLS_NAME:
+    elif tokens[c].type_id == TokenClass.NAME:
         rtn = NameRefExpr()
         c = rtn.build(tokens, c, end, context)
         return ExprOpPart(rtn), c
@@ -5865,7 +5751,7 @@ def compare_no_cvr(type_a, type_b, ignore_ref=False):
     """
     type_a = get_value_type(type_a) if ignore_ref else get_base_prim_type(type_a)
     type_b = get_value_type(type_b) if ignore_ref else get_base_prim_type(type_b)
-    while type_a.type_class_id == TYP_CLS_QUAL and type_b.type_class_id == TYP_CLS_QUAL:
+    while type_a.type_class_id == TypeClass.QUAL and type_b.type_class_id == TypeClass.QUAL:
         assert isinstance(type_a, QualType)
         assert isinstance(type_b, QualType)
         if type_a.qual_id != type_b.qual_id:
@@ -5887,7 +5773,7 @@ def compare_no_cvr(type_a, type_b, ignore_ref=False):
         type_b = get_base_prim_type(type_b.tgt_type)
     if type_a.type_class_id != type_b.type_class_id:
         return False
-    elif type_a.type_class_id == TYP_CLS_PRIM:
+    elif type_a.type_class_id == TypeClass.PRIM:
         assert isinstance(type_a, PrimitiveType)
         assert isinstance(type_b, PrimitiveType)
         return type_a.typ == type_b.typ and type_a.sign == type_b.sign
@@ -5939,17 +5825,15 @@ def try_catch_wrapper_co_expr(fn):
 parsing_vars = {}
 
 
-def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_links, res_type):
-    """
-    :param res_type:
-    :param BaseCmplObj cmpl_obj:
-    :param BinaryOpExpr expr:
-    :param CompileContext context:
-    :param LocalCompileData|None cmpl_data:
-    :param BaseType|None type_coerce:
-    :param list[(BaseType,BaseLink)]|None temp_links:
-    :rtype: (int, BaseType)
-    """
+def compile_bin_op_expr(
+        cmpl_obj: BaseCmplObj,
+        expr: BinaryOpExpr,
+        context: CompileContext,
+        cmpl_data: Optional["LocalCompileData"],
+        type_coerce: Optional[BaseType],
+        temp_links: Optional[List[Tuple[BaseType,BaseLink]]],
+        res_type
+) -> Tuple[int, BaseType]:
     assert expr.t_anot is not None
     typ = None
     is_flt = False
@@ -5989,20 +5873,20 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
             cmpl_obj.memory.extend([
                 BC_LOAD, BCR_TOS | BCR_SZ_8])
             sz1 += 8
-        if expr.type_id != BINARY_ASSGN:
+        if expr.type_id != BinaryExprSubType.ASSGN:
             cmpl_obj.memory.extend([
                 BC_LOAD, BCR_TOS | BCR_SZ_8,
                 BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)
             ])
             sz1 += sz_type
         try:
-            if expr.type_id not in [BINARY_ASSGN_LSHIFT, BINARY_ASSGN_RSHIFT]:
+            if expr.type_id not in [BinaryExprSubType.ASSGN_LSHIFT, BinaryExprSubType.ASSGN_RSHIFT]:
                 assert compare_no_cvr(expr.b.t_anot, typ), "expr.b.t_anot = %s, typ = %s, expr = %s" % (
                     get_user_str_from_type(expr.b.t_anot), get_user_str_from_type(typ),
                     format_pretty(expr)
                 )
             else:
-                assert compare_no_cvr(expr.b.t_anot, PrimitiveType.from_type_code(INT_C, 1)), "expr.b.t_anot = %s, typ = %s, expr = %s" % (
+                assert compare_no_cvr(expr.b.t_anot, PrimitiveType.from_type_code(PrimitiveTypeId.INT_C, 1)), "expr.b.t_anot = %s, typ = %s, expr = %s" % (
                     get_user_str_from_type(expr.b.t_anot), get_user_str_from_type(typ),
                     format_pretty(expr)
                 )
@@ -6012,9 +5896,9 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
             parsing_vars["cmpl_obj"] = cmpl_obj
             raise
         sz_type1 = sz_type
-        if expr.type_id in [BINARY_ASSGN_LSHIFT, BINARY_ASSGN_RSHIFT]:
+        if expr.type_id in [BinaryExprSubType.ASSGN_LSHIFT, BinaryExprSubType.ASSGN_RSHIFT]:
             sz_type1 = 1
-            sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, PrimitiveType.from_type_code(INT_C, 1), temp_links)
+            sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, PrimitiveType.from_type_code(PrimitiveTypeId.INT_C, 1), temp_links)
         else:
             sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, typ, temp_links)
         if inc_by != 1 and inc_by_before:
@@ -6023,18 +5907,18 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
         sz1 += sz
         assert sz_type1 == sz, "sz_type1 = %u, sz = %u; expr.b.t_anot = %s, typ = %s, expr.b = %r" % (
             sz_type, sz, get_user_str_from_type(expr.b.t_anot), get_user_str_from_type(typ), expr.b)
-        if expr.type_id != BINARY_ASSGN:
+        if expr.type_id != BinaryExprSubType.ASSGN:
             op_code_u, op_code_s, op_code_f = {
-                BINARY_ASSGN_MOD: (BC_MOD1, BC_MOD1S, BC_FMOD_2),
-                BINARY_ASSGN_DIV: (BC_DIV1, BC_DIV1S, BC_FDIV_2),
-                BINARY_ASSGN_MUL: (BC_MUL1, BC_MUL1S, BC_FMUL_2),
-                BINARY_ASSGN_MINUS: (BC_SUB1, BC_SUB1, BC_FSUB_2),
-                BINARY_ASSGN_PLUS: (BC_ADD1, BC_ADD1, BC_FADD_2),
-                BINARY_ASSGN_AND: (BC_AND1, BC_AND1, BC_NOP),
-                BINARY_ASSGN_OR: (BC_OR1, BC_OR1, BC_NOP),
-                BINARY_ASSGN_XOR: (BC_XOR1, BC_XOR1, BC_NOP),
-                BINARY_ASSGN_RSHIFT: (BC_RSHIFT1, BC_RSHIFT1, BC_NOP),
-                BINARY_ASSGN_LSHIFT: (BC_LSHIFT1, BC_LSHIFT1, BC_NOP),
+                BinaryExprSubType.ASSGN_MOD: (BC_MOD1, BC_MOD1S, BC_FMOD_2),
+                BinaryExprSubType.ASSGN_DIV: (BC_DIV1, BC_DIV1S, BC_FDIV_2),
+                BinaryExprSubType.ASSGN_MUL: (BC_MUL1, BC_MUL1S, BC_FMUL_2),
+                BinaryExprSubType.ASSGN_MINUS: (BC_SUB1, BC_SUB1, BC_FSUB_2),
+                BinaryExprSubType.ASSGN_PLUS: (BC_ADD1, BC_ADD1, BC_FADD_2),
+                BinaryExprSubType.ASSGN_AND: (BC_AND1, BC_AND1, BC_NOP),
+                BinaryExprSubType.ASSGN_OR: (BC_OR1, BC_OR1, BC_NOP),
+                BinaryExprSubType.ASSGN_XOR: (BC_XOR1, BC_XOR1, BC_NOP),
+                BinaryExprSubType.ASSGN_RSHIFT: (BC_RSHIFT1, BC_RSHIFT1, BC_NOP),
+                BinaryExprSubType.ASSGN_LSHIFT: (BC_LSHIFT1, BC_LSHIFT1, BC_NOP),
             }[expr.type_id]
             op_code = BC_NOP
             if is_flt:
@@ -6045,7 +5929,7 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
                 if op_code != BC_NOP:
                     op_code += sz_cls if op_code_s == op_code_u else (2 * sz_cls)
             if op_code == BC_NOP:
-                raise ValueError("Unsupported operator %s" % LST_BIN_OP_ID_MAP[expr.type_id])
+                raise ValueError("Unsupported operator %s" % expr.type_id.name)
             cmpl_obj.memory.append(op_code)
             sz1 -= sz_type1
         cmpl_obj.memory.extend([
@@ -6063,7 +5947,7 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
         assert sz == sz_type, "Expected typ = %r, expr.a.t_anot = %r, expr.a = %r, got sz = %u" % (
             typ, expr.a.t_anot, expr.a, sz)
         sz_type1 = sz_type
-        if expr.type_id in [BINARY_LSHIFT, BINARY_RSHIFT]:
+        if expr.type_id in [BinaryExprSubType.LSHIFT, BinaryExprSubType.RSHIFT]:
             sz_type1 = 1
         sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, None, temp_links)
         if inc_by != 1 and inc_by_before:
@@ -6072,22 +5956,22 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
         assert sz == sz_type1, "sz = %u, sz_type1 = %u" % (sz, sz_type1)
         sz = sz_type
         op_code_u, op_code_s, op_code_f = {
-            BINARY_MOD: (BC_MOD1, BC_MOD1S, BC_FMOD_2),
-            BINARY_DIV: (BC_DIV1, BC_DIV1S, BC_FDIV_2),
-            BINARY_MUL: (BC_MUL1, BC_MUL1S, BC_FMUL_2),
-            BINARY_MINUS: (BC_SUB1, BC_SUB1, BC_FSUB_2),
-            BINARY_PLUS: (BC_ADD1, BC_ADD1, BC_FADD_2),
-            BINARY_AND: (BC_AND1, BC_AND1, BC_NOP),
-            BINARY_OR: (BC_OR1, BC_OR1, BC_NOP),
-            BINARY_XOR: (BC_XOR1, BC_XOR1, BC_NOP),
-            BINARY_LT: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BINARY_GT: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BINARY_LE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BINARY_GE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BINARY_NE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BINARY_EQ: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BINARY_RSHIFT: (BC_RSHIFT1, BC_RSHIFT1, BC_NOP),
-            BINARY_LSHIFT: (BC_LSHIFT1, BC_LSHIFT1, BC_NOP),
+            BinaryExprSubType.MOD: (BC_MOD1, BC_MOD1S, BC_FMOD_2),
+            BinaryExprSubType.DIV: (BC_DIV1, BC_DIV1S, BC_FDIV_2),
+            BinaryExprSubType.MUL: (BC_MUL1, BC_MUL1S, BC_FMUL_2),
+            BinaryExprSubType.MINUS: (BC_SUB1, BC_SUB1, BC_FSUB_2),
+            BinaryExprSubType.PLUS: (BC_ADD1, BC_ADD1, BC_FADD_2),
+            BinaryExprSubType.AND: (BC_AND1, BC_AND1, BC_NOP),
+            BinaryExprSubType.OR: (BC_OR1, BC_OR1, BC_NOP),
+            BinaryExprSubType.XOR: (BC_XOR1, BC_XOR1, BC_NOP),
+            BinaryExprSubType.LT: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+            BinaryExprSubType.GT: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+            BinaryExprSubType.LE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+            BinaryExprSubType.GE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+            BinaryExprSubType.NE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+            BinaryExprSubType.EQ: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+            BinaryExprSubType.RSHIFT: (BC_RSHIFT1, BC_RSHIFT1, BC_NOP),
+            BinaryExprSubType.LSHIFT: (BC_LSHIFT1, BC_LSHIFT1, BC_NOP),
         }[expr.type_id]
         op_code = BC_NOP
         if is_flt:
@@ -6098,17 +5982,18 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
             if op_code != BC_NOP:
                 op_code += sz_cls if op_code_s == op_code_u else (2 * sz_cls)
         if op_code == BC_NOP:
-            raise ValueError("Unsupported operator %s" % LST_BIN_OP_ID_MAP[expr.type_id])
+            raise ValueError("Unsupported operator %s" % expr.type_id.name)
         cmpl_obj.memory.append(op_code)
-        if BINARY_LT <= expr.type_id <= BINARY_EQ:
-            cmp_op_code = {
-                BINARY_LT: BC_LT0,
-                BINARY_GT: BC_GT0,
-                BINARY_LE: BC_LE0,
-                BINARY_GE: BC_GE0,
-                BINARY_NE: BC_NE0,
-                BINARY_EQ: BC_EQ0
-            }[expr.type_id]
+        cmp_op_map = {
+            BinaryExprSubType.LT: BC_LT0,
+            BinaryExprSubType.GT: BC_GT0,
+            BinaryExprSubType.LE: BC_LE0,
+            BinaryExprSubType.GE: BC_GE0,
+            BinaryExprSubType.NE: BC_NE0,
+            BinaryExprSubType.EQ: BC_EQ0
+        }
+        if expr.type_id in cmp_op_map:
+            cmp_op_code = cmp_op_map[expr.type_id]
             cmpl_obj.memory.append(cmp_op_code)
             sz = 1
         elif inc_by != 1 and not inc_by_before:
@@ -6117,43 +6002,25 @@ def compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_li
     return sz, res_type
 
 
-class Counter(object):
-
-    def __init__(self):
-        self.count = 0
-
-    def __call__(self):
-        count = self.count
-        self.count = count + 1
-        return count
-
-
-my_counter = Counter()
-
-
 @try_catch_wrapper_co_expr
-def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp_links=None):
-    """
-    :param BaseCmplObj cmpl_obj:
-    :param BaseExpr expr:
-    :param CompileContext context:
-    :param LocalCompileData|None cmpl_data:
-    :param BaseType|None type_coerce:
-    :param list[(BaseType,BaseLink)]|None temp_links:
-    """
+def compile_expr(
+        cmpl_obj: BaseCmplObj,
+        expr: BaseExpr,
+        context: CompileContext,
+        cmpl_data: Optional["LocalCompileData"] = None,
+        type_coerce: Optional[BaseType] = None,
+        temp_links: Optional[List[Tuple[BaseType,BaseLink]]] = None
+):
     if type_coerce is void_t:
-        if expr.expr_id in {EXPR_LITERAL, EXPR_NAME}:
+        if expr.expr_id in {ExprType.LITERAL, ExprType.NAME}:
             return 0
     owns_temps = temp_links is None
     if owns_temps:
         temp_links = setup_temp_links(cmpl_obj, expr, context, cmpl_data)
     sz = 0 if expr.t_anot is None else size_of(expr.t_anot)
     res_type = expr.t_anot
-    # count = my_counter()
-    # print("compile_expr: %u\n expr = \n  " % count + format_pretty(expr).replace("\n", "\n  "))
-    # print("\n res_type = \n  " + format_pretty(res_type).replace("\n", "\n  "))
     assert isinstance(res_type, BaseType)
-    if expr.expr_id == EXPR_LITERAL:
+    if expr.expr_id == ExprType.LITERAL:
         assert isinstance(expr, LiteralExpr)
         assert expr.t_anot is not None
         sz = size_of(expr.t_anot)
@@ -6227,16 +6094,16 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
                     raise TypeError("Unsupported type_coerce = %s" % get_user_str_from_type(type_coerce))
             else:
                 raise TypeError("Unknown annotated type: %r" % expr.t_anot)
-    elif expr.expr_id == EXPR_PARENTH:
+    elif expr.expr_id == ExprType.PARENTH:
         assert isinstance(expr, ParenthExpr)
         if len(expr.lst_expr) != 1:
             raise NotImplementedError("ParenthExpr compilation is not supported when len(lst_expr) != 1")
         if type_coerce is not None:
             res_type = type_coerce
         sz = compile_expr(cmpl_obj, expr.lst_expr[0], context, cmpl_data, type_coerce, temp_links)
-    elif expr.expr_id == EXPR_FN_CALL:
+    elif expr.expr_id == ExprType.FN_CALL:
         assert isinstance(expr, FnCallExpr)
-        if expr.fn.expr_id != EXPR_NAME:
+        if expr.fn.expr_id != ExprType.NAME:
             raise SyntaxError("Only Named functions can be called")
         assert isinstance(expr.fn, NameRefExpr)
         variadic = False
@@ -6246,7 +6113,7 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
         if fn_type is None:
             print("Cannot call an expression that is not type-annotated")
             # raise TypeError("Cannot call an expression that is not type-annotated")
-        elif fn_type.type_class_id != TYP_CLS_QUAL:
+        elif fn_type.type_class_id != TypeClass.QUAL:
             print("Cannot call a non-function expression")
             # raise TypeError("Cannot call a non-function expression")
         else:
@@ -6295,32 +6162,32 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
         cmpl_data.bp_off -= sz0
         cmpl_data.bp_off -= sz_ret
         sz = sz_ret
-    elif expr.expr_id == EXPR_PTR_MEMBER:
+    elif expr.expr_id == ExprType.PTR_MEMBER:
         assert isinstance(expr, SpecialPtrMemberExpr)
         prim_type = get_base_prim_type(expr.obj.t_anot)
-        assert prim_type.type_class_id == TYP_CLS_QUAL, "Must be pointer"
+        assert prim_type.type_class_id == TypeClass.QUAL, "Must be pointer"
         assert isinstance(prim_type, QualType)
         assert prim_type.qual_id == QualType.QUAL_PTR, "Must be pointer"
         val_type = get_base_prim_type(prim_type.tgt_type)
-        if val_type.type_class_id == TYP_CLS_UNION:
+        if val_type.type_class_id == TypeClass.UNION:
             assert isinstance(val_type, UnionType)
             return compile_expr(cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links)
         raise NotImplementedError("Not Implemented")
-    elif expr.expr_id == EXPR_DOT:
+    elif expr.expr_id == ExprType.DOT:
         assert isinstance(expr, SpecialDotExpr)
         prim_type, val_type, is_ref = get_tgt_ref_type(expr.obj.t_anot)
         if not is_ref:
             raise TypeError("Cannot use dot operator on non-reference type")
-        if val_type.type_class_id == TYP_CLS_UNION:
+        if val_type.type_class_id == TypeClass.UNION:
             assert isinstance(val_type, UnionType)
             return compile_expr(cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links)
-        elif val_type.type_class_id == TYP_CLS_STRUCT:
+        elif val_type.type_class_id == TypeClass.STRUCT:
             assert isinstance(val_type, StructType)
             compile_expr(cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links)
             emit_load_i_const(cmpl_obj.memory, val_type.offset_of(expr.attr), False, 3)
             cmpl_obj.memory.extend([BC_ADD8])
             return 8
-        elif val_type.type_class_id == TYP_CLS_CLASS:
+        elif val_type.type_class_id == TypeClass.CLASS:
             assert isinstance(val_type, ClassType)
             compile_expr(cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links)
             emit_load_i_const(cmpl_obj.memory, val_type.offset_of(expr.attr), False, 3)
@@ -6329,7 +6196,7 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
         # TODO: add 2 opcodes or use a memory reference (BCR_R_BP)
         #   one for this ---keep----[data you don't want][data you want] -> -keep--[data you want]
         #   one for getting the current stack pointer
-    elif expr.expr_id == EXPR_NAME:
+    elif expr.expr_id == ExprType.NAME:
         # TODO: right now name resolution is done at CodeGen time
         # TODO:   maybe this needs to be changed so that name resolution
         # TODO:   is done at Parse Time
@@ -6351,7 +6218,7 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
             val_type = get_base_prim_type(ctx_var.typ)
             do_as_ref = False
             # do_as_val = False
-            if prim_type_coerce.type_class_id == TYP_CLS_QUAL:
+            if prim_type_coerce.type_class_id == TypeClass.QUAL:
                 assert isinstance(prim_type_coerce, QualType)
                 do_as_ref = prim_type_coerce.qual_id == QualType.QUAL_REF
             if do_as_ref:
@@ -6370,16 +6237,16 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
                             type_coerce, val_type
                         )
                     )
-    elif expr.expr_id == EXPR_CAST:
+    elif expr.expr_id == ExprType.CAST:
         assert isinstance(expr, CastOpExpr)
         assert expr.t_anot is not None
-        if expr.cast_type == CastOpExpr.CAST_EXPLICIT:
+        if expr.cast_type == CastType.EXPLICIT:
             print("WARN: Explicit casts are treated the same way as implicit casts")
         sz = compile_conv_general(cmpl_obj, expr, context, cmpl_data, temp_links)
-    elif expr.expr_id == EXPR_BIN_OP:
+    elif expr.expr_id == ExprType.BIN_OP:
         assert isinstance(expr, BinaryOpExpr)
         sz, res_type = compile_bin_op_expr(cmpl_obj, expr, context, cmpl_data, type_coerce, temp_links, res_type)
-    elif expr.expr_id == EXPR_SPARENTH:
+    elif expr.expr_id == ExprType.SPARENTH:
         assert isinstance(expr, SParenthExpr)
         assert expr.t_anot is not None
         sz = compile_expr(cmpl_obj, expr.left_expr, context, cmpl_data, None, temp_links)
@@ -6394,23 +6261,23 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
             ])
         else:
             cmpl_obj.memory.append(BC_ADD8)
-    elif expr.expr_id == EXPR_UNI_OP:
+    elif expr.expr_id == ExprType.UNI_OP:
         assert isinstance(expr, UnaryOpExpr)
         assert expr.t_anot is not None
-        if expr.type_id in [UNARY_REFERENCE, UNARY_STAR]:
+        if expr.type_id in [UnaryExprSubType.REFERENCE, UnaryExprSubType.STAR]:
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
             assert sz == 8
-        elif expr.type_id == UNARY_BOOL_NOT:
+        elif expr.type_id == UnaryExprSubType.BOOL_NOT:
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, bool_t, temp_links)
             assert sz == 1
             cmpl_obj.memory.append(BC_EQ0)
             res_type = bool_t
-        elif expr.type_id == UNARY_BIT_NOT:
+        elif expr.type_id == UnaryExprSubType.BIT_NOT:
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
             sz_cls = sz.bit_length() - 1
             assert 1 << sz_cls == sz and 0 <= sz_cls <= 3
             cmpl_obj.memory.append(BC_NOT1 + sz_cls)
-        elif expr.type_id == UNARY_MINUS:
+        elif expr.type_id == UnaryExprSubType.MINUS:
             typ_bits = get_bc_conv_bits(expr.a.t_anot)
             sz_cls = (typ_bits & 0x7) >> (0 if typ_bits & 0x8 else 1)
             sub_code = (BC_FSUB_2 if typ_bits & 0x8 else BC_SUB1) + sz_cls
@@ -6422,10 +6289,10 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
             res_type = expr.a.t_anot
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
             cmpl_obj.memory.append(sub_code)
-        elif expr.type_id == UNARY_PLUS:
+        elif expr.type_id == UnaryExprSubType.PLUS:
             res_type = expr.a.t_anot
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
-        elif expr.type_id in [UNARY_PRE_DEC, UNARY_PRE_INC, UNARY_POST_DEC, UNARY_POST_INC]:
+        elif expr.type_id in [UnaryExprSubType.PRE_DEC, UnaryExprSubType.PRE_INC, UnaryExprSubType.POST_DEC, UnaryExprSubType.POST_INC]:
             inc_by = 0
             sz_num = 8
             if expr.op_fn_type == OP_TYP_NATIVE:
@@ -6436,20 +6303,20 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
                 sz_num = 8
             if inc_by == 0:
                 raise NotImplementedError(
-                    "Expression (id = UNARY_OP_EXPR, type_id = %u) compilation of OP_TYP_FUNCTION or void *" %
+                    "Expression (id = UnaryExprSubType.OP_EXPR, type_id = %u) compilation of OP_TYP_FUNCTION or void *" %
                     expr.type_id
                 )
             sz_cls = sz_num.bit_length() - 1
             assert 1 << sz_cls == sz_num
             a_type = expr.a.t_anot
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
-            assert sz == 8 and a_type.type_class_id == TYP_CLS_QUAL
+            assert sz == 8 and a_type.type_class_id == TypeClass.QUAL
             assert isinstance(a_type, QualType)
             assert a_type.qual_id == QualType.QUAL_REF
             swap_byte = (sz_cls << 3) | BCS_SZ8_A
             load_byte = BCR_ABS_S8 | (sz_cls << 5)
-            is_add = expr.type_id in [UNARY_PRE_INC, UNARY_POST_INC]
-            if expr.type_id in [UNARY_PRE_DEC, UNARY_PRE_INC]:
+            is_add = expr.type_id in [UnaryExprSubType.PRE_INC, UnaryExprSubType.POST_INC]
+            if expr.type_id in [UnaryExprSubType.PRE_DEC, UnaryExprSubType.PRE_INC]:
                 if type_coerce is void_t:
                     res_type = void_t
                     sz = 0
@@ -6488,7 +6355,7 @@ def compile_expr(cmpl_obj, expr, context, cmpl_data=None, type_coerce=None, temp
 
         else:
             raise NotImplementedError(
-                "Expression (id = UNARY_OP_EXPR, type_id = %u) compilation is not supported" % expr.type_id
+                "Expression (id = UnaryExprSubType.OP_EXPR, type_id = %u) compilation is not supported" % expr.type_id
             )
     else:
         raise NotImplementedError("Expression (id = %u) compilation is not supported" % expr.expr_id)
@@ -6765,7 +6632,7 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
     :param CompileContext context:
     :param LocalCompileData|None cmpl_data:
     """
-    if stmnt.stmnt_type == STMNT_ASM:
+    if stmnt.stmnt_type == StmntType.ASM:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, AsmStmnt)
         if stmnt.condition is None or stmnt.condition.get("arch", CURRENT_CMPL_CONDITIONS["arch"]) == CURRENT_CMPL_CONDITIONS["arch"]:
@@ -6775,11 +6642,11 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
             if stmnt.condition is not None and stmnt.condition.get("display_links", False):
                 print("Links for assembly named '%s' are as follows: %s" % (stmnt.condition.get("name", "<UNNAMED>"), format_pretty(rel_bp_names)))
             assemble(cmpl_obj, rel_bp_names, "\n".join(stmnt.inner_asm))
-    elif stmnt.stmnt_type == STMNT_CURLY_STMNT:
+    elif stmnt.stmnt_type == StmntType.CURLY_STMNT:
         assert isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, CurlyStmnt)
         return compile_curly(cmpl_obj, stmnt, context, cmpl_data)
-    elif stmnt.stmnt_type == STMNT_DECL:
+    elif stmnt.stmnt_type == StmntType.DECL:
         assert isinstance(stmnt, DeclStmnt)
         assert stmnt.decl_lst is not None
         sz_off = 0
@@ -6789,7 +6656,7 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
             sz_off += cur_decl.type_name.compile_var_init(
                 cmpl_obj, cur_decl.init_args, context, VarRefTosNamed(ctx_var), cmpl_data)
         return sz_off
-    elif stmnt.stmnt_type == STMNT_IF:
+    elif stmnt.stmnt_type == StmntType.IF:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, IfElse)
         assert stmnt.stmnt is not None
@@ -6816,7 +6683,7 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
             lnk_ref = LinkRef(len(cmpl_obj.memory) - 9, 0)
             compile_stmnt(cmpl_obj, stmnt.else_stmnt, context, cmpl_data)
         lnk_ref.fill_ref(cmpl_obj.memory, len(cmpl_obj.memory))
-    elif stmnt.stmnt_type == STMNT_FOR:
+    elif stmnt.stmnt_type == StmntType.FOR:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, ForLoop)
         assert stmnt.init is not None
@@ -6849,7 +6716,7 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
         lnk_begin_loop.fill_all(cmpl_obj.memory)
         lnk_end_body.fill_all(cmpl_obj.memory)
         lnk_end_loop.fill_all(cmpl_obj.memory)
-    elif stmnt.stmnt_type == STMNT_WHILE:
+    elif stmnt.stmnt_type == StmntType.WHILE:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, WhileLoop)
         # assert stmnt.cond.t_anot is bool
@@ -6870,17 +6737,17 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
         lnk_end_loop.src = len(cmpl_obj.memory)
         lnk_begin_loop.fill_all(cmpl_obj.memory)
         lnk_end_loop.fill_all(cmpl_obj.memory)
-    elif stmnt.stmnt_type == STMNT_CONTINUE:
+    elif stmnt.stmnt_type == StmntType.CONTINUE:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert cmpl_data.cur_breakable is not None
         cmpl_data.cur_breakable[0].emit_lea(cmpl_obj.memory)
         cmpl_obj.memory.extend([BC_JMP])
-    elif stmnt.stmnt_type == STMNT_BRK:
+    elif stmnt.stmnt_type == StmntType.BRK:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert cmpl_data.cur_breakable is not None
         cmpl_data.cur_breakable[1].emit_lea(cmpl_obj.memory)
         cmpl_obj.memory.extend([BC_JMP])
-    elif stmnt.stmnt_type == STMNT_RTN:
+    elif stmnt.stmnt_type == StmntType.RTN:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, ReturnStmnt)
         cmpl_data1 = cmpl_data
@@ -6902,17 +6769,17 @@ def compile_stmnt(cmpl_obj, stmnt, context, cmpl_data=None):
         # TODO:   except there is an additional argument that represents the return value
         # already sortof done
         cmpl_obj.memory.extend([BC_RET])
-    elif stmnt.stmnt_type == STMNT_SEMI_COLON:
+    elif stmnt.stmnt_type == StmntType.SEMI_COLON:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, SemiColonStmnt)
         if stmnt.expr is not None:
             sz = compile_expr(cmpl_obj, stmnt.expr, context, cmpl_data, void_t)
             assert sz == 0
-    elif stmnt.stmnt_type == STMNT_NAMESPACE:
+    elif stmnt.stmnt_type == StmntType.NAMESPACE:
         assert isinstance(stmnt, NamespaceStmnt)
         for inner_stmnt in stmnt.lst_stmnts:
             compile_stmnt(cmpl_obj, inner_stmnt, stmnt.ns, cmpl_data)
-    elif stmnt.stmnt_type == STMNT_TYPEDEF:
+    elif stmnt.stmnt_type == StmntType.TYPEDEF:
         pass # Do nothing for typedef statement
     else:
         raise ValueError("Unrecognized Statement Type")

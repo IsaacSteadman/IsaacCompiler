@@ -1,5 +1,20 @@
-from PyStackVM import *
-from AlgoUtils import *
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar, Union
+'''from PyIsaacUtils.AlgoUtils import bisect_search_base
+from StackVM.PyStackVM import BC_ADD8, BC_ADD_SP1, BC_CALL_E, BC_CONV, BC_GE0, BC_INT, BC_LOAD, BC_LSHIFT1, BC_NOP,\
+    BC_RET_E, BC_RET_N2, BC_RST_SP1, BC_STOR, BC_SWAP, BC_SYSRET, BCC_I_MASK, BCC_O_MASK, BCCE_N_REL, BCCE_SYSCALL,\
+    BCR_ABS_A4, BCR_ABS_A8, BCR_ABS_C, BCR_ABS_S8, BCR_EA_R_IP, BCR_R_BP1, BCR_R_BP_MASK, BCR_R_BP_VAL, BCR_REG_BP,\
+    BCR_RES, BCR_SYSREG, BCR_SZ_8, BCR_SZ_MASK, BCR_TYP_MASK, BCRE_RES_SZ_MASK, BCRE_RST_SP_SZ_MASK, BCRE_SYS,\
+    BCS_SZ8_B, BCS_SZ_A_MASK, BCS_SZ_B_MASK, MRQ_DONT_CHECK, VM_4_LVL_9_BIT, VM_DISABLED, LstStackVM_BCC_Types,\
+    LstStackVM_BCR_Types, LstStackVM_BCS_Types, LstStackVM_Codes, LstStackVM_sysregs, StackVM_BCC_Codes,\
+    StackVM_BCCE_Codes, StackVM_BCR_Codes, StackVM_BCRE_Codes, StackVM_BCS_Codes, StackVM_Codes, StackVM_SVSR_Codes,\
+    float_t, double_t'''
+
+from PyIsaacUtils.AlgoUtils import *
+
+from StackVM.PyStackVM import *
+
+
+T = TypeVar("T")
 
 
 def get_sz_cls_align_long(long, signed, max_sz_cls=3):
@@ -52,45 +67,32 @@ CMPL_T_FUNCTION = 1  # definition of a function
 
 
 class BaseLink(object):
-    def get_offset_link(self, offset):
-        """
-        :param int offset:
-        :rtype: BaseLink
-        """
+    def get_offset_link(self, offset: int) -> "BaseLink":
         raise NotImplementedError("Not Implemented")
 
-    def emit_lea(self, memory):
+    def emit_lea(self, memory: Union[memoryview, bytearray]):
         """
         Load Effective Address
-        :param bytearray memory:
         """
         raise NotImplementedError("Not Implemented")
 
-    def emit_load_pot(self, memory, sz_cls):
-        """
-        :param bytearray memory:
-        :param int sz_cls:
-        """
+    def emit_load_pot(self, memory: Union[memoryview, bytearray], sz_cls: int):
         self.emit_lea(memory)
         memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
 
-    def emit_stor_pot(self, memory, sz_cls):
-        """
-        :param bytearray memory:
-        :param int sz_cls:
-        """
+    def emit_stor_pot(self, memory: Union[memoryview, bytearray], sz_cls: int):
         self.emit_lea(memory)
         memory.extend([
             BC_SWAP, BCS_SZ8_B | sz_cls,  # SzCls0 does not need to be shifted as BCS_SZ_A_MASK is 0x7
             BC_STOR, BCR_ABS_S8 | (sz_cls << 5)])
 
-    def emit_load(self, memory, size, byte_copy_arg, byte_copy_intrinsic):
-        """
-        :param bytearray memory:
-        :param int size:
-        :param T byte_copy_arg:
-        :param (T, bytearray, int|None, bool, bool) -> any byte_copy_intrinsic:
-        """
+    def emit_load(
+            self,
+            memory: bytearray,
+            size: int,
+            byte_copy_arg: T,
+            byte_copy_intrinsic: Callable[[T, Union[memoryview, bytearray], Optional[int], bool, bool], Any]
+    ):
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 3:
             sz_cls_1 = emit_load_i_const(memory, size, False)
@@ -103,13 +105,13 @@ class BaseLink(object):
         else:
             self.emit_load_pot(memory, sz_cls_0)
 
-    def emit_stor(self, memory, size, byte_copy_arg, byte_copy_intrinsic):
-        """
-        :param bytearray memory:
-        :param int size:
-        :param T byte_copy_arg:
-        :param (T, bytearray, int|None, bool, bool) -> any byte_copy_intrinsic:
-        """
+    def emit_stor(
+            self,
+            memory: bytearray,
+            size: int,
+            byte_copy_arg: T,
+            byte_copy_intrinsic: Callable[[T, Union[memoryview, bytearray], Optional[int], bool, bool], Any]
+    ):
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 3:
             self.emit_lea(memory)
@@ -144,13 +146,7 @@ class BaseLink(object):
         raise NotImplementedError("Not Implemented")'''
 
 
-def get_load_i_const(num, sign=None, sz_cls=None):
-    """
-    :param int num:
-    :param bool|None sign:
-    :param int|None sz_cls:
-    :rtype: (bytearray, int)
-    """
+def get_load_i_const(num: int, sign: Optional[bool]=None, sz_cls: Optional[int]=None) -> Tuple[bytearray, int]:
     if sign is None:
         sign = num < 0
     if sz_cls is None:
@@ -163,14 +159,7 @@ def get_load_i_const(num, sign=None, sz_cls=None):
     return rtn, sz_cls
 
 
-def emit_load_i_const(memory, num, sign=None, sz_cls=None):
-    """
-    :param bytearray memory:
-    :param int num:
-    :param bool|None sign:
-    :param int|None sz_cls:
-    :rtype: int
-    """
+def emit_load_i_const(memory: bytearray, num: int, sign: Optional[bool]=None, sz_cls: Optional[int]=None) -> int:
     byts, sz_cls = get_load_i_const(num, sign, sz_cls)
     memory.extend(byts)
     return sz_cls
@@ -188,37 +177,26 @@ def emit_load_i_const(memory, num, sign=None, sz_cls=None):
 
 
 class OffsetLocalRef(BaseLink):
-    def __init__(self, parent, offset):
-        """
-        :param LocalRef parent:
-        :param int offset:
-        """
+    def __init__(self, parent: "LocalRef", offset: int):
         self.parent = parent
         self.offset = offset
         self.sz = parent.sz - offset
 
-    def get_offset_link(self, offset):
-        """
-        :param int offset:
-        :rtype: BaseLink
-        """
+    def get_offset_link(self, offset: int) -> BaseLink:
         # TODO: Convert EmitLoad, EmitStor, EmitLEA
         return OffsetLocalRef(self.parent, self.offset + offset)
 
-    def emit_load_pot(self, memory, sz_cls):
+    def emit_load_pot(self, memory: bytearray, sz_cls: int):
         byts = sz_cls_align_long(self.parent.rel_addr + self.offset, True, sz_cls)
         memory.extend([BC_LOAD, (BCR_R_BP1 + sz_cls) | (sz_cls << 5)])
         memory.extend(byts)
 
-    def emit_stor_pot(self, memory, sz_cls):
+    def emit_stor_pot(self, memory: bytearray, sz_cls: int):
         byts = sz_cls_align_long(self.parent.rel_addr + self.offset, True, sz_cls)
         memory.extend([BC_STOR, (BCR_R_BP1 + sz_cls) | (sz_cls << 5)])
         memory.extend(byts)
 
-    def emit_lea(self, memory):
-        """
-        :param bytearray memory:
-        """
+    def emit_lea(self, memory: bytearray):
         byts = sz_cls_align_long(self.parent.rel_addr + self.offset, True, 3)
         memory.extend([BC_LOAD, BCR_REG_BP | BCR_SZ_8, BC_LOAD, BCR_ABS_C | BCR_SZ_8])
         memory.extend(byts)
@@ -227,42 +205,31 @@ class OffsetLocalRef(BaseLink):
 
 class LocalRef(BaseLink):
     @classmethod
-    def from_bp_off_post_inc(cls, bp_off, sz):
+    def from_bp_off_post_inc(cls, bp_off: int, sz: int):
         return cls(-bp_off, sz)
 
     @classmethod
-    def from_bp_off_pre_inc(cls, bp_off, sz):
+    def from_bp_off_pre_inc(cls, bp_off: int, sz: int):
         return cls(-(bp_off + sz), sz)
 
-    def __init__(self, rel_addr, sz):
-        """
-        :param int rel_addr:
-        :param int sz:
-        """
+    def __init__(self, rel_addr: int, sz: int):
         self.rel_addr = rel_addr
         self.sz = sz
 
-    def get_offset_link(self, offset):
-        """
-        :param int offset:
-        :rtype: BaseLink
-        """
+    def get_offset_link(self, offset: int) -> BaseLink:
         return OffsetLocalRef(self, offset)
 
-    def emit_load_pot(self, memory, sz_cls):
+    def emit_load_pot(self, memory: bytearray, sz_cls: int):
         byts = sz_cls_align_long(self.rel_addr, True, sz_cls)
         memory.extend([BC_LOAD, (BCR_R_BP1 + sz_cls) | (sz_cls << 5)])
         memory.extend(byts)
 
-    def emit_stor_pot(self, memory, sz_cls):
+    def emit_stor_pot(self, memory: bytearray, sz_cls: int):
         byts = sz_cls_align_long(self.rel_addr, True, sz_cls)
         memory.extend([BC_STOR, (BCR_R_BP1 + sz_cls) | (sz_cls << 5)])
         memory.extend(byts)
 
-    def emit_lea(self, memory):
-        """
-        :param bytearray memory:
-        """
+    def emit_lea(self, memory: bytearray):
         byts = sz_cls_align_long(self.rel_addr, True, 3)
         memory.extend([BC_LOAD, BCR_REG_BP | BCR_SZ_8, BC_LOAD, BCR_ABS_C | BCR_SZ_8])
         memory.extend(byts)
@@ -270,121 +237,75 @@ class LocalRef(BaseLink):
 
 
 class LinkRef(object):
-    def __init__(self, pos, rel_off=None):
-        """
-        :param int pos:
-        :param int|None rel_off:
-        """
+    def __init__(self, pos: int, rel_off: Optional[int]=None):
         self.pos = pos
         self.rel_off = rel_off
 
-    def try_fill_ref_abs(self, memory, abs_addr):
-        """
-        :param bytearray memory:
-        :param int abs_addr:
-        :rtype: bool
-        """
+    def try_fill_ref_abs(self, memory: bytearray, abs_addr: int) -> bool:
         if self.rel_off is None:
             memory[self.pos:self.pos + 8] = sz_cls_align_long(abs_addr, False, 3)
         else:
             memory[self.pos:self.pos + 8] = sz_cls_align_long(abs_addr - (self.pos + 8 + self.rel_off), True, 3)
         return True
 
-    def try_fill_ref_rel(self, memory, local_abs_addr):
-        """
-        :param bytearray memory:
-        :param int local_abs_addr:
-        :rtype: bool
-        """
+    def try_fill_ref_rel(self, memory: bytearray, local_abs_addr: int) -> bool:
         if self.rel_off is None:
             return False
         else:
             memory[self.pos:self.pos + 8] = sz_cls_align_long(local_abs_addr - (self.pos + 8 + self.rel_off), True, 3)
         return True
 
-    def fill_ref(self, memory, abs_addr):
-        """
-        :param bytearray memory:
-        :param int abs_addr:
-        """
+    def fill_ref(self, memory: bytearray, abs_addr: int):
         self.try_fill_ref_abs(memory, abs_addr)
 
-    def get_new_link_off(self, mem_off):
+    def get_new_link_off(self, mem_off: int):
         return LinkRef(self.pos + mem_off, self.rel_off)
 
 
 class OffsetIndirectLink(BaseLink):
-    def __init__(self, parent, offset):
-        """
-        :param IndirectLink parent:
-        :param int offset:
-        """
+    def __init__(self, parent: "IndirectLink", offset: int):
         self.parent = parent
         self.offset = offset
 
-    def get_offset_link(self, offset):
+    def get_offset_link(self, offset: int):
         return OffsetIndirectLink(self.parent, self.offset + offset)
 
-    def emit_lea(self, memory):
+    def emit_lea(self, memory: bytearray):
         self.parent.emit_lea(memory)
         emit_load_i_const(memory, self.offset, True, 3)
         memory.append(BC_ADD8)
 
 
 class IndirectLink(BaseLink):
-    def __init__(self, addr_link):
-        """
-        :param BaseLink addr_link:
-        """
+    def __init__(self, addr_link: BaseLink):
         self.addr_link = addr_link
 
     def get_offset_link(self, offset):
         return OffsetIndirectLink(self, offset)
 
-    def emit_lea(self, memory):
-        """
-        :param bytearray memory:
-        """
+    def emit_lea(self, memory: Union[memoryview, bytearray]):
         self.addr_link.emit_load(memory, 8, None, dummy_byte_copy_intrinsic)
 
 
 def dummy_byte_copy_intrinsic(arg, mem, sz, b0, b1):
-    del mem
-    raise ValueError("A Byte copy intrinsic was not provided for %r, memory, sz=%u, b0=%r, b1=%r" % (arg, sz, b0, b1))
+    raise ValueError("A Byte copy intrinsic was not provided for %r, memory(len=%u), sz=%u, b0=%r, b1=%r" % (arg, len(mem), sz, b0, b1))
 
 
 class OffsetLinkage(BaseLink):
-    """
-    :type parent: Linkage
-    :type offset: int
-    """
-    def __init__(self, parent, offset):
-        """
-        :param Linkage parent:
-        :param int offset:
-        """
+    def __init__(self, parent: "Linkage", offset: int):
         self.parent = parent
         self.offset = offset
 
-    def get_offset_link(self, offset):
+    def get_offset_link(self, offset: int):
         return OffsetLinkage(self.parent, offset + self.offset)
 
-    def emit_lea(self, memory):
-        """
-        :param bytearray memory:
-        """
+    def emit_lea(self, memory: Union[memoryview, bytearray]):
         memory.extend([
             BC_LOAD, BCR_EA_R_IP | BCR_SZ_8,
             0, 0, 0, 0, 0, 0, 0, 0])
         self.parent.lst_tgt.append(LinkRef(len(memory) - 8, -self.offset))
 
-    def emit_load(self, memory, size, byte_copy_arg, byte_copy_intrinsic):
-        """
-        :param bytearray memory:
-        :param int size:
-        :param T byte_copy_arg:
-        :param (T, bytearray, int|None, bool, bool) -> any byte_copy_intrinsic:
-        """
+    def emit_load(self, memory: bytearray, size: int, byte_copy_arg: T, byte_copy_intrinsic: Callable[[T, Optional[int], bool, bool], Any]):
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 3:
             sz_cls_1 = emit_load_i_const(memory, size, False)
@@ -398,13 +319,13 @@ class OffsetLinkage(BaseLink):
             self.emit_lea(memory)
             memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls_0 << 5)])
 
-    def emit_stor(self, memory, size, byte_copy_arg, byte_copy_intrinsic):
-        """
-        :param bytearray memory:
-        :param int size:
-        :param T byte_copy_arg:
-        :param (T, bytearray, int|None, bool, bool) -> any byte_copy_intrinsic:
-        """
+    def emit_stor(
+            self,
+            memory: bytearray,
+            size: int,
+            byte_copy_arg: T,
+            byte_copy_intrinsic: Callable[[T, Union[memoryview, bytearray], Optional[int], bool, bool], Any]
+    ):
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 3:
             self.emit_lea(memory)
@@ -433,13 +354,13 @@ class Linkage(BaseLink):
     def get_offset_link(self, offset):
         return OffsetLinkage(self, offset)
 
-    def emit_load(self, memory, size, byte_copy_arg, byte_copy_intrinsic):
-        """
-        :param bytearray memory:
-        :param int size:
-        :param T byte_copy_arg:
-        :param (T, bytearray, int|None, bool, bool) -> any byte_copy_intrinsic:
-        """
+    def emit_load(
+            self,
+            memory: Union[memoryview, bytearray],
+            size: int,
+            byte_copy_arg: T,
+            byte_copy_intrinsic: Callable[[T, Union[memoryview, bytearray], Optional[int], bool, bool], Any]
+    ):
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 3:
             sz_cls_1 = emit_load_i_const(memory, size, False)
@@ -453,13 +374,13 @@ class Linkage(BaseLink):
             self.emit_lea(memory)
             memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls_0 << 5)])
 
-    def emit_stor(self, memory, size, byte_copy_arg, byte_copy_intrinsic):
-        """
-        :param bytearray memory:
-        :param int size:
-        :param T byte_copy_arg:
-        :param (T, bytearray, int|None, bool, bool) -> any byte_copy_intrinsic:
-        """
+    def emit_stor(
+            self,
+            memory: Union[memoryview, bytearray],
+            size: int,
+            byte_copy_arg: T,
+            byte_copy_intrinsic: Callable[[T, Union[bytearray,memoryview], Optional[int], bool, bool], Any]
+    ):
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 3:
             self.emit_lea(memory)
@@ -473,19 +394,13 @@ class Linkage(BaseLink):
                 BC_SWAP, BCS_SZ8_B | sz_cls_0,  # sz_cls_0 does not need to be shifted as BCS_SZ_A_MASK is 0x7
                 BC_STOR, BCR_ABS_S8 | (sz_cls_0 << 5)])
 
-    def emit_lea(self, memory):
-        """
-        :param bytearray memory:
-        """
+    def emit_lea(self, memory: Union[memoryview, bytearray]):
         memory.extend([
             BC_LOAD, BCR_EA_R_IP | BCR_SZ_8,
             0, 0, 0, 0, 0, 0, 0, 0])
         self.lst_tgt.append(LinkRef(len(memory) - 8, 0))
 
-    def fill_all(self, memory):
-        """
-        :param bytearray memory:
-        """
+    def fill_all(self, memory: Union[memoryview, bytearray]):
         assert self.src is not None
         assert not self.is_extern
         for Tgt in self.lst_tgt:
@@ -506,27 +421,20 @@ class Linkage(BaseLink):
 
 
 class BaseCmplObj(object):
-    """
-    :type memory: bytearray
-    :type linkages: dict[str,Linkage]
-    :type string_pool: dict[bytes,Linkage]
-    :type data_segment_start: int|None
-    :type code_segment_end: int|None
-    """
     def __init__(self):
         self.memory = bytearray()
-        self.linkages = {}
-        self.string_pool = {}
-        self.data_segment_start = None
-        self.code_segment_end = None
+        self.linkages: Dict[str, Linkage] = {}
+        self.string_pool: Dict[bytes, Linkage] = {}
+        self.data_segment_start: Optional[int] = None
+        self.code_segment_end: Optional[int] = None
 
-    def get_string_link(self, byts):
+    def get_string_link(self, byts: bytes):
         link = self.string_pool.get(byts, None)
         if link is None:
             link = self.string_pool[byts] = Linkage()
         return link
 
-    def get_link(self, name):
+    def get_link(self, name: str):
         link = self.linkages.get(name, None)
         if link is None:
             link = self.linkages[name] = Linkage()
@@ -540,13 +448,13 @@ LNK_RUN_STANDALONE = 1
 class LinkerOptions(object):
     __slots__ = ["optimize", "data_seg_align", "extern_deps", "run_method"]
 
-    def __init__(self, optimize=LNK_OPT_ALL, data_seg_align=1, extern_deps=None, run_method=LNK_RUN_STANDALONE):
-        """
-
-        :param int optimize:
-        :param int data_seg_align:
-        :param dict[str,BaseCmplObj]|None extern_deps:
-        """
+    def __init__(
+            self,
+            optimize: int = LNK_OPT_ALL,
+            data_seg_align: int = 1,
+            extern_deps: Optional[Dict[str,BaseCmplObj]] = None,
+            run_method: int = LNK_RUN_STANDALONE
+    ):
         self.optimize = optimize
         self.data_seg_align = data_seg_align
         self.extern_deps = extern_deps
@@ -556,7 +464,7 @@ class LinkerOptions(object):
 class CompilerOptions(object):
     __slots__ = ["link_opts", "merge_and_link", "keep_local_syms"]
 
-    def __init__(self, link_opts: LinkerOptions, merge_and_link: bool=True, keep_local_syms: bool=False):
+    def __init__(self, link_opts: LinkerOptions, merge_and_link: bool = True, keep_local_syms: bool = False):
         self.link_opts = link_opts
         self.merge_and_link = merge_and_link
         self.keep_local_syms = keep_local_syms
@@ -1196,13 +1104,7 @@ def do_map_reduce_lookup_stack_vm(lookup, s):
     return rtn
 
 
-def parse_aux_codes(part, def_code_type, c=0):
-    """
-    :param str part:
-    :param str|None def_code_type:
-    :param int c:
-    :rtype: bytearray
-    """
+def parse_aux_codes(part: str, def_code_type: Optional[str], c: int=0) -> bytearray:
     # TODO: this may be extended in the future to support
     # TODO:   arbitrary inline machine code with syntax like "(8d0)" for 8 BC_NOP instructions
     end = part.find("-", c)
@@ -1249,11 +1151,9 @@ def remove_comment_asm(line: str) -> str:
     return line
 
 
-def assemble(cmpl_unit, rel_bp_names, str_asm):
+def assemble(cmpl_unit: BaseCmplObj, rel_bp_names: Dict[str, Tuple[int, int]], str_asm: str) -> Dict[str, Linkage]:
     """
-    :param BaseCmplObj cmpl_unit:
-    :param dict[str,(int, int)] rel_bp_names: a dictionary mapping variable names to 2-tuples of (base pointer offset, variable size)
-    :param str str_asm:
+    rel_bp_names: a dictionary mapping variable names to 2-tuples of (base pointer offset, variable size)
     """
     lines = str_asm.split("\n")
     lines = [remove_comment_asm(line) for line in lines]

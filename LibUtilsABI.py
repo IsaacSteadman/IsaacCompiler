@@ -1,3 +1,5 @@
+'''from Parsing import Compilation, CMPL_T_FUNCTION
+from CompilingUtils import assemble'''
 from Parsing import Compilation, CMPL_T_FUNCTION
 from CompilingUtils import assemble
 
@@ -351,7 +353,6 @@ assemble(syscall_fn, {"sys_n": (0x10, 8), "arg0": (0x18, 8), "arg1": (0x20, 8), 
 @arg1
 @arg0
 8d32
-; INT-1x(21) ; apparently this is not supposed to be here (April 11, 2019)
 @sys_n
 CALL_E-SYSCALL|S_SYSN_SZ8
 8d8

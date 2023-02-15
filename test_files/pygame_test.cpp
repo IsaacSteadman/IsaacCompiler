@@ -1,50 +1,52 @@
 typedef unsigned long long size_t;
 typedef signed long long ptrdiff_t;
+typedef size_t h_obj_t;
 size_t syscall(size_t sys_n, size_t arg0, size_t arg1, size_t arg2, size_t arg3);
 int print(const char *str);
-ptrdiff_t pyg_id = -1;
-ptrdiff_t pygame_init() {
-    if (pyg_id == -1) {
-        pyg_id = (ptrdiff_t)syscall(0x02, 0, 0, 0, 0);
+const h_obj_t invalid = 0xFFFFFFFFFFFFFFFF;
+h_obj_t pyg_id = 0xFFFFFFFFFFFFFFFF;
+h_obj_t pygame_init() {
+    if (pyg_id == invalid) {
+        pyg_id = syscall(0x02, 0, 0, 0, 0);
     }
-    // return pyg_id;
+    return pyg_id;
 } // print("\n".join(["%02u: %s" % (c, x.str) for c, x in enumerate(tokens[27:47
-ptrdiff_t disp_id = -1;
+h_obj_t disp_id = -1;
 
 void display_init() {
-    if (pyg_id != -1) {
-        syscall(0x03, (size_t)pyg_id, 0, 0, 0);
+    if (pyg_id != invalid) {
+        syscall(0x03, pyg_id, 0, 0, 0);
     }
 }
 
-ptrdiff_t display_set_mode(unsigned int w, unsigned int h) {
-    if ((disp_id == -1) & (pyg_id != -1)) {
+h_obj_t display_set_mode(unsigned int w, unsigned int h) {
+    if ((disp_id == invalid) & (pyg_id != invalid)) {
         size_t b = h;
         b <<= 32;
         b |= w;
-        disp_id = (ptrdiff_t)syscall(0x05, (size_t)pyg_id, b, 0, 0);
+        disp_id = syscall(0x05, pyg_id, b, 0, 0);
     }
     return disp_id;
 }
 
-ptrdiff_t wait_event() {
-    if (pyg_id == -1) return -1;
-    return syscall(0x09, (size_t)pyg_id, 0, 0, 0);
+h_obj_t wait_event() {
+    if (pyg_id == invalid) return invalid;
+    return syscall(0x09, pyg_id, 0, 0, 0);
 }
 
-void delete_object(ptrdiff_t obj_id) {
-    syscall(0x0A, (size_t)obj_id, 0, 0, 0);
+void delete_object(h_obj_t obj_id) {
+    syscall(0x0A, obj_id, 0, 0, 0);
 }
 
 void display_update() {
-    if (pyg_id != -1) {
-        syscall(0x07, (size_t)pyg_id, 0, 0, 0);
+    if (pyg_id != invalid) {
+        syscall(0x07, pyg_id, 0, 0, 0);
     }
 }
 
 void pygame_quit() {
-    if (pyg_id != -1) {
-        syscall(0x08, (size_t)pyg_id, 0, 0, 0);
+    if (pyg_id != invalid) {
+        syscall(0x08, pyg_id, 0, 0, 0);
     }
 }
 
@@ -95,8 +97,8 @@ int intToStr(int x, char *str, int d) {
 
 char buf1[9];
 
-void surf_fill(ptrdiff_t surf, unsigned char r, unsigned char g, unsigned char b, unsigned int flags, unsigned int x, unsigned int y, unsigned int w, unsigned int h) {
-    if (surf != -1) {
+void surf_fill(h_obj_t surf, unsigned char r, unsigned char g, unsigned char b, unsigned int flags, unsigned int x, unsigned int y, unsigned int w, unsigned int h) {
+    if (surf != invalid) {
         size_t b_arg = flags;
         b_arg <<= 32;
         b_arg |= ((int)r << 16) | ((int)g << 8) | b;
@@ -110,14 +112,21 @@ void surf_fill(ptrdiff_t surf, unsigned char r, unsigned char g, unsigned char b
         size_t d = h;
         d <<= 32;
         d |= w;
-        syscall(0x06, (size_t)surf, b_arg, c, d);
+        syscall(0x06, surf, b_arg, c, d);
     }
 }
 
-void load_event(ptrdiff_t evt_id, char *buf) {
-    if (pyg_id != -1) {
-        syscall(0x0B, (size_t)pyg_id, (size_t)evt_id, (size_t)buf, 0);
+void load_event(h_obj_t evt_id, char *buf) {
+    if (pyg_id != invalid) {
+        syscall(0x0B, pyg_id, evt_id, (size_t)buf, 0);
     }
+}
+
+size_t get_event_type_by_key(const char *key) {
+    if (pyg_id != invalid) {
+        return syscall(0x0C, pyg_id, (size_t)key, 0, 0);
+    }
+    return invalid;
 }
 
 struct QuitEvent {
@@ -190,6 +199,8 @@ struct VideoExposeEvent {
 
 
 int main(int argc, char **argv) {
+    invalid = 0xFFFFFFFFFFFFFFFF;
+    char zzbuf[12];
     pyg_id = -1;
     disp_id = -1;
     pygame_init();
@@ -211,6 +222,7 @@ int main(int argc, char **argv) {
     char buf[5];
     char evt_buf[24];
     char *evt_buf_ptr = evt_buf;
+    const size_t quit_event_type = get_event_type_by_key("QUIT");
     buf[4] = '\0';
     while (running) {
         unsigned char r = rgb_hues[i] >> 16;
@@ -230,12 +242,16 @@ int main(int argc, char **argv) {
         // print("\n");
         surf_fill(disp_id, r, g, b, (unsigned int)0, (unsigned int)0, (unsigned int)0, (unsigned int)640, (unsigned int)480);
         display_update();
-        ptrdiff_t evt = wait_event();
+        h_obj_t evt = wait_event();
         load_event(evt, evt_buf_ptr);
         int evt_type;
         int *tmp = (int *)evt_buf_ptr;
         evt_type = *tmp;
-        if (evt_type == 12) {
+        /*intToStr(evt_type, zzbuf, 0, 10);
+        print("hello =");
+        print(zzbuf);
+        print("\n");*/
+        if (evt_type == quit_event_type) {
             running = 0;
         }
         delete_object(evt);

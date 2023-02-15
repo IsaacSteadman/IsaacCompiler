@@ -1,46 +1,59 @@
-CLS_BLANK = 0
-CLS_WS = 1
-CLS_NAME = 2
-CLS_DEC_INT = 3
-CLS_FLOAT = 4
-CLS_HEX_INT = 5
-CLS_OCT_INT = 6
-CLS_BIN_INT = 7
-CLS_OPERATOR = 8
-CLS_BRK_OP = 9
-CLS_UNI_QUOTE = 10
-CLS_DBL_QUOTE = 11
-CLS_BACK_SLASH = 12
-CLS_LN_COMMENT = 13  # TODO: add Corresponding comment classes
-CLS_BLK_COMMENT = 14
-# intermediate token types (pre-parse)
-CLS_PLUS_MINUS = 15
-CLS_DOT = 16
-# post-parse token types
-CLS_ARRAY_LEN = 15
-
-CLS_ABREV = [
-    "Bln",
-    "WSp",
-    "Nam",
-    "Dec",
-    "Flt",
-    "Hex",
-    "Oct",
-    "Bin",
-    "Opr",
-    "Brk",
-    "SQu",
-    "DQu",
-    "BSl",
-    "LnC",
-    "BlC",
-    "PMC",
-    "Dot"
-]
+from enum import Enum
 
 
-LITERAL_TYPES = {CLS_DBL_QUOTE, CLS_UNI_QUOTE, CLS_FLOAT, CLS_DEC_INT, CLS_OCT_INT, CLS_HEX_INT, CLS_BIN_INT}
+class TokenClass(Enum):
+    BLANK = 0
+    WS = 1
+    NAME = 2
+    DEC_INT = 3
+    FLOAT = 4
+    HEX_INT = 5
+    OCT_INT = 6
+    BIN_INT = 7
+    OPERATOR = 8
+    BRK_OP = 9
+    UNI_QUOTE = 10
+    DBL_QUOTE = 11
+    BACK_SLASH = 12
+    LN_COMMENT = 13  # TODO: add Corresponding comment classes
+    BLK_COMMENT = 14
+    # intermediate token types (pre-parse)
+    PLUS_MINUS = 15
+    DOT = 16
+    # post-parse token types
+    ARRAY_LEN = 15
+
+token_class_abreviation = {
+    TokenClass.BLANK: "Bln",
+    TokenClass.WS: "WSp",
+    TokenClass.NAME: "Nam",
+    TokenClass.DEC_INT: "Dec",
+    TokenClass.FLOAT: "Flt",
+    TokenClass.HEX_INT: "Hex",
+    TokenClass.OCT_INT: "Oct",
+    TokenClass.BIN_INT: "Bin",
+    TokenClass.OPERATOR: "Opr",
+    TokenClass.BRK_OP: "Brk",
+    TokenClass.UNI_QUOTE: "SQu",
+    TokenClass.DBL_QUOTE: "DQu",
+    TokenClass.BACK_SLASH: "BSl",
+    TokenClass.LN_COMMENT: "LnC",
+    TokenClass.BLK_COMMENT: "BlC",
+    TokenClass.PLUS_MINUS: "PMC",
+    TokenClass.DOT: "Dot",
+    TokenClass.ARRAY_LEN: "ArL"
+}
+
+
+LITERAL_TYPES = {
+    TokenClass.DBL_QUOTE,
+    TokenClass.UNI_QUOTE,
+    TokenClass.FLOAT,
+    TokenClass.DEC_INT,
+    TokenClass.OCT_INT,
+    TokenClass.HEX_INT,
+    TokenClass.BIN_INT
+}
 
 
 LST_OPS = {
@@ -76,47 +89,51 @@ KEYWORDS = {
     "inline", "extern", "using", "namespace", "operator",
     "implicit", "explicit", "template", "typename", "asm"
     } | MODIFIERS | BASE_TYPE_MODS | INT_TYPES | SINGLE_TYPES
-LST_STMNT_NAMES = ["{", "if", "while", "for", "return", "break", "continue", "namespace", "typedef", "<DECL_STMNT>", "asm"]
-STMNT_CURLY_STMNT = 0
-STMNT_IF = 1
-STMNT_WHILE = 2
-STMNT_FOR = 3
-STMNT_RTN = 4
-STMNT_BRK = 5
-STMNT_CONTINUE = 6
-STMNT_NAMESPACE = 7
-STMNT_TYPEDEF = 8
-STMNT_DECL = 9
-STMNT_ASM = 10
-STMNT_SEMI_COLON = len(LST_STMNT_NAMES)  # always at end ('expr;' expression)
-EXPR_LITERAL = 0
-EXPR_NAME = 1
-EXPR_BIN_OP = 2
-EXPR_UNI_OP = 3
-EXPR_CURLY = 4
-EXPR_CAST = 5
-EXPR_DOT = 6
-EXPR_PTR_MEMBER = 7
-EXPR_FN_CALL = 8
-EXPR_SPARENTH = 9
-EXPR_PARENTH = 10
-EXPR_INLINE_IF = 11
-EXPR_DECL_VAR = 12
-LST_EXPR_ID_STR = [
-    "EXPR_LITERAL",
-    "EXPR_NAME",
-    "EXPR_BIN_OP",
-    "EXPR_UNI_OP",
-    "EXPR_CURLY",
-    "EXPR_CAST",
-    "EXPR_DOT",
-    "EXPR_PTR_MEMBER",
-    "EXPR_FN_CALL",
-    "EXPR_SPARENTH",
-    "EXPR_PARENTH",
-    "EXPR_INLINE_IF",
-    "EXPR_DECL_VAR"
-]
+
+class StmntType(Enum):
+    CURLY_STMNT = 0
+    IF = 1
+    WHILE = 2
+    FOR = 3
+    RTN = 4
+    BRK = 5
+    CONTINUE = 6
+    NAMESPACE = 7
+    TYPEDEF = 8
+    DECL = 9
+    ASM = 10
+    SEMI_COLON = 11  # always at end ('expr;' expression)
+
+
+STMNT_KEY_TO_ID = {
+    "{": StmntType.CURLY_STMNT,
+    "if": StmntType.IF,
+    "while": StmntType.WHILE,
+    "for": StmntType.FOR,
+    "return": StmntType.RTN,
+    "break": StmntType.BRK,
+    "continue": StmntType.CONTINUE,
+    "namespace": StmntType.NAMESPACE,
+    "typedef": StmntType.TYPEDEF,
+    "<DECL_STMNT>": StmntType.DECL,
+    "asm": StmntType.ASM
+}
+
+
+class ExprType(Enum):
+    LITERAL = 0
+    NAME = 1
+    BIN_OP = 2
+    UNI_OP = 3
+    CURLY = 4
+    CAST = 5
+    DOT = 6
+    PTR_MEMBER = 7
+    FN_CALL = 8
+    SPARENTH = 9
+    PARENTH = 10
+    INLINE_IF = 11
+    DECL_VAR = 12
 
 INIT_NONE = 0
 INIT_ASSIGN = 1
@@ -172,213 +189,191 @@ DCT_FIXES = {
 LST_LTR_OPS = [True] * 17
 LST_LTR_OPS[15] = False
 
-UNARY_BOOL_NOT = 0
-UNARY_PRE_DEC = 1
-UNARY_POST_DEC = 2
-UNARY_PRE_INC = 3
-UNARY_POST_INC = 4
-UNARY_BIT_NOT = 5
-UNARY_STAR = 6
-UNARY_REFERENCE = 7
-UNARY_MINUS = 8
-UNARY_PLUS = 9
 
-LST_UNI_OP_ID_MAP = [
-    "UNARY_BOOL_NOT",
-    "UNARY_PRE_DEC",
-    "UNARY_POST_DEC",
-    "UNARY_PRE_INC",
-    "UNARY_POST_INC",
-    "UNARY_BIT_NOT",
-    "UNARY_STAR",
-    "UNARY_REFERENCE",
-    "UNARY_MINUS",
-    "UNARY_PLUS"]
+class UnaryExprSubType(Enum):
+    BOOL_NOT = 0
+    PRE_DEC = 1
+    POST_DEC = 2
+    PRE_INC = 3
+    POST_INC = 4
+    BIT_NOT = 5
+    STAR = 6
+    REFERENCE = 7
+    MINUS = 8
+    PLUS = 9
 
-BINARY_ASSGN = 0
-BINARY_ASSGN_MOD = 1
-BINARY_ASSGN_DIV = 2
-BINARY_ASSGN_MUL = 3
-BINARY_ASSGN_MINUS = 4
-BINARY_ASSGN_PLUS = 5
-BINARY_ASSGN_AND = 6
-BINARY_ASSGN_OR = 7
-BINARY_ASSGN_XOR = 8
-BINARY_ASSGN_RSHIFT = 9
-BINARY_ASSGN_LSHIFT = 10
-BINARY_MUL = 11
-BINARY_DIV = 12
-BINARY_MOD = 13
-BINARY_MINUS = 14
-BINARY_PLUS = 15
-BINARY_LT = 16
-BINARY_GT = 17
-BINARY_LE = 18
-BINARY_GE = 19
-BINARY_NE = 20
-BINARY_EQ = 21
-BINARY_AND = 22
-BINARY_OR = 23
-BINARY_XOR = 24
-BINARY_RSHIFT = 25
-BINARY_LSHIFT = 26
-BINARY_SS_AND = 27
-BINARY_SS_OR = 28
+
+class BinaryExprSubType(Enum):
+    ASSGN = 0
+    ASSGN_MOD = 1
+    ASSGN_DIV = 2
+    ASSGN_MUL = 3
+    ASSGN_MINUS = 4
+    ASSGN_PLUS = 5
+    ASSGN_AND = 6
+    ASSGN_OR = 7
+    ASSGN_XOR = 8
+    ASSGN_RSHIFT = 9
+    ASSGN_LSHIFT = 10
+    MUL = 11
+    DIV = 12
+    MOD = 13
+    MINUS = 14
+    PLUS = 15
+    LT = 16
+    GT = 17
+    LE = 18
+    GE = 19
+    NE = 20
+    EQ = 21
+    AND = 22
+    OR = 23
+    XOR = 24
+    RSHIFT = 25
+    LSHIFT = 26
+    SS_AND = 27
+    SS_OR = 28
 
 ASSIGNMENT_OPS = {
-    BINARY_ASSGN,
-    BINARY_ASSGN_MOD,
-    BINARY_ASSGN_DIV,
-    BINARY_ASSGN_MUL,
-    BINARY_ASSGN_MINUS,
-    BINARY_ASSGN_PLUS,
-    BINARY_ASSGN_AND,
-    BINARY_ASSGN_OR,
-    BINARY_ASSGN_XOR,
-    BINARY_ASSGN_RSHIFT,
-    BINARY_ASSGN_LSHIFT}
-CMP_OPS = {
-    BINARY_LT,
-    BINARY_GT,
-    BINARY_LE,
-    BINARY_GE,
-    BINARY_NE,
-    BINARY_EQ}
+    BinaryExprSubType.ASSGN,
+    BinaryExprSubType.ASSGN_MOD,
+    BinaryExprSubType.ASSGN_DIV,
+    BinaryExprSubType.ASSGN_MUL,
+    BinaryExprSubType.ASSGN_MINUS,
+    BinaryExprSubType.ASSGN_PLUS,
+    BinaryExprSubType.ASSGN_AND,
+    BinaryExprSubType.ASSGN_OR,
+    BinaryExprSubType.ASSGN_XOR,
+    BinaryExprSubType.ASSGN_RSHIFT,
+    BinaryExprSubType.ASSGN_LSHIFT
+}
 
-LST_BIN_OP_ID_MAP = [
-    "BINARY_ASSGN",
-    "BINARY_ASSGN_MOD",
-    "BINARY_ASSGN_DIV",
-    "BINARY_ASSGN_MUL",
-    "BINARY_ASSGN_MINUS",
-    "BINARY_ASSGN_PLUS",
-    "BINARY_ASSGN_AND",
-    "BINARY_ASSGN_OR",
-    "BINARY_ASSGN_XOR",
-    "BINARY_ASSGN_RSHIFT",
-    "BINARY_ASSGN_LSHIFT",
-    "BINARY_MUL",
-    "BINARY_DIV",
-    "BINARY_MOD",
-    "BINARY_MINUS",
-    "BINARY_PLUS",
-    "BINARY_LT",
-    "BINARY_GT",
-    "BINARY_LE",
-    "BINARY_GE",
-    "BINARY_NE",
-    "BINARY_EQ",
-    "BINARY_AND",
-    "BINARY_OR",
-    "BINARY_XOR",
-    "BINARY_RSHIFT",
-    "BINARY_LSHIFT",
-    "BINARY_SS_AND",
-    "BINARY_SS_OR"]
+CMP_OPS = {
+    BinaryExprSubType.LT,
+    BinaryExprSubType.GT,
+    BinaryExprSubType.LE,
+    BinaryExprSubType.GE,
+    BinaryExprSubType.NE,
+    BinaryExprSubType.EQ
+}
 
 DCT_PREFIX_OP_NAME = {
-    "!": UNARY_BOOL_NOT,
-    "--": UNARY_PRE_DEC,
-    "++": UNARY_PRE_INC,
-    "~": UNARY_BIT_NOT,
-    "*": UNARY_STAR,
-    "&": UNARY_REFERENCE,
-    "-": UNARY_MINUS,
-    "+": UNARY_PLUS,
+    "!": UnaryExprSubType.BOOL_NOT,
+    "--": UnaryExprSubType.PRE_DEC,
+    "++": UnaryExprSubType.PRE_INC,
+    "~": UnaryExprSubType.BIT_NOT,
+    "*": UnaryExprSubType.STAR,
+    "&": UnaryExprSubType.REFERENCE,
+    "-": UnaryExprSubType.MINUS,
+    "+": UnaryExprSubType.PLUS,
 }
 
 DCT_POSTFIX_OP_NAME = {
-    "--": UNARY_POST_DEC,
-    "++": UNARY_POST_INC,
+    "--": UnaryExprSubType.POST_DEC,
+    "++": UnaryExprSubType.POST_INC,
 }
 
 DCT_INFIX_OP_NAME = {
-    "=": BINARY_ASSGN,
-    "%=": BINARY_ASSGN_MOD,
-    "/=": BINARY_ASSGN_DIV,
-    "*=": BINARY_ASSGN_MUL,
-    "-=": BINARY_ASSGN_MINUS,
-    "+=": BINARY_ASSGN_PLUS,
-    "&=": BINARY_ASSGN_AND,
-    "|=": BINARY_ASSGN_OR,
-    "^=": BINARY_ASSGN_XOR,
-    ">>=": BINARY_ASSGN_RSHIFT,
-    "<<=": BINARY_ASSGN_LSHIFT,
-    "*": BINARY_MUL,
-    "/": BINARY_DIV,
-    "%": BINARY_MOD,
-    "-": BINARY_MINUS,
-    "+": BINARY_PLUS,
-    "<": BINARY_LT,
-    ">": BINARY_GT,
-    "<=": BINARY_LE,
-    ">=": BINARY_GE,
-    "!=": BINARY_NE,
-    "==": BINARY_EQ,
-    "&": BINARY_AND,
-    "|": BINARY_OR,
-    "^": BINARY_XOR,
-    ">>": BINARY_RSHIFT,
-    "<<": BINARY_LSHIFT,
-    "&&": BINARY_SS_AND,
-    "||": BINARY_SS_OR}
+    "=": BinaryExprSubType.ASSGN,
+    "%=": BinaryExprSubType.ASSGN_MOD,
+    "/=": BinaryExprSubType.ASSGN_DIV,
+    "*=": BinaryExprSubType.ASSGN_MUL,
+    "-=": BinaryExprSubType.ASSGN_MINUS,
+    "+=": BinaryExprSubType.ASSGN_PLUS,
+    "&=": BinaryExprSubType.ASSGN_AND,
+    "|=": BinaryExprSubType.ASSGN_OR,
+    "^=": BinaryExprSubType.ASSGN_XOR,
+    ">>=": BinaryExprSubType.ASSGN_RSHIFT,
+    "<<=": BinaryExprSubType.ASSGN_LSHIFT,
+    "*": BinaryExprSubType.MUL,
+    "/": BinaryExprSubType.DIV,
+    "%": BinaryExprSubType.MOD,
+    "-": BinaryExprSubType.MINUS,
+    "+": BinaryExprSubType.PLUS,
+    "<": BinaryExprSubType.LT,
+    ">": BinaryExprSubType.GT,
+    "<=": BinaryExprSubType.LE,
+    ">=": BinaryExprSubType.GE,
+    "!=": BinaryExprSubType.NE,
+    "==": BinaryExprSubType.EQ,
+    "&": BinaryExprSubType.AND,
+    "|": BinaryExprSubType.OR,
+    "^": BinaryExprSubType.XOR,
+    ">>": BinaryExprSubType.RSHIFT,
+    "<<": BinaryExprSubType.LSHIFT,
+    "&&": BinaryExprSubType.SS_AND,
+    "||": BinaryExprSubType.SS_OR
+}
 
 OPEN_GROUPS = ["{", "[", "(", "?"]
 CLOSE_GROUPS = ["}", "]", ")", ":"]
 META_TYPE_LST = ["enum", "class", "struct", "union"]
 INT_TYPES1 = INT_TYPES.difference({"int"})
 assert "int" not in INT_TYPES1
-INT_I = 0
-INT_L = 1
-INT_LL = 2
-INT_S = 3
-INT_C = 4
-INT_C16 = 5
-INT_C32 = 6
-INT_WC = 7
-FLT_F = 8
-FLT_D = 9
-FLT_LD = 10
-TYP_BOOL = 11
-TYP_VOID = 12
-TYP_AUTO = 13
+class PrimitiveTypeId(Enum):
+    INT_I = 0
+    INT_L = 1
+    INT_LL = 2
+    INT_S = 3
+    INT_C = 4
+    INT_C16 = 5
+    INT_C32 = 6
+    INT_WC = 7
+    FLT_F = 8
+    FLT_D = 9
+    FLT_LD = 10
+    TYP_BOOL = 11
+    TYP_VOID = 12
+    TYP_AUTO = 13
+
 LST_TYPE_CODES = [
     "INT_I", "INT_L", "INT_LL", "INT_S", "INT_C", "INT_C16", "INT_C32", "INT_WC",
     "FLT_F", "FLT_D", "FLT_LD", "TYP_BOOL", "TYP_VOID", "TYP_AUTO"]
-INT_TYPE_CODES = [INT_I, INT_L, INT_LL, INT_S, INT_C, INT_C16, INT_C32, INT_WC, TYP_BOOL]
-FLT_TYPE_CODES = [FLT_F, FLT_D, FLT_LD]
+INT_TYPE_CODES = [
+    PrimitiveTypeId.INT_I,
+    PrimitiveTypeId.INT_L,
+    PrimitiveTypeId.INT_LL,
+    PrimitiveTypeId.INT_S,
+    PrimitiveTypeId.INT_C,
+    PrimitiveTypeId.INT_C16,
+    PrimitiveTypeId.INT_C32,
+    PrimitiveTypeId.INT_WC,
+    PrimitiveTypeId.TYP_BOOL
+]
+FLT_TYPE_CODES = [
+    PrimitiveTypeId.FLT_F,
+    PrimitiveTypeId.FLT_D,
+    PrimitiveTypeId.FLT_LD
+]
 # TODO: TYP_FN = ?
 SIZE_SIGN_MAP = {
     # k: (Size, Sign)
-    INT_I: (4, True),
-    INT_L: (4, True),
-    INT_LL: (8, True),
-    INT_S: (2, True),
-    INT_C: (1, False),
-    INT_C16: (2, False),
-    INT_C32: (4, False),
-    INT_WC: (2, False),
-    FLT_F: (4, True),
-    FLT_D: (8, True),
-    FLT_LD: (16, True),
-    TYP_BOOL: (1, False),
-    TYP_VOID: (0, False),
-    TYP_AUTO: (0, False)
+    PrimitiveTypeId.INT_I: (4, True),
+    PrimitiveTypeId.INT_L: (4, True),
+    PrimitiveTypeId.INT_LL: (8, True),
+    PrimitiveTypeId.INT_S: (2, True),
+    PrimitiveTypeId.INT_C: (1, False),
+    PrimitiveTypeId.INT_C16: (2, False),
+    PrimitiveTypeId.INT_C32: (4, False),
+    PrimitiveTypeId.INT_WC: (2, False),
+    PrimitiveTypeId.FLT_F: (4, True),
+    PrimitiveTypeId.FLT_D: (8, True),
+    PrimitiveTypeId.FLT_LD: (16, True),
+    PrimitiveTypeId.TYP_BOOL: (1, False),
+    PrimitiveTypeId.TYP_VOID: (0, False),
+    PrimitiveTypeId.TYP_AUTO: (0, False)
 }
-TYP_CLS_PRIM = 0
-TYP_CLS_QUAL = 1
-TYP_CLS_ENUM = 2
-TYP_CLS_UNION = 3
-TYP_CLS_CLASS = 4
-TYP_CLS_STRUCT = 5
-TYP_CLS_MULTI = 6
+
+class TypeClass(Enum):
+    PRIM = 0
+    QUAL = 1
+    ENUM = 2
+    UNION = 3
+    CLASS = 4
+    STRUCT = 5
+    MULTI = 6
 
 SINGLE_TYPES1 = SINGLE_TYPES.union({"int"})
 PRIM_TYPE_WORDS = SINGLE_TYPES1 | INT_TYPES1 | BASE_TYPE_MODS
 
 TYPE_SPECS = {"const", "volatile", "register", "auto"}
-
-BINARY_CMP_max = max([BINARY_LT, BINARY_GT, BINARY_LE, BINARY_GE, BINARY_NE, BINARY_EQ])
-BINARY_CMP_min = min([BINARY_LT, BINARY_GT, BINARY_LE, BINARY_GE, BINARY_NE, BINARY_EQ])
-
-assert (BINARY_CMP_max - BINARY_CMP_min) == 5, "CMP operator Ids must be consecutive numbers"
