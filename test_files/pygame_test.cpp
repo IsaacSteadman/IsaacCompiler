@@ -5,22 +5,28 @@ size_t syscall(size_t sys_n, size_t arg0, size_t arg1, size_t arg2, size_t arg3)
 int print(const char *str);
 const h_obj_t invalid = 0xFFFFFFFFFFFFFFFF;
 h_obj_t pyg_id = 0xFFFFFFFFFFFFFFFF;
-h_obj_t pygame_init() {
-    if (pyg_id == invalid) {
+h_obj_t pygame_init()
+{
+    if (pyg_id == invalid)
+    {
         pyg_id = syscall(0x02, 0, 0, 0, 0);
     }
     return pyg_id;
 } // print("\n".join(["%02u: %s" % (c, x.str) for c, x in enumerate(tokens[27:47
 h_obj_t disp_id = -1;
 
-void display_init() {
-    if (pyg_id != invalid) {
+void display_init()
+{
+    if (pyg_id != invalid)
+    {
         syscall(0x03, pyg_id, 0, 0, 0);
     }
 }
 
-h_obj_t display_set_mode(unsigned int w, unsigned int h) {
-    if ((disp_id == invalid) & (pyg_id != invalid)) {
+h_obj_t display_set_mode(unsigned int w, unsigned int h)
+{
+    if ((disp_id == invalid) & (pyg_id != invalid))
+    {
         size_t b = h;
         b <<= 32;
         b |= w;
@@ -29,23 +35,30 @@ h_obj_t display_set_mode(unsigned int w, unsigned int h) {
     return disp_id;
 }
 
-h_obj_t wait_event() {
-    if (pyg_id == invalid) return invalid;
+h_obj_t wait_event()
+{
+    if (pyg_id == invalid)
+        return invalid;
     return syscall(0x09, pyg_id, 0, 0, 0);
 }
 
-void delete_object(h_obj_t obj_id) {
+void delete_object(h_obj_t obj_id)
+{
     syscall(0x0A, obj_id, 0, 0, 0);
 }
 
-void display_update() {
-    if (pyg_id != invalid) {
+void display_update()
+{
+    if (pyg_id != invalid)
+    {
         syscall(0x07, pyg_id, 0, 0, 0);
     }
 }
 
-void pygame_quit() {
-    if (pyg_id != invalid) {
+void pygame_quit()
+{
+    if (pyg_id != invalid)
+    {
         syscall(0x08, pyg_id, 0, 0, 0);
     }
 }
@@ -54,28 +67,33 @@ bool running = 1;
 // reverses a string 'str' of length 'len'
 void reverse(char *str, int len)
 {
-    int i=0, j=len-1, temp;
-    while (i<j)
+    int i = 0, j = len - 1;
+    char temp;
+    while (i < j)
     {
         temp = str[i];
         str[i] = str[j];
         str[j] = temp;
-        i++; j--;
+        i++;
+        j--;
     }
 }
 
- // Converts a given integer x to string str[].  d is the number
- // of digits required in output. If d is more than the number
- // of digits in x, then 0s are added at the beginning.
+// Converts a given integer x to string str[].  d is the number
+// of digits required in output. If d is more than the number
+// of digits in x, then 0s are added at the beginning.
 int intToStr(int x, char *str, int d, int radix)
 {
     int i = 0;
     while (x)
     {
         char ch = (x % radix);
-        if (ch >= 10) {
+        if (ch >= 10)
+        {
             ch += 'A' - 10;
-        } else {
+        }
+        else
+        {
             ch += '0';
         }
         str[i++] = ch;
@@ -91,14 +109,17 @@ int intToStr(int x, char *str, int d, int radix)
     str[i] = '\0';
     return i;
 }
-int intToStr(int x, char *str, int d) {
+int intToStr(int x, char *str, int d)
+{
     return intToStr(x, str, d, 10);
 }
 
 char buf1[9];
 
-void surf_fill(h_obj_t surf, unsigned char r, unsigned char g, unsigned char b, unsigned int flags, unsigned int x, unsigned int y, unsigned int w, unsigned int h) {
-    if (surf != invalid) {
+void surf_fill(h_obj_t surf, unsigned char r, unsigned char g, unsigned char b, unsigned int flags, unsigned int x, unsigned int y, unsigned int w, unsigned int h)
+{
+    if (surf != invalid)
+    {
         size_t b_arg = flags;
         b_arg <<= 32;
         b_arg |= ((int)r << 16) | ((int)g << 8) | b;
@@ -116,50 +137,60 @@ void surf_fill(h_obj_t surf, unsigned char r, unsigned char g, unsigned char b, 
     }
 }
 
-void load_event(h_obj_t evt_id, char *buf) {
-    if (pyg_id != invalid) {
+void load_event(h_obj_t evt_id, char *buf)
+{
+    if (pyg_id != invalid)
+    {
         syscall(0x0B, pyg_id, evt_id, (size_t)buf, 0);
     }
 }
 
-size_t get_event_type_by_key(const char *key) {
-    if (pyg_id != invalid) {
+size_t get_event_type_by_key(const char *key)
+{
+    if (pyg_id != invalid)
+    {
         return syscall(0x0C, pyg_id, (size_t)key, 0, 0);
     }
     return invalid;
 }
 
-struct QuitEvent {
+struct QuitEvent
+{
     unsigned int type;
 };
 
-struct KeydownEvent {
+struct KeydownEvent
+{
     unsigned int type;
     unsigned int key;
     unsigned int mod;
     unsigned int unicode;
 };
 
-struct KeyupEvent {
+struct KeyupEvent
+{
     unsigned int type;
     unsigned int key;
     unsigned int mod;
 };
 
-struct MouseMotionEvent {
+struct MouseMotionEvent
+{
     unsigned int type;
     unsigned int buttons;
     signed int x, y;
     signed int rel_x, rel_y;
 };
 
-struct MouseButtonUpEvent {
+struct MouseButtonUpEvent
+{
     unsigned int type;
     unsigned int button;
     signed int x, y;
 };
 
-struct MouseButtonDownEvent {
+struct MouseButtonDownEvent
+{
     unsigned int type;
     unsigned int button;
     signed int x, y;
@@ -185,20 +216,23 @@ struct JoyButtonDownEvent {
     unsigned int type;
 };*/
 
-struct VideoResizeEventEvent {
+struct VideoResizeEventEvent
+{
     unsigned int type;
 };
 
-struct ActiveEvent {
+struct ActiveEvent
+{
     unsigned int type;
 };
 
-struct VideoExposeEvent {
+struct VideoExposeEvent
+{
     unsigned int type;
 };
 
-
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     invalid = 0xFFFFFFFFFFFFFFFF;
     char zzbuf[12];
     pyg_id = -1;
@@ -224,7 +258,8 @@ int main(int argc, char **argv) {
     char *evt_buf_ptr = evt_buf;
     const size_t quit_event_type = get_event_type_by_key("QUIT");
     buf[4] = '\0';
-    while (running) {
+    while (running)
+    {
         unsigned char r = rgb_hues[i] >> 16;
         unsigned char g = rgb_hues[i] >> 8;
         unsigned char b = rgb_hues[i];
@@ -251,7 +286,8 @@ int main(int argc, char **argv) {
         print("hello =");
         print(zzbuf);
         print("\n");*/
-        if (evt_type == quit_event_type) {
+        if (evt_type == quit_event_type)
+        {
             running = 0;
         }
         delete_object(evt);

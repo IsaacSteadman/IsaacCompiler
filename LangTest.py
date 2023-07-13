@@ -1,13 +1,4 @@
 import sys
-import os
-try:
-    base_dir = os.path.dirname(__file__)
-except NameError:
-    base_dir = os.getcwd()
-sys.path[:0] = map(lambda x: os.path.join(base_dir, x), [
-    "PyIsaacUtils",
-    "StackVM"
-])
 from Parsing import *
 import time
 from LibUtilsABI import lib_utils_abi
@@ -113,7 +104,10 @@ if __name__ == "__main__" and run_opt == 5:
     Links = get_dict_links(CmplObj)
     source_links = get_dict_link_src(CmplObj)
     End = CmplObj.code_segment_end
-    print("  " + disassemble(CmplObj.memory, None, End, Links, "  0x%04X: %s", source_links).replace("\n", "\n  "))
+    codegen_results = disassemble(CmplObj.memory, None, End, Links, "  0x%04X: %s", source_links)
+    with open(test_files_dir + "/pygame_test.sasm", "w") as fl:
+        fl.write(codegen_results)
+    print("  " + codegen_results.replace("\n", "\n  "))
     print("END CODEGEN RESULTS")
     print("code_segment_end, data_segment_start = %u, %u" % (CmplObj.code_segment_end, CmplObj.data_segment_start))
     print("len(CmplObj.memory) = %u" % len(CmplObj.memory))

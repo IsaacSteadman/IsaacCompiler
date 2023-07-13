@@ -1,0 +1,955 @@
+  0x0000: 4d1 ; hex = 1
+  0x0006: LOAD-EA_R_IP|SZ_8-(gRa*?FiPPczmain) ; size = 8 num = 400
+  0x0010: CALL
+  0x0011: HLT
+  0x0012: 8d18446744073709551615 ; hex = FFFFFFFFFFFFFFFF signed = -1
+  0x001C: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 4067
+  0x0026: SWAP-SZ8_A|SZ8_B
+  0x0028: STOR-ABS_S8|SZ_8
+  0x002A: 8d18446744073709551615 ; hex = FFFFFFFFFFFFFFFF signed = -1
+  0x0034: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 4060
+  0x003E: SWAP-SZ8_A|SZ8_B
+  0x0040: STOR-ABS_S8|SZ_8
+  0x0042: 1d0 ; hex = 0
+  0x0045: CONV-UI_1_I|SI_4_O
+  0x0047: 4d1 ; hex = 1
+  0x004D: SUB4
+  0x004E: CONV-SI_4_I|UI_8_O
+  0x0050: LOAD-EA_R_IP|SZ_8-(gRa*?ydisp_id) ; size = 8 num = 4024
+  0x005A: SWAP-SZ8_A|SZ8_B
+  0x005C: STOR-ABS_S8|SZ_8
+  0x005E: 4d1 ; hex = 1
+  0x0064: 1d0 ; hex = 0
+  0x0067: CONV-UI_1_I|SI_4_O
+  0x0069: CMP4S
+  0x006A: NE0
+  0x006B: LOAD-EA_R_IP|SZ_8-(gRa*?brunning) ; size = 8 num = 3996
+  0x0075: SWAP-SZ1_A|SZ8_B
+  0x0077: STOR-ABS_S8|SZ_1
+?FPCczget_event_type_by_key
+  0x0079: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 3991
+  0x0083: LOAD-ABS_S8|SZ_8
+  0x0085: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 3962
+  0x008F: LOAD-ABS_S8|SZ_8
+  0x0091: CMP8
+  0x0092: NE0
+  0x0093: EQ0
+  0x0094: LOAD-EA_R_IP|SZ_8-8d(65)
+  0x009E: JMPIF
+  0x009F: 1d8 ; hex = 8
+  0x00A2: ADD_SP1
+  0x00A3: 4d0 ; hex = 0
+  0x00A9: CONV-SI_4_I|UI_8_O
+  0x00AB: 4d0 ; hex = 0
+  0x00B1: CONV-SI_4_I|UI_8_O
+  0x00B3: LOAD-R_BP1|SZ_8-1d(16)
+  0x00B6: CONV-UI_8_I|UI_8_O
+  0x00B8: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 3928
+  0x00C2: LOAD-ABS_S8|SZ_8
+  0x00C4: 4d12 ; hex = C
+  0x00CA: CONV-SI_4_I|UI_8_O
+  0x00CC: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 3017
+  0x00D6: CALL
+  0x00D7: 1d40 ; hex = 28
+  0x00DA: RST_SP1
+  0x00DB: STOR-R_BP1|SZ_8-1d(24)
+  0x00DE: RET
+  0x00DF: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 3872
+  0x00E9: LOAD-ABS_S8|SZ_8
+  0x00EB: STOR-R_BP1|SZ_8-1d(24)
+  0x00EE: RET
+  0x00EF: RET
+?FPcizreverse
+  0x00F0: 4d0 ; hex = 0
+  0x00F6: LOAD-REG_BP|SZ_8
+  0x00F8: 8d24 ; hex = 18
+  0x0102: ADD8
+  0x0103: LOAD-ABS_S8|SZ_4
+  0x0105: 4d1 ; hex = 1
+  0x010B: SUB4
+  0x010C: 1d4 ; hex = 4
+  0x010F: ADD_SP1
+  0x0110: LOAD-REG_BP|SZ_8
+  0x0112: 8d18446744073709551612 ; hex = FFFFFFFFFFFFFFFC signed = -4
+  0x011C: ADD8
+  0x011D: LOAD-ABS_S8|SZ_4
+  0x011F: LOAD-REG_BP|SZ_8
+  0x0121: 8d18446744073709551608 ; hex = FFFFFFFFFFFFFFF8 signed = -8
+  0x012B: ADD8
+  0x012C: LOAD-ABS_S8|SZ_4
+  0x012E: CMP4S
+  0x012F: LT0
+  0x0130: EQ0
+  0x0131: LOAD-EA_R_IP|SZ_8-8d(96)
+  0x013B: JMPIF
+  0x013C: LOAD-R_BP1|SZ_8-1d(16)
+  0x013F: LOAD-REG_BP|SZ_8
+  0x0141: 8d18446744073709551612 ; hex = FFFFFFFFFFFFFFFC signed = -4
+  0x014B: ADD8
+  0x014C: LOAD-ABS_S8|SZ_4
+  0x014E: CONV-SI_4_I|UI_8_O
+  0x0150: ADD8
+  0x0151: LOAD-ABS_S8|SZ_1
+  0x0153: CONV-UI_1_I|SI_4_O
+  0x0155: STOR-R_BP1|SZ_4-1d(-12)
+  0x0158: LOAD-REG_BP|SZ_8
+  0x015A: 8d18446744073709551612 ; hex = FFFFFFFFFFFFFFFC signed = -4
+  0x0164: ADD8
+  0x0165: LOAD-TOS|SZ_8
+  0x0167: LOAD-ABS_S8|SZ_4
+  0x0169: 4d1 ; hex = 1
+  0x016F: ADD4
+  0x0170: SWAP-SZ8_A|SZ4_B
+  0x0172: STOR-ABS_S8|SZ_4
+  0x0174: LOAD-REG_BP|SZ_8
+  0x0176: 8d18446744073709551608 ; hex = FFFFFFFFFFFFFFF8 signed = -8
+  0x0180: ADD8
+  0x0181: LOAD-TOS|SZ_8
+  0x0183: LOAD-ABS_S8|SZ_4
+  0x0185: 4d1 ; hex = 1
+  0x018B: SUB4
+  0x018C: SWAP-SZ8_A|SZ4_B
+  0x018E: STOR-ABS_S8|SZ_4
+  0x0190: LOAD-EA_R_IP|SZ_8-8d(-138)
+  0x019A: JMP
+  0x019B: 1d12 ; hex = C
+  0x019E: RST_SP1
+  0x019F: RET
+?FiPPczmain
+  0x01A0: 8d18446744073709551615 ; hex = FFFFFFFFFFFFFFFF signed = -1
+  0x01AA: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 3669
+  0x01B4: SWAP-SZ8_A|SZ8_B
+  0x01B6: STOR-ABS_S8|SZ_8
+  0x01B8: 1d12 ; hex = C
+  0x01BB: ADD_SP1
+  0x01BC: 1d0 ; hex = 0
+  0x01BF: CONV-UI_1_I|SI_4_O
+  0x01C1: 4d1 ; hex = 1
+  0x01C7: SUB4
+  0x01C8: CONV-SI_4_I|UI_8_O
+  0x01CA: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 3654
+  0x01D4: SWAP-SZ8_A|SZ8_B
+  0x01D6: STOR-ABS_S8|SZ_8
+  0x01D8: 1d0 ; hex = 0
+  0x01DB: CONV-UI_1_I|SI_4_O
+  0x01DD: 4d1 ; hex = 1
+  0x01E3: SUB4
+  0x01E4: CONV-SI_4_I|UI_8_O
+  0x01E6: LOAD-EA_R_IP|SZ_8-(gRa*?ydisp_id) ; size = 8 num = 3618
+  0x01F0: SWAP-SZ8_A|SZ8_B
+  0x01F2: STOR-ABS_S8|SZ_8
+  0x01F4: 1d8 ; hex = 8
+  0x01F7: ADD_SP1
+  0x01F8: LOAD-EA_R_IP|SZ_8-(gRa*?Fzpygame_init) ; size = 8 num = 2361
+  0x0202: CALL
+  0x0203: 1d0 ; hex = 0
+  0x0206: RST_SP1
+  0x0207: 1d8 ; hex = 8
+  0x020A: RST_SP1
+  0x020B: 4d1 ; hex = 1
+  0x0211: 1d0 ; hex = 0
+  0x0214: CONV-UI_1_I|SI_4_O
+  0x0216: CMP4S
+  0x0217: NE0
+  0x0218: LOAD-EA_R_IP|SZ_8-(gRa*?brunning) ; size = 8 num = 3567
+  0x0222: SWAP-SZ1_A|SZ8_B
+  0x0224: STOR-ABS_S8|SZ_1
+  0x0226: 1d0 ; hex = 0
+  0x0229: ADD_SP1
+  0x022A: LOAD-EA_R_IP|SZ_8-(gRa*?Fzdisplay_init) ; size = 8 num = 2099
+  0x0234: CALL
+  0x0235: 1d0 ; hex = 0
+  0x0238: RST_SP1
+  0x0239: 1d8 ; hex = 8
+  0x023C: ADD_SP1
+  0x023D: 4d480 ; hex = 1E0
+  0x0243: CONV-SI_4_I|UI_4_O
+  0x0245: 4d640 ; hex = 280
+  0x024B: CONV-SI_4_I|UI_4_O
+  0x024D: LOAD-EA_R_IP|SZ_8-(gRa*?Fjjzdisplay_set_mode) ; size = 8 num = 1114
+  0x0257: CALL
+  0x0258: 1d8 ; hex = 8
+  0x025B: RST_SP1
+  0x025C: 1d8 ; hex = 8
+  0x025F: RST_SP1
+  0x0260: 1d40 ; hex = 28
+  0x0263: ADD_SP1
+  0x0264: 4d0 ; hex = 0
+  0x026A: CONV-SI_4_I|UI_8_O
+  0x026C: 1d5 ; hex = 5
+  0x026F: ADD_SP1
+  0x0270: 1d24 ; hex = 18
+  0x0273: ADD_SP1
+  0x0274: LOAD-REG_BP|SZ_8
+  0x0276: 8d18446744073709551527 ; hex = FFFFFFFFFFFFFFA7 signed = -89
+  0x0280: ADD8
+  0x0281: 1d8 ; hex = 8
+  0x0284: ADD_SP1
+  0x0285: LOAD-EA_R_IP|SZ_8-(gRa*<bytes b'QUIT\x00'>) ; size = 8 num = 3475
+  0x028F: LOAD-EA_R_IP|SZ_8-(gRa*?FPCczget_event_type_by_key) ; size = 8 num = -544
+  0x0299: CALL
+  0x029A: 1d8 ; hex = 8
+  0x029D: RST_SP1
+  0x029E: LOAD-EA_R_IP|SZ_8-(gRa*?brunning) ; size = 8 num = 3433
+  0x02A8: LOAD-ABS_S8|SZ_1
+  0x02AA: EQ0
+  0x02AB: LOAD-EA_R_IP|SZ_8-8d(515)
+  0x02B5: JMPIF
+  0x02B6: LOAD-REG_BP|SZ_8
+  0x02B8: 8d18446744073709551564 ; hex = FFFFFFFFFFFFFFCC signed = -52
+  0x02C2: ADD8
+  0x02C3: LOAD-REG_BP|SZ_8
+  0x02C5: 8d18446744073709551556 ; hex = FFFFFFFFFFFFFFC4 signed = -60
+  0x02CF: ADD8
+  0x02D0: LOAD-ABS_S8|SZ_8
+  0x02D2: 8d4 ; hex = 4
+  0x02DC: MUL8
+  0x02DD: ADD8
+  0x02DE: LOAD-ABS_S8|SZ_4
+  0x02E0: 4d16 ; hex = 10
+  0x02E6: CONV-SI_4_I|UI_1_O
+  0x02E8: RSHIFT4
+  0x02E9: CONV-SI_4_I|UI_1_O
+  0x02EB: LOAD-REG_BP|SZ_8
+  0x02ED: 8d18446744073709551564 ; hex = FFFFFFFFFFFFFFCC signed = -52
+  0x02F7: ADD8
+  0x02F8: LOAD-REG_BP|SZ_8
+  0x02FA: 8d18446744073709551556 ; hex = FFFFFFFFFFFFFFC4 signed = -60
+  0x0304: ADD8
+  0x0305: LOAD-ABS_S8|SZ_8
+  0x0307: 8d4 ; hex = 4
+  0x0311: MUL8
+  0x0312: ADD8
+  0x0313: LOAD-ABS_S8|SZ_4
+  0x0315: 4d8 ; hex = 8
+  0x031B: CONV-SI_4_I|UI_1_O
+  0x031D: RSHIFT4
+  0x031E: CONV-SI_4_I|UI_1_O
+  0x0320: LOAD-REG_BP|SZ_8
+  0x0322: 8d18446744073709551564 ; hex = FFFFFFFFFFFFFFCC signed = -52
+  0x032C: ADD8
+  0x032D: LOAD-REG_BP|SZ_8
+  0x032F: 8d18446744073709551556 ; hex = FFFFFFFFFFFFFFC4 signed = -60
+  0x0339: ADD8
+  0x033A: LOAD-ABS_S8|SZ_8
+  0x033C: 8d4 ; hex = 4
+  0x0346: MUL8
+  0x0347: ADD8
+  0x0348: LOAD-ABS_S8|SZ_4
+  0x034A: CONV-SI_4_I|UI_1_O
+  0x034C: 1d0 ; hex = 0
+  0x034F: ADD_SP1
+  0x0350: 4d480 ; hex = 1E0
+  0x0356: CONV-SI_4_I|UI_4_O
+  0x0358: 4d640 ; hex = 280
+  0x035E: CONV-SI_4_I|UI_4_O
+  0x0360: 4d0 ; hex = 0
+  0x0366: CONV-SI_4_I|UI_4_O
+  0x0368: 4d0 ; hex = 0
+  0x036E: CONV-SI_4_I|UI_4_O
+  0x0370: 4d0 ; hex = 0
+  0x0376: CONV-SI_4_I|UI_4_O
+  0x0378: LOAD-REG_BP|SZ_8
+  0x037A: 8d18446744073709551508 ; hex = FFFFFFFFFFFFFF94 signed = -108
+  0x0384: ADD8
+  0x0385: LOAD-ABS_S8|SZ_1
+  0x0387: LOAD-REG_BP|SZ_8
+  0x0389: 8d18446744073709551509 ; hex = FFFFFFFFFFFFFF95 signed = -107
+  0x0393: ADD8
+  0x0394: LOAD-ABS_S8|SZ_1
+  0x0396: LOAD-REG_BP|SZ_8
+  0x0398: 8d18446744073709551510 ; hex = FFFFFFFFFFFFFF96 signed = -106
+  0x03A2: ADD8
+  0x03A3: LOAD-ABS_S8|SZ_1
+  0x03A5: LOAD-EA_R_IP|SZ_8-(gRa*?ydisp_id) ; size = 8 num = 3171
+  0x03AF: LOAD-ABS_S8|SZ_8
+  0x03B1: LOAD-EA_R_IP|SZ_8-(gRa*?Fycccjjjjjzsurf_fill) ; size = 8 num = 1124
+  0x03BB: CALL
+  0x03BC: 1d31 ; hex = 1F
+  0x03BF: RST_SP1
+  0x03C0: 1d0 ; hex = 0
+  0x03C3: ADD_SP1
+  0x03C4: LOAD-EA_R_IP|SZ_8-(gRa*?Fzdisplay_update) ; size = 8 num = 1795
+  0x03CE: CALL
+  0x03CF: 1d0 ; hex = 0
+  0x03D2: RST_SP1
+  0x03D3: 1d8 ; hex = 8
+  0x03D6: ADD_SP1
+  0x03D7: LOAD-EA_R_IP|SZ_8-(gRa*?Fzwait_event) ; size = 8 num = 2116
+  0x03E1: CALL
+  0x03E2: 1d0 ; hex = 0
+  0x03E5: RST_SP1
+  0x03E6: 1d0 ; hex = 0
+  0x03E9: ADD_SP1
+  0x03EA: LOAD-R_BP1|SZ_8-1d(-97)
+  0x03ED: LOAD-REG_BP|SZ_8
+  0x03EF: 8d18446744073709551500 ; hex = FFFFFFFFFFFFFF8C signed = -116
+  0x03F9: ADD8
+  0x03FA: LOAD-ABS_S8|SZ_8
+  0x03FC: LOAD-EA_R_IP|SZ_8-(gRa*?FyPczload_event) ; size = 8 num = 939
+  0x0406: CALL
+  0x0407: 1d16 ; hex = 10
+  0x040A: RST_SP1
+  0x040B: 1d4 ; hex = 4
+  0x040E: ADD_SP1
+  0x040F: LOAD-R_BP1|SZ_8-1d(-97)
+  0x0412: LOAD-R_BP1|SZ_8-1d(-128)
+  0x0415: LOAD-ABS_S8|SZ_4
+  0x0417: STOR-R_BP1|SZ_4-1d(-120)
+  0x041A: LOAD-REG_BP|SZ_8
+  0x041C: 8d18446744073709551496 ; hex = FFFFFFFFFFFFFF88 signed = -120
+  0x0426: ADD8
+  0x0427: LOAD-ABS_S8|SZ_4
+  0x0429: LOAD-REG_BP|SZ_8
+  0x042B: 8d18446744073709551511 ; hex = FFFFFFFFFFFFFF97 signed = -105
+  0x0435: ADD8
+  0x0436: LOAD-ABS_S8|SZ_8
+  0x0438: CONV-UI_8_I|SI_4_O
+  0x043A: CMP4S
+  0x043B: EQ0
+  0x043C: EQ0
+  0x043D: LOAD-EA_R_IP|SZ_8-8d(28)
+  0x0447: JMPIF
+  0x0448: 4d0 ; hex = 0
+  0x044E: 1d0 ; hex = 0
+  0x0451: CONV-UI_1_I|SI_4_O
+  0x0453: CMP4S
+  0x0454: NE0
+  0x0455: LOAD-EA_R_IP|SZ_8-(gRa*?brunning) ; size = 8 num = 2994
+  0x045F: SWAP-SZ1_A|SZ8_B
+  0x0461: STOR-ABS_S8|SZ_1
+  0x0463: 1d0 ; hex = 0
+  0x0466: ADD_SP1
+  0x0467: LOAD-REG_BP|SZ_8
+  0x0469: 8d18446744073709551500 ; hex = FFFFFFFFFFFFFF8C signed = -116
+  0x0473: ADD8
+  0x0474: LOAD-ABS_S8|SZ_8
+  0x0476: LOAD-EA_R_IP|SZ_8-(gRa*?Fyzdelete_object) ; size = 8 num = 1440
+  0x0480: CALL
+  0x0481: 1d8 ; hex = 8
+  0x0484: RST_SP1
+  0x0485: LOAD-REG_BP|SZ_8
+  0x0487: 8d18446744073709551556 ; hex = FFFFFFFFFFFFFFC4 signed = -60
+  0x0491: ADD8
+  0x0492: LOAD-ABS_S8|SZ_8
+  0x0494: 4d1 ; hex = 1
+  0x049A: CONV-SI_4_I|UI_8_O
+  0x049C: ADD8
+  0x049D: 4d10 ; hex = A
+  0x04A3: CONV-SI_4_I|UI_8_O
+  0x04A5: MOD8
+  0x04A6: STOR-R_BP1|SZ_8-1d(-60)
+  0x04A9: 1d23 ; hex = 17
+  0x04AC: RST_SP1
+  0x04AD: LOAD-EA_R_IP|SZ_8-8d(-537)
+  0x04B7: JMP
+  0x04B8: 1d0 ; hex = 0
+  0x04BB: ADD_SP1
+  0x04BC: LOAD-EA_R_IP|SZ_8-(gRa*?Fzpygame_quit) ; size = 8 num = 1781
+  0x04C6: CALL
+  0x04C7: 1d0 ; hex = 0
+  0x04CA: RST_SP1
+  0x04CB: 1d0 ; hex = 0
+  0x04CE: ADD_SP1
+  0x04CF: LOAD-EA_R_IP|SZ_8-(gRa*?ydisp_id) ; size = 8 num = 2873
+  0x04D9: LOAD-ABS_S8|SZ_8
+  0x04DB: LOAD-EA_R_IP|SZ_8-(gRa*?Fyzdelete_object) ; size = 8 num = 1339
+  0x04E5: CALL
+  0x04E6: 1d8 ; hex = 8
+  0x04E9: RST_SP1
+  0x04EA: 1d0 ; hex = 0
+  0x04ED: CONV-UI_1_I|SI_4_O
+  0x04EF: 4d1 ; hex = 1
+  0x04F5: SUB4
+  0x04F6: CONV-SI_4_I|UI_8_O
+  0x04F8: LOAD-EA_R_IP|SZ_8-(gRa*?ydisp_id) ; size = 8 num = 2832
+  0x0502: SWAP-SZ8_A|SZ8_B
+  0x0504: STOR-ABS_S8|SZ_8
+  0x0506: 1d0 ; hex = 0
+  0x0509: ADD_SP1
+  0x050A: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 2822
+  0x0514: LOAD-ABS_S8|SZ_8
+  0x0516: LOAD-EA_R_IP|SZ_8-(gRa*?Fyzdelete_object) ; size = 8 num = 1280
+  0x0520: CALL
+  0x0521: 1d8 ; hex = 8
+  0x0524: RST_SP1
+  0x0525: 1d0 ; hex = 0
+  0x0528: CONV-UI_1_I|SI_4_O
+  0x052A: 4d1 ; hex = 1
+  0x0530: SUB4
+  0x0531: CONV-SI_4_I|UI_8_O
+  0x0533: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 2781
+  0x053D: SWAP-SZ8_A|SZ8_B
+  0x053F: STOR-ABS_S8|SZ_8
+  0x0541: 4d0 ; hex = 0
+  0x0547: STOR-R_BP1|SZ_4-1d(28)
+  0x054A: 1d105 ; hex = 69
+  0x054D: RST_SP1
+  0x054E: RET
+  0x054F: 1d105 ; hex = 69
+  0x0552: RST_SP1
+  0x0553: RET
+?FiPciizintToStr
+  0x0554: 4d0 ; hex = 0
+  0x055A: LOAD-REG_BP|SZ_8
+  0x055C: 8d16 ; hex = 10
+  0x0566: ADD8
+  0x0567: LOAD-ABS_S8|SZ_4
+  0x0569: 1d0 ; hex = 0
+  0x056C: CONV-UI_1_I|SI_4_O
+  0x056E: CMP4S
+  0x056F: NE0
+  0x0570: EQ0
+  0x0571: LOAD-EA_R_IP|SZ_8-8d(190)
+  0x057B: JMPIF
+  0x057C: LOAD-REG_BP|SZ_8
+  0x057E: 8d16 ; hex = 10
+  0x0588: ADD8
+  0x0589: LOAD-ABS_S8|SZ_4
+  0x058B: LOAD-REG_BP|SZ_8
+  0x058D: 8d32 ; hex = 20
+  0x0597: ADD8
+  0x0598: LOAD-ABS_S8|SZ_4
+  0x059A: MOD4S
+  0x059B: CONV-SI_4_I|UI_1_O
+  0x059D: LOAD-REG_BP|SZ_8
+  0x059F: 8d18446744073709551611 ; hex = FFFFFFFFFFFFFFFB signed = -5
+  0x05A9: ADD8
+  0x05AA: LOAD-ABS_S8|SZ_1
+  0x05AC: 4d10 ; hex = A
+  0x05B2: CONV-SI_4_I|UI_1_O
+  0x05B4: CMP1
+  0x05B5: GE0
+  0x05B6: EQ0
+  0x05B7: LOAD-EA_R_IP|SZ_8-8d(46)
+  0x05C1: JMPIF
+  0x05C2: LOAD-REG_BP|SZ_8
+  0x05C4: 8d18446744073709551611 ; hex = FFFFFFFFFFFFFFFB signed = -5
+  0x05CE: ADD8
+  0x05CF: LOAD-TOS|SZ_8
+  0x05D1: LOAD-ABS_S8|SZ_1
+  0x05D3: 1d65 ; hex = 41
+  0x05D6: 4d10 ; hex = A
+  0x05DC: CONV-SI_4_I|UI_1_O
+  0x05DE: SUB1
+  0x05DF: ADD1
+  0x05E0: SWAP-SZ8_A|SZ1_B
+  0x05E2: STOR-ABS_S8|SZ_1
+  0x05E4: LOAD-EA_R_IP|SZ_8-8d(26)
+  0x05EE: JMP
+  0x05EF: LOAD-REG_BP|SZ_8
+  0x05F1: 8d18446744073709551611 ; hex = FFFFFFFFFFFFFFFB signed = -5
+  0x05FB: ADD8
+  0x05FC: LOAD-TOS|SZ_8
+  0x05FE: LOAD-ABS_S8|SZ_1
+  0x0600: 1d48 ; hex = 30
+  0x0603: ADD1
+  0x0604: SWAP-SZ8_A|SZ1_B
+  0x0606: STOR-ABS_S8|SZ_1
+  0x0608: LOAD-REG_BP|SZ_8
+  0x060A: 8d16 ; hex = 10
+  0x0614: ADD8
+  0x0615: LOAD-ABS_S8|SZ_4
+  0x0617: LOAD-REG_BP|SZ_8
+  0x0619: 8d32 ; hex = 20
+  0x0623: ADD8
+  0x0624: LOAD-ABS_S8|SZ_4
+  0x0626: DIV4S
+  0x0627: STOR-R_BP1|SZ_4-1d(16)
+  0x062A: 1d1 ; hex = 1
+  0x062D: RST_SP1
+  0x062E: LOAD-EA_R_IP|SZ_8-8d(-222)
+  0x0638: JMP
+  0x0639: LOAD-REG_BP|SZ_8
+  0x063B: 8d18446744073709551612 ; hex = FFFFFFFFFFFFFFFC signed = -4
+  0x0645: ADD8
+  0x0646: LOAD-ABS_S8|SZ_4
+  0x0648: LOAD-REG_BP|SZ_8
+  0x064A: 8d28 ; hex = 1C
+  0x0654: ADD8
+  0x0655: LOAD-ABS_S8|SZ_4
+  0x0657: CMP4S
+  0x0658: LT0
+  0x0659: EQ0
+  0x065A: LOAD-EA_R_IP|SZ_8-8d(12)
+  0x0664: JMPIF
+  0x0665: LOAD-EA_R_IP|SZ_8-8d(-54)
+  0x066F: JMP
+  0x0670: 1d0 ; hex = 0
+  0x0673: ADD_SP1
+  0x0674: LOAD-REG_BP|SZ_8
+  0x0676: 8d18446744073709551612 ; hex = FFFFFFFFFFFFFFFC signed = -4
+  0x0680: ADD8
+  0x0681: LOAD-ABS_S8|SZ_4
+  0x0683: LOAD-R_BP1|SZ_8-1d(20)
+  0x0686: LOAD-EA_R_IP|SZ_8-(gRa*?FPcizreverse) ; size = 8 num = -1440
+  0x0690: CALL
+  0x0691: 1d12 ; hex = C
+  0x0694: RST_SP1
+  0x0695: LOAD-REG_BP|SZ_8
+  0x0697: 8d18446744073709551612 ; hex = FFFFFFFFFFFFFFFC signed = -4
+  0x06A1: ADD8
+  0x06A2: LOAD-ABS_S8|SZ_4
+  0x06A4: STOR-R_BP1|SZ_4-1d(36)
+  0x06A7: 1d4 ; hex = 4
+  0x06AA: RST_SP1
+  0x06AB: RET
+  0x06AC: 1d4 ; hex = 4
+  0x06AF: RST_SP1
+  0x06B0: RET
+?Fjjzdisplay_set_mode
+  0x06B1: LOAD-EA_R_IP|SZ_8-(gRa*?ydisp_id) ; size = 8 num = 2391
+  0x06BB: LOAD-ABS_S8|SZ_8
+  0x06BD: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 2370
+  0x06C7: LOAD-ABS_S8|SZ_8
+  0x06C9: CMP8
+  0x06CA: EQ0
+  0x06CB: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 2373
+  0x06D5: LOAD-ABS_S8|SZ_8
+  0x06D7: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 2344
+  0x06E1: LOAD-ABS_S8|SZ_8
+  0x06E3: CMP8
+  0x06E4: NE0
+  0x06E5: AND1
+  0x06E6: EQ0
+  0x06E7: LOAD-EA_R_IP|SZ_8-8d(175)
+  0x06F1: JMPIF
+  0x06F2: LOAD-REG_BP|SZ_8
+  0x06F4: 8d20 ; hex = 14
+  0x06FE: ADD8
+  0x06FF: LOAD-ABS_S8|SZ_4
+  0x0701: CONV-UI_4_I|UI_8_O
+  0x0703: LOAD-REG_BP|SZ_8
+  0x0705: 8d18446744073709551608 ; hex = FFFFFFFFFFFFFFF8 signed = -8
+  0x070F: ADD8
+  0x0710: LOAD-TOS|SZ_8
+  0x0712: LOAD-ABS_S8|SZ_8
+  0x0714: 4d32 ; hex = 20
+  0x071A: CONV-SI_4_I|UI_1_O
+  0x071C: LSHIFT8
+  0x071D: SWAP-SZ8_A|SZ8_B
+  0x071F: STOR-ABS_S8|SZ_8
+  0x0721: LOAD-REG_BP|SZ_8
+  0x0723: 8d18446744073709551608 ; hex = FFFFFFFFFFFFFFF8 signed = -8
+  0x072D: ADD8
+  0x072E: LOAD-TOS|SZ_8
+  0x0730: LOAD-ABS_S8|SZ_8
+  0x0732: LOAD-REG_BP|SZ_8
+  0x0734: 8d16 ; hex = 10
+  0x073E: ADD8
+  0x073F: LOAD-ABS_S8|SZ_4
+  0x0741: CONV-UI_4_I|UI_8_O
+  0x0743: OR8
+  0x0744: SWAP-SZ8_A|SZ8_B
+  0x0746: STOR-ABS_S8|SZ_8
+  0x0748: 1d8 ; hex = 8
+  0x074B: ADD_SP1
+  0x074C: 4d0 ; hex = 0
+  0x0752: CONV-SI_4_I|UI_8_O
+  0x0754: 4d0 ; hex = 0
+  0x075A: CONV-SI_4_I|UI_8_O
+  0x075C: LOAD-REG_BP|SZ_8
+  0x075E: 8d18446744073709551608 ; hex = FFFFFFFFFFFFFFF8 signed = -8
+  0x0768: ADD8
+  0x0769: LOAD-ABS_S8|SZ_8
+  0x076B: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 2213
+  0x0775: LOAD-ABS_S8|SZ_8
+  0x0777: 4d5 ; hex = 5
+  0x077D: CONV-SI_4_I|UI_8_O
+  0x077F: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 1302
+  0x0789: CALL
+  0x078A: 1d40 ; hex = 28
+  0x078D: RST_SP1
+  0x078E: LOAD-EA_R_IP|SZ_8-(gRa*?ydisp_id) ; size = 8 num = 2170
+  0x0798: SWAP-SZ8_A|SZ8_B
+  0x079A: STOR-ABS_S8|SZ_8
+  0x079C: 1d8 ; hex = 8
+  0x079F: RST_SP1
+  0x07A0: LOAD-EA_R_IP|SZ_8-(gRa*?ydisp_id) ; size = 8 num = 2152
+  0x07AA: LOAD-ABS_S8|SZ_8
+  0x07AC: STOR-R_BP1|SZ_8-1d(24)
+  0x07AF: RET
+  0x07B0: RET
+?FyPczload_event
+  0x07B1: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 2143
+  0x07BB: LOAD-ABS_S8|SZ_8
+  0x07BD: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 2114
+  0x07C7: LOAD-ABS_S8|SZ_8
+  0x07C9: CMP8
+  0x07CA: NE0
+  0x07CB: EQ0
+  0x07CC: LOAD-EA_R_IP|SZ_8-8d(72)
+  0x07D6: JMPIF
+  0x07D7: 1d8 ; hex = 8
+  0x07DA: ADD_SP1
+  0x07DB: 4d0 ; hex = 0
+  0x07E1: CONV-SI_4_I|UI_8_O
+  0x07E3: LOAD-R_BP1|SZ_8-1d(24)
+  0x07E6: CONV-UI_8_I|UI_8_O
+  0x07E8: LOAD-REG_BP|SZ_8
+  0x07EA: 8d16 ; hex = 10
+  0x07F4: ADD8
+  0x07F5: LOAD-ABS_S8|SZ_8
+  0x07F7: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 2073
+  0x0801: LOAD-ABS_S8|SZ_8
+  0x0803: 4d11 ; hex = B
+  0x0809: CONV-SI_4_I|UI_8_O
+  0x080B: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 1162
+  0x0815: CALL
+  0x0816: 1d40 ; hex = 28
+  0x0819: RST_SP1
+  0x081A: 1d8 ; hex = 8
+  0x081D: RST_SP1
+  0x081E: RET
+?Fycccjjjjjzsurf_fill
+  0x081F: LOAD-REG_BP|SZ_8
+  0x0821: 8d16 ; hex = 10
+  0x082B: ADD8
+  0x082C: LOAD-ABS_S8|SZ_8
+  0x082E: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 2001
+  0x0838: LOAD-ABS_S8|SZ_8
+  0x083A: CMP8
+  0x083B: NE0
+  0x083C: EQ0
+  0x083D: LOAD-EA_R_IP|SZ_8-8d(472)
+  0x0847: JMPIF
+  0x0848: LOAD-REG_BP|SZ_8
+  0x084A: 8d27 ; hex = 1B
+  0x0854: ADD8
+  0x0855: LOAD-ABS_S8|SZ_4
+  0x0857: CONV-UI_4_I|UI_8_O
+  0x0859: LOAD-REG_BP|SZ_8
+  0x085B: 8d18446744073709551608 ; hex = FFFFFFFFFFFFFFF8 signed = -8
+  0x0865: ADD8
+  0x0866: LOAD-TOS|SZ_8
+  0x0868: LOAD-ABS_S8|SZ_8
+  0x086A: 4d32 ; hex = 20
+  0x0870: CONV-SI_4_I|UI_1_O
+  0x0872: LSHIFT8
+  0x0873: SWAP-SZ8_A|SZ8_B
+  0x0875: STOR-ABS_S8|SZ_8
+  0x0877: LOAD-REG_BP|SZ_8
+  0x0879: 8d18446744073709551608 ; hex = FFFFFFFFFFFFFFF8 signed = -8
+  0x0883: ADD8
+  0x0884: LOAD-TOS|SZ_8
+  0x0886: LOAD-ABS_S8|SZ_8
+  0x0888: LOAD-REG_BP|SZ_8
+  0x088A: 8d24 ; hex = 18
+  0x0894: ADD8
+  0x0895: LOAD-ABS_S8|SZ_1
+  0x0897: CONV-UI_1_I|SI_4_O
+  0x0899: 4d16 ; hex = 10
+  0x089F: CONV-SI_4_I|UI_1_O
+  0x08A1: LSHIFT4
+  0x08A2: LOAD-REG_BP|SZ_8
+  0x08A4: 8d25 ; hex = 19
+  0x08AE: ADD8
+  0x08AF: LOAD-ABS_S8|SZ_1
+  0x08B1: CONV-UI_1_I|SI_4_O
+  0x08B3: 4d8 ; hex = 8
+  0x08B9: CONV-SI_4_I|UI_1_O
+  0x08BB: LSHIFT4
+  0x08BC: OR4
+  0x08BD: LOAD-REG_BP|SZ_8
+  0x08BF: 8d26 ; hex = 1A
+  0x08C9: ADD8
+  0x08CA: LOAD-ABS_S8|SZ_1
+  0x08CC: CONV-UI_1_I|SI_4_O
+  0x08CE: OR4
+  0x08CF: CONV-SI_4_I|UI_8_O
+  0x08D1: OR8
+  0x08D2: SWAP-SZ8_A|SZ8_B
+  0x08D4: STOR-ABS_S8|SZ_8
+  0x08D6: 1d4 ; hex = 4
+  0x08D9: ADD_SP1
+  0x08DA: 4d16 ; hex = 10
+  0x08E0: 4d8 ; hex = 8
+  0x08E6: LOAD-EA_R_IP|SZ_8-(gRa*?Acbuf1) ; size = 8 num = 1808
+  0x08F0: LOAD-REG_BP|SZ_8
+  0x08F2: 8d18446744073709551608 ; hex = FFFFFFFFFFFFFFF8 signed = -8
+  0x08FC: ADD8
+  0x08FD: LOAD-ABS_S8|SZ_8
+  0x08FF: CONV-UI_8_I|SI_4_O
+  0x0901: LOAD-EA_R_IP|SZ_8-(gRa*?FiPciizintToStr) ; size = 8 num = -951
+  0x090B: CALL
+  0x090C: 1d20 ; hex = 14
+  0x090F: RST_SP1
+  0x0910: 1d4 ; hex = 4
+  0x0913: RST_SP1
+  0x0914: LOAD-REG_BP|SZ_8
+  0x0916: 8d35 ; hex = 23
+  0x0920: ADD8
+  0x0921: LOAD-ABS_S8|SZ_4
+  0x0923: CONV-UI_4_I|UI_8_O
+  0x0925: LOAD-REG_BP|SZ_8
+  0x0927: 8d18446744073709551600 ; hex = FFFFFFFFFFFFFFF0 signed = -16
+  0x0931: ADD8
+  0x0932: LOAD-TOS|SZ_8
+  0x0934: LOAD-ABS_S8|SZ_8
+  0x0936: 4d32 ; hex = 20
+  0x093C: CONV-SI_4_I|UI_1_O
+  0x093E: LSHIFT8
+  0x093F: SWAP-SZ8_A|SZ8_B
+  0x0941: STOR-ABS_S8|SZ_8
+  0x0943: LOAD-REG_BP|SZ_8
+  0x0945: 8d18446744073709551600 ; hex = FFFFFFFFFFFFFFF0 signed = -16
+  0x094F: ADD8
+  0x0950: LOAD-TOS|SZ_8
+  0x0952: LOAD-ABS_S8|SZ_8
+  0x0954: LOAD-REG_BP|SZ_8
+  0x0956: 8d31 ; hex = 1F
+  0x0960: ADD8
+  0x0961: LOAD-ABS_S8|SZ_4
+  0x0963: CONV-UI_4_I|UI_8_O
+  0x0965: OR8
+  0x0966: SWAP-SZ8_A|SZ8_B
+  0x0968: STOR-ABS_S8|SZ_8
+  0x096A: LOAD-REG_BP|SZ_8
+  0x096C: 8d43 ; hex = 2B
+  0x0976: ADD8
+  0x0977: LOAD-ABS_S8|SZ_4
+  0x0979: CONV-UI_4_I|UI_8_O
+  0x097B: LOAD-REG_BP|SZ_8
+  0x097D: 8d18446744073709551592 ; hex = FFFFFFFFFFFFFFE8 signed = -24
+  0x0987: ADD8
+  0x0988: LOAD-TOS|SZ_8
+  0x098A: LOAD-ABS_S8|SZ_8
+  0x098C: 4d32 ; hex = 20
+  0x0992: CONV-SI_4_I|UI_1_O
+  0x0994: LSHIFT8
+  0x0995: SWAP-SZ8_A|SZ8_B
+  0x0997: STOR-ABS_S8|SZ_8
+  0x0999: LOAD-REG_BP|SZ_8
+  0x099B: 8d18446744073709551592 ; hex = FFFFFFFFFFFFFFE8 signed = -24
+  0x09A5: ADD8
+  0x09A6: LOAD-TOS|SZ_8
+  0x09A8: LOAD-ABS_S8|SZ_8
+  0x09AA: LOAD-REG_BP|SZ_8
+  0x09AC: 8d39 ; hex = 27
+  0x09B6: ADD8
+  0x09B7: LOAD-ABS_S8|SZ_4
+  0x09B9: CONV-UI_4_I|UI_8_O
+  0x09BB: OR8
+  0x09BC: SWAP-SZ8_A|SZ8_B
+  0x09BE: STOR-ABS_S8|SZ_8
+  0x09C0: 1d8 ; hex = 8
+  0x09C3: ADD_SP1
+  0x09C4: LOAD-REG_BP|SZ_8
+  0x09C6: 8d18446744073709551592 ; hex = FFFFFFFFFFFFFFE8 signed = -24
+  0x09D0: ADD8
+  0x09D1: LOAD-ABS_S8|SZ_8
+  0x09D3: LOAD-REG_BP|SZ_8
+  0x09D5: 8d18446744073709551600 ; hex = FFFFFFFFFFFFFFF0 signed = -16
+  0x09DF: ADD8
+  0x09E0: LOAD-ABS_S8|SZ_8
+  0x09E2: LOAD-REG_BP|SZ_8
+  0x09E4: 8d18446744073709551608 ; hex = FFFFFFFFFFFFFFF8 signed = -8
+  0x09EE: ADD8
+  0x09EF: LOAD-ABS_S8|SZ_8
+  0x09F1: LOAD-REG_BP|SZ_8
+  0x09F3: 8d16 ; hex = 10
+  0x09FD: ADD8
+  0x09FE: LOAD-ABS_S8|SZ_8
+  0x0A00: 4d6 ; hex = 6
+  0x0A06: CONV-SI_4_I|UI_8_O
+  0x0A08: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 653
+  0x0A12: CALL
+  0x0A13: 1d40 ; hex = 28
+  0x0A16: RST_SP1
+  0x0A17: 1d8 ; hex = 8
+  0x0A1A: RST_SP1
+  0x0A1B: 1d24 ; hex = 18
+  0x0A1E: RST_SP1
+  0x0A1F: RET
+?Fyzdelete_object
+  0x0A20: 1d8 ; hex = 8
+  0x0A23: ADD_SP1
+  0x0A24: 4d0 ; hex = 0
+  0x0A2A: CONV-SI_4_I|UI_8_O
+  0x0A2C: 4d0 ; hex = 0
+  0x0A32: CONV-SI_4_I|UI_8_O
+  0x0A34: 4d0 ; hex = 0
+  0x0A3A: CONV-SI_4_I|UI_8_O
+  0x0A3C: LOAD-REG_BP|SZ_8
+  0x0A3E: 8d16 ; hex = 10
+  0x0A48: ADD8
+  0x0A49: LOAD-ABS_S8|SZ_8
+  0x0A4B: 4d10 ; hex = A
+  0x0A51: CONV-SI_4_I|UI_8_O
+  0x0A53: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 578
+  0x0A5D: CALL
+  0x0A5E: 1d40 ; hex = 28
+  0x0A61: RST_SP1
+  0x0A62: 1d8 ; hex = 8
+  0x0A65: RST_SP1
+  0x0A66: RET
+?Fzdisplay_init
+  0x0A67: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1449
+  0x0A71: LOAD-ABS_S8|SZ_8
+  0x0A73: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 1420
+  0x0A7D: LOAD-ABS_S8|SZ_8
+  0x0A7F: CMP8
+  0x0A80: NE0
+  0x0A81: EQ0
+  0x0A82: LOAD-EA_R_IP|SZ_8-8d(68)
+  0x0A8C: JMPIF
+  0x0A8D: 1d8 ; hex = 8
+  0x0A90: ADD_SP1
+  0x0A91: 4d0 ; hex = 0
+  0x0A97: CONV-SI_4_I|UI_8_O
+  0x0A99: 4d0 ; hex = 0
+  0x0A9F: CONV-SI_4_I|UI_8_O
+  0x0AA1: 4d0 ; hex = 0
+  0x0AA7: CONV-SI_4_I|UI_8_O
+  0x0AA9: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1383
+  0x0AB3: LOAD-ABS_S8|SZ_8
+  0x0AB5: 4d3 ; hex = 3
+  0x0ABB: CONV-SI_4_I|UI_8_O
+  0x0ABD: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 472
+  0x0AC7: CALL
+  0x0AC8: 1d40 ; hex = 28
+  0x0ACB: RST_SP1
+  0x0ACC: 1d8 ; hex = 8
+  0x0ACF: RST_SP1
+  0x0AD0: RET
+?Fzdisplay_update
+  0x0AD1: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1343
+  0x0ADB: LOAD-ABS_S8|SZ_8
+  0x0ADD: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 1314
+  0x0AE7: LOAD-ABS_S8|SZ_8
+  0x0AE9: CMP8
+  0x0AEA: NE0
+  0x0AEB: EQ0
+  0x0AEC: LOAD-EA_R_IP|SZ_8-8d(68)
+  0x0AF6: JMPIF
+  0x0AF7: 1d8 ; hex = 8
+  0x0AFA: ADD_SP1
+  0x0AFB: 4d0 ; hex = 0
+  0x0B01: CONV-SI_4_I|UI_8_O
+  0x0B03: 4d0 ; hex = 0
+  0x0B09: CONV-SI_4_I|UI_8_O
+  0x0B0B: 4d0 ; hex = 0
+  0x0B11: CONV-SI_4_I|UI_8_O
+  0x0B13: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1277
+  0x0B1D: LOAD-ABS_S8|SZ_8
+  0x0B1F: 4d7 ; hex = 7
+  0x0B25: CONV-SI_4_I|UI_8_O
+  0x0B27: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 366
+  0x0B31: CALL
+  0x0B32: 1d40 ; hex = 28
+  0x0B35: RST_SP1
+  0x0B36: 1d8 ; hex = 8
+  0x0B39: RST_SP1
+  0x0B3A: RET
+?Fzpygame_init
+  0x0B3B: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1237
+  0x0B45: LOAD-ABS_S8|SZ_8
+  0x0B47: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 1208
+  0x0B51: LOAD-ABS_S8|SZ_8
+  0x0B53: CMP8
+  0x0B54: EQ0
+  0x0B55: EQ0
+  0x0B56: LOAD-EA_R_IP|SZ_8-8d(74)
+  0x0B60: JMPIF
+  0x0B61: 1d8 ; hex = 8
+  0x0B64: ADD_SP1
+  0x0B65: 4d0 ; hex = 0
+  0x0B6B: CONV-SI_4_I|UI_8_O
+  0x0B6D: 4d0 ; hex = 0
+  0x0B73: CONV-SI_4_I|UI_8_O
+  0x0B75: 4d0 ; hex = 0
+  0x0B7B: CONV-SI_4_I|UI_8_O
+  0x0B7D: 4d0 ; hex = 0
+  0x0B83: CONV-SI_4_I|UI_8_O
+  0x0B85: 4d2 ; hex = 2
+  0x0B8B: CONV-SI_4_I|UI_8_O
+  0x0B8D: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 264
+  0x0B97: CALL
+  0x0B98: 1d40 ; hex = 28
+  0x0B9B: RST_SP1
+  0x0B9C: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1140
+  0x0BA6: SWAP-SZ8_A|SZ8_B
+  0x0BA8: STOR-ABS_S8|SZ_8
+  0x0BAA: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1126
+  0x0BB4: LOAD-ABS_S8|SZ_8
+  0x0BB6: STOR-R_BP1|SZ_8-1d(16)
+  0x0BB9: RET
+  0x0BBA: RET
+?Fzpygame_quit
+  0x0BBB: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1109
+  0x0BC5: LOAD-ABS_S8|SZ_8
+  0x0BC7: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 1080
+  0x0BD1: LOAD-ABS_S8|SZ_8
+  0x0BD3: CMP8
+  0x0BD4: NE0
+  0x0BD5: EQ0
+  0x0BD6: LOAD-EA_R_IP|SZ_8-8d(68)
+  0x0BE0: JMPIF
+  0x0BE1: 1d8 ; hex = 8
+  0x0BE4: ADD_SP1
+  0x0BE5: 4d0 ; hex = 0
+  0x0BEB: CONV-SI_4_I|UI_8_O
+  0x0BED: 4d0 ; hex = 0
+  0x0BF3: CONV-SI_4_I|UI_8_O
+  0x0BF5: 4d0 ; hex = 0
+  0x0BFB: CONV-SI_4_I|UI_8_O
+  0x0BFD: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1043
+  0x0C07: LOAD-ABS_S8|SZ_8
+  0x0C09: 4d8 ; hex = 8
+  0x0C0F: CONV-SI_4_I|UI_8_O
+  0x0C11: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 132
+  0x0C1B: CALL
+  0x0C1C: 1d40 ; hex = 28
+  0x0C1F: RST_SP1
+  0x0C20: 1d8 ; hex = 8
+  0x0C23: RST_SP1
+  0x0C24: RET
+?Fzwait_event
+  0x0C25: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 1003
+  0x0C2F: LOAD-ABS_S8|SZ_8
+  0x0C31: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 974
+  0x0C3B: LOAD-ABS_S8|SZ_8
+  0x0C3D: CMP8
+  0x0C3E: EQ0
+  0x0C3F: EQ0
+  0x0C40: LOAD-EA_R_IP|SZ_8-8d(17)
+  0x0C4A: JMPIF
+  0x0C4B: LOAD-EA_R_IP|SZ_8-(gRa*?Cyinvalid) ; size = 8 num = 948
+  0x0C55: LOAD-ABS_S8|SZ_8
+  0x0C57: STOR-R_BP1|SZ_8-1d(16)
+  0x0C5A: RET
+  0x0C5B: 1d8 ; hex = 8
+  0x0C5E: ADD_SP1
+  0x0C5F: 4d0 ; hex = 0
+  0x0C65: CONV-SI_4_I|UI_8_O
+  0x0C67: 4d0 ; hex = 0
+  0x0C6D: CONV-SI_4_I|UI_8_O
+  0x0C6F: 4d0 ; hex = 0
+  0x0C75: CONV-SI_4_I|UI_8_O
+  0x0C77: LOAD-EA_R_IP|SZ_8-(gRa*?ypyg_id) ; size = 8 num = 921
+  0x0C81: LOAD-ABS_S8|SZ_8
+  0x0C83: 4d9 ; hex = 9
+  0x0C89: CONV-SI_4_I|UI_8_O
+  0x0C8B: LOAD-EA_R_IP|SZ_8-(gRa*?Fyyyyyzsyscall) ; size = 8 num = 10
+  0x0C95: CALL
+  0x0C96: 1d40 ; hex = 28
+  0x0C99: RST_SP1
+  0x0C9A: STOR-R_BP1|SZ_8-1d(16)
+  0x0C9D: RET
+  0x0C9E: RET
+?Fyyyyyzsyscall
+  0x0C9F: LOAD-R_BP1|SZ_8-1d(48)
+  0x0CA2: LOAD-R_BP1|SZ_8-1d(40)
+  0x0CA5: LOAD-R_BP1|SZ_8-1d(32)
+  0x0CA8: LOAD-R_BP1|SZ_8-1d(24)
+  0x0CAB: 8d32 ; hex = 20
+  0x0CB5: LOAD-R_BP1|SZ_8-1d(16)
+  0x0CB8: CALL_E-SYSCALL|S_SYSN_128
+  0x0CBA: 8d8 ; hex = 8
+  0x0CC4: SUB8
+  0x0CC5: RST_SP8
+  0x0CC6: 8d56 ; hex = 38
+  0x0CD0: LOAD-REG_BP|SZ_8
+  0x0CD2: ADD8
+  0x0CD3: STOR-ABS_S8|SZ_8
+  0x0CD5: RET

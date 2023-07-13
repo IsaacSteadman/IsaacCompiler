@@ -1520,11 +1520,7 @@ class QualType(BaseType):
             s = "(" + s + ")"
         return s
 
-    def get_expr_arg_type(self, expr):
-        """
-        :param BaseExpr expr:
-        :rtype: BaseExpr
-        """
+    def get_expr_arg_type(self, expr: BaseExpr) -> BaseExpr:
         if expr.t_anot is None:
             raise TypeError("Expected Expression to have a type")
         if self.qual_id == QualType.QUAL_REF:
@@ -1536,6 +1532,10 @@ class QualType(BaseType):
         else:
             if not compare_no_cvr(self, get_value_type(expr.t_anot)):
                 raise TypeError("Bad Type: %r, %r" % (self, expr.t_anot))
+        if expr.expr_id == ExprType.LITERAL:
+            assert isinstance(expr, LiteralExpr)
+            if expr.l_val in [LiteralExpr.LIT_INT, LiteralExpr.LIT_CHR, LiteralExpr.LIT_FLOAT]:
+                pass
         return CastOpExpr(self, expr, CastType.IMPLICIT)
 
     def compile_conv(self, cmpl_obj, expr, context, cmpl_data=None, temp_links=None):
@@ -5832,7 +5832,7 @@ def compile_bin_op_expr(
         cmpl_data: Optional["LocalCompileData"],
         type_coerce: Optional[BaseType],
         temp_links: Optional[List[Tuple[BaseType,BaseLink]]],
-        res_type
+        res_type: Optional[BaseType]
 ) -> Tuple[int, BaseType]:
     assert expr.t_anot is not None
     typ = None
@@ -5862,7 +5862,23 @@ def compile_bin_op_expr(
         raise NotImplementedError("Not Implemented: op_fn_type = %u" % expr.op_fn_type)
     assert (1 << sz_cls) == sz_type
     sz1 = 0
-    if expr.type_id in ASSIGNMENT_OPS:
+    if expr.type_id == BinaryExprSubType.ASSGN and expr.a.expr_id == ExprType.NAME and type_coerce is void_t:
+        a = expr.a
+        b = expr.b
+        res_type = void_t
+        sz = 0
+        assert isinstance(a, NameRefExpr)
+        ctx_var = a.ctx_var
+        assert isinstance(ctx_var, ContextVariable)
+        lnk_name = ctx_var.get_link_name()
+        lnk = cmpl_data.get_local(lnk_name) if ctx_var.parent.is_local_scope() else cmpl_obj.get_link(lnk_name)
+        assert isinstance(lnk, BaseLink)
+        a_value_type = ctx_var.typ
+        sizeof_a = size_of(ctx_var.typ)
+        sz_out_b = compile_expr(cmpl_obj, b, context, cmpl_data, a_value_type, temp_links)
+        assert sz_out_b == sizeof_a
+        lnk.emit_stor(cmpl_obj.memory, sizeof_a, cmpl_obj, byte_copy_cmpl_intrinsic)
+    elif expr.type_id in ASSIGNMENT_OPS:
         sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
         assert sz == 8, "Expression should be a reference"
         sz1 += sz

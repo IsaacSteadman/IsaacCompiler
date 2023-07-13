@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Literal, Optional, Tuple, TypeVar, Union
 '''from PyIsaacUtils.AlgoUtils import bisect_search_base
 from StackVM.PyStackVM import BC_ADD8, BC_ADD_SP1, BC_CALL_E, BC_CONV, BC_GE0, BC_INT, BC_LOAD, BC_LSHIFT1, BC_NOP,\
     BC_RET_E, BC_RET_N2, BC_RST_SP1, BC_STOR, BC_SWAP, BC_SYSRET, BCC_I_MASK, BCC_O_MASK, BCCE_N_REL, BCCE_SYSCALL,\
@@ -17,7 +17,7 @@ from StackVM.PyStackVM import *
 T = TypeVar("T")
 
 
-def get_sz_cls_align_long(long, signed, max_sz_cls=3):
+def get_sz_cls_align_long(long: int, signed: bool, max_sz_cls: Literal[0, 1, 2, 3] = 3):
     if long < 0:
         if signed:
             long = abs(long) - 1
@@ -83,7 +83,7 @@ class BaseLink(object):
     def emit_stor_pot(self, memory: Union[memoryview, bytearray], sz_cls: int):
         self.emit_lea(memory)
         memory.extend([
-            BC_SWAP, BCS_SZ8_B | sz_cls,  # SzCls0 does not need to be shifted as BCS_SZ_A_MASK is 0x7
+            # BC_SWAP, BCS_SZ8_B | sz_cls,  # SzCls0 does not need to be shifted as BCS_SZ_A_MASK is 0x7
             BC_STOR, BCR_ABS_S8 | (sz_cls << 5)])
 
     def emit_load(
@@ -187,13 +187,13 @@ class OffsetLocalRef(BaseLink):
         return OffsetLocalRef(self.parent, self.offset + offset)
 
     def emit_load_pot(self, memory: bytearray, sz_cls: int):
-        byts = sz_cls_align_long(self.parent.rel_addr + self.offset, True, sz_cls)
-        memory.extend([BC_LOAD, (BCR_R_BP1 + sz_cls) | (sz_cls << 5)])
+        byts, sz_cls_r_bp = get_sz_cls_align_long(self.parent.rel_addr + self.offset, True)
+        memory.extend([BC_LOAD, (BCR_R_BP1 + sz_cls_r_bp) | (sz_cls << 5)])
         memory.extend(byts)
 
     def emit_stor_pot(self, memory: bytearray, sz_cls: int):
-        byts = sz_cls_align_long(self.parent.rel_addr + self.offset, True, sz_cls)
-        memory.extend([BC_STOR, (BCR_R_BP1 + sz_cls) | (sz_cls << 5)])
+        byts, sz_cls_r_bp = get_sz_cls_align_long(self.parent.rel_addr + self.offset, True)
+        memory.extend([BC_STOR, (BCR_R_BP1 + sz_cls_r_bp) | (sz_cls << 5)])
         memory.extend(byts)
 
     def emit_lea(self, memory: bytearray):
@@ -220,13 +220,13 @@ class LocalRef(BaseLink):
         return OffsetLocalRef(self, offset)
 
     def emit_load_pot(self, memory: bytearray, sz_cls: int):
-        byts = sz_cls_align_long(self.rel_addr, True, sz_cls)
-        memory.extend([BC_LOAD, (BCR_R_BP1 + sz_cls) | (sz_cls << 5)])
+        byts, sz_cls_r_bp = get_sz_cls_align_long(self.rel_addr, True)
+        memory.extend([BC_LOAD, (BCR_R_BP1 + sz_cls_r_bp) | (sz_cls << 5)])
         memory.extend(byts)
 
     def emit_stor_pot(self, memory: bytearray, sz_cls: int):
-        byts = sz_cls_align_long(self.rel_addr, True, sz_cls)
-        memory.extend([BC_STOR, (BCR_R_BP1 + sz_cls) | (sz_cls << 5)])
+        byts, sz_cls_r_bp = get_sz_cls_align_long(self.rel_addr, True)
+        memory.extend([BC_STOR, (BCR_R_BP1 + sz_cls_r_bp) | (sz_cls << 5)])
         memory.extend(byts)
 
     def emit_lea(self, memory: bytearray):
@@ -316,8 +316,7 @@ class OffsetLinkage(BaseLink):
             sz_cls_1 = emit_load_i_const(memory, stack_left, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_lea(memory)
-            memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls_0 << 5)])
+            self.emit_load_pot(memory, sz_cls_0)
 
     def emit_stor(
             self,
@@ -334,10 +333,7 @@ class OffsetLinkage(BaseLink):
             sz_cls_1 = emit_load_i_const(memory, stack_left + size, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_lea(memory)
-            memory.extend([
-                BC_SWAP, BCS_SZ8_B | sz_cls_0,  # sz_cls_0 does not need to be shifted as BCS_SZ_A_MASK is 0x7
-                BC_STOR, BCR_ABS_S8 | (sz_cls_0 << 5)])
+            self.emit_stor_pot(memory, sz_cls_0)
 
 
 class Linkage(BaseLink):
@@ -371,8 +367,7 @@ class Linkage(BaseLink):
             sz_cls_1 = emit_load_i_const(memory, stack_left, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_lea(memory)
-            memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls_0 << 5)])
+            self.emit_load_pot(memory, sz_cls_0)
 
     def emit_stor(
             self,
@@ -389,10 +384,7 @@ class Linkage(BaseLink):
             sz_cls_1 = emit_load_i_const(memory, stack_left + size, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_lea(memory)
-            memory.extend([
-                BC_SWAP, BCS_SZ8_B | sz_cls_0,  # sz_cls_0 does not need to be shifted as BCS_SZ_A_MASK is 0x7
-                BC_STOR, BCR_ABS_S8 | (sz_cls_0 << 5)])
+            self.emit_stor_pot(memory, sz_cls_0)
 
     def emit_lea(self, memory: Union[memoryview, bytearray]):
         memory.extend([
@@ -477,7 +469,7 @@ class Compilation(BaseCmplObj):
     def __init__(self, keep_local_syms: bool):
         super(Compilation, self).__init__()
         self.keep_local_syms = keep_local_syms
-        self.objects = {}
+        self.objects: Dict[str, CompileObject] = {}
         self.code_segment_end = None
         self.data_segment_start = None
 
