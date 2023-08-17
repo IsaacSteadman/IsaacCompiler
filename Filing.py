@@ -63,10 +63,12 @@ local_sym_tgt_packer = DataKeyValue(
 )
 
 
-def save_compilation(cmpl_obj, fl, opts=SAVE_GLOBAL_TABLE | SAVE_STRING_TABLE):
+def save_compilation(
+        cmpl_obj: "Compilation",
+        fl: BinaryIO,
+        opts=SAVE_GLOBAL_TABLE | SAVE_STRING_TABLE
+):
     """
-    :param Compilation cmpl_obj:
-    :param file fl:
     :param opts:
     """
     del cmpl_obj
@@ -82,3 +84,6 @@ def save_compilation(cmpl_obj, fl, opts=SAVE_GLOBAL_TABLE | SAVE_STRING_TABLE):
     # write local_symbols
     c1 = cmpl_obj.objects[""]
     # c1.local_links
+
+
+from typing import BinaryIO

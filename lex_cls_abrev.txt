@@ -1,4 +1,4 @@
-Par: ParseClass
+Par: Token
 LnC: LnCommentClass
 BlC: BlkCommentClass
 SQu: UniQuoteClass
