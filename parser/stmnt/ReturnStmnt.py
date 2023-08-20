@@ -13,8 +13,12 @@ class ReturnStmnt(BaseStmnt):
         if self.expr is not None:
             self.expr.init_temps(None)
 
-    def pretty_repr(self):
-        return [self.__class__.__name__, "("] + get_pretty_repr(self.expr) + [")"]
+    def pretty_repr(self, pretty_repr_ctx=None):
+        return (
+            [self.__class__.__name__, "("]
+            + get_pretty_repr(self.expr, pretty_repr_ctx)
+            + [")"]
+        )
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"

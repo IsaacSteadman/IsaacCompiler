@@ -263,7 +263,7 @@ class BinaryOpExpr(BaseExpr):
     ) -> int:
         raise NotImplementedError("Cannot call 'build' on operator expressions")
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         rtn = [
             self.__class__.__name__,
             "(",
@@ -272,7 +272,7 @@ class BinaryOpExpr(BaseExpr):
             self.type_id.name,
         ]
         for inst in (self.a, self.b):
-            rtn.extend([","] + get_pretty_repr(inst))
+            rtn.extend([","] + get_pretty_repr(inst, pretty_repr_ctx))
         rtn.append(")")
         return rtn
 

@@ -1,4 +1,4 @@
-from typing import Union, List, Dict, Optional
+from typing import Union, List, Dict, Optional, Set, Any
 
 
 def format_pretty(obj, indent="  "):
@@ -32,7 +32,7 @@ def get_pretty_repr_enum(
 
 
 class PrettyRepr(object):
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx: Optional[Dict[int, Any]] = None):
         return [self.__class__.__name__, "(", ")"]
 
     def format_pretty(self, indent="  "):
@@ -42,7 +42,11 @@ class PrettyRepr(object):
         return "".join(self.pretty_repr())
 
 
-def get_pretty_repr(obj):
+def get_pretty_repr(obj, pretty_repr_ctx: Optional[Dict[int, Any]] = None):
+    if pretty_repr_ctx is None:
+        pretty_repr_ctx = {}
+    elif id(obj) in pretty_repr_ctx:
+        return [f"# <RECURSION id={id(obj)}, type={obj.__class__.__name__}>"]
     i = 0
     if isinstance(obj, list):
         i = 1
@@ -54,33 +58,42 @@ def get_pretty_repr(obj):
         i = 4
     elif isinstance(obj, PrettyRepr):
         i = 5
-    if i == 0:
-        return [repr(obj)]
-    elif 1 <= i <= 3:
-        if i == 3 and len(obj) == 0:
-            return ["set", "(", ")"]
-        elif i == 2 and len(obj) == 1:
-            return ["("] + get_pretty_repr(obj[0]) + [",", ")"]
-        rtn = ["[({"[i - 1]]
-        if len(obj) >= 1:
-            rtn.extend(get_pretty_repr(obj[0]))
-            for c in range(1, len(obj)):
-                rtn.extend([","] + get_pretty_repr(obj[c]))
-        rtn.append("])}"[i - 1])
-        return rtn
-    elif i == 4:
-        lst = list(obj)
-        rtn = ["{"]
-        if len(lst) >= 1:
-            rtn.extend(get_pretty_repr(lst[0]) + [":"] + get_pretty_repr(obj[lst[0]]))
-            for c in range(1, len(obj)):
+
+    pretty_repr_ctx[id(obj)] = obj
+    try:
+        if i == 0:
+            return [repr(obj)]
+        elif 1 <= i <= 3:
+            if i == 3 and len(obj) == 0:
+                return ["set", "(", ")"]
+            elif i == 2 and len(obj) == 1:
+                return ["("] + get_pretty_repr(obj[0], pretty_repr_ctx) + [",", ")"]
+            rtn = ["[({"[i - 1]]
+            if len(obj) >= 1:
+                rtn.extend(get_pretty_repr(obj[0], pretty_repr_ctx))
+                for c in range(1, len(obj)):
+                    rtn.extend([","] + get_pretty_repr(obj[c], pretty_repr_ctx))
+            rtn.append("])}"[i - 1])
+            return rtn
+        elif i == 4:
+            lst = list(obj)
+            rtn = ["{"]
+            if len(lst) >= 1:
                 rtn.extend(
-                    [","]
-                    + get_pretty_repr(lst[c])
+                    get_pretty_repr(lst[0], pretty_repr_ctx)
                     + [":"]
-                    + get_pretty_repr(obj[lst[c]])
+                    + get_pretty_repr(obj[lst[0]], pretty_repr_ctx)
                 )
-        rtn.append("}")
-        return rtn
-    elif i == 5:
-        return obj.pretty_repr()
+                for c in range(1, len(obj)):
+                    rtn.extend(
+                        [","]
+                        + get_pretty_repr(lst[c], pretty_repr_ctx)
+                        + [":"]
+                        + get_pretty_repr(obj[lst[c]], pretty_repr_ctx)
+                    )
+            rtn.append("}")
+            return rtn
+        elif i == 5:
+            return obj.pretty_repr(pretty_repr_ctx)
+    finally:
+        del pretty_repr_ctx[id(obj)]

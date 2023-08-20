@@ -22,9 +22,9 @@ class FnCallExpr(BaseExpr):
             main_temps = expr.init_temps(main_temps)
         return main_temps
 
-    def pretty_repr(self):
-        return [self.__class__.__name__] + get_pretty_repr_enum(
-            (self.fn, self.lst_args)
+    def pretty_repr(self, pretty_repr_ctx=None):
+        return [self.__class__.__name__] + get_pretty_repr(
+            (self.fn, self.lst_args), pretty_repr_ctx
         )
 
     def build(
@@ -34,7 +34,7 @@ class FnCallExpr(BaseExpr):
 
 
 from .resolve_overloaded_fn import resolve_overloaded_fn
-from ...PrettyRepr import get_pretty_repr_enum
+from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import TypeClass
 from ..type.types import CompileContext, QualType, get_value_type
 from ...lexer.lexer import Token

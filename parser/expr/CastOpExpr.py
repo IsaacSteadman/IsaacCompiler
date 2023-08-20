@@ -42,8 +42,10 @@ class CastOpExpr(BaseExpr):
     ) -> int:
         raise NotImplementedError("Cannot call 'build' on C-Style Cast operator")
 
-    def pretty_repr(self):
-        rtn = [self.__class__.__name__] + get_pretty_repr((self.type_name, self.expr))
+    def pretty_repr(self, pretty_repr_ctx=None):
+        rtn = [self.__class__.__name__] + get_pretty_repr(
+            (self.type_name, self.expr), pretty_repr_ctx
+        )
         if self.cast_type != CastType.EXPLICIT:
             rtn[-1:-1] = [",", "CastType", ".", self.cast_type.name]
         return rtn

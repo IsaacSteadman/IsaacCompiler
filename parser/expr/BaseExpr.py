@@ -26,10 +26,9 @@ class BaseExpr(PrettyRepr):
     temps: Optional[List["BaseType"]] = None
     temps_off: int = 0
 
-    def pretty_repr(self):
-        return [self.__class__.__name__, "(", ")"]
-
-    def init_temps(self, main_temps: Optional[List["BaseType"]]) -> Optional[List["BaseType"]]:
+    def init_temps(
+        self, main_temps: Optional[List["BaseType"]]
+    ) -> Optional[List["BaseType"]]:
         self.temps_off = 0 if main_temps is None else len(main_temps)
         if main_temps is None:
             main_temps = []

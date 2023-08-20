@@ -39,8 +39,12 @@ class NameRefExpr(BaseExpr):
             self.t_anot = QualType(QualType.QUAL_REF, get_value_type(ctx_var.typ))
         return c
 
-    def pretty_repr(self):
-        return [self.__class__.__name__, "("] + get_pretty_repr(self.name) + [")"]
+    def pretty_repr(self, pretty_repr_ctx=None):
+        return (
+            [self.__class__.__name__, "("]
+            + get_pretty_repr(self.name, pretty_repr_ctx)
+            + [")"]
+        )
 
 
 from ..ParsingError import ParsingError

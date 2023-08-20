@@ -11,10 +11,14 @@ class CurlyStmnt(BaseStmnt):
         self.name = name
         self.context = None
 
-    def pretty_repr(self):
-        rtn = [self.__class__.__name__, "("] + get_pretty_repr(self.stmnts) + [")"]
+    def pretty_repr(self, pretty_repr_ctx=None):
+        rtn = (
+            [self.__class__.__name__, "("]
+            + get_pretty_repr(self.stmnts, pretty_repr_ctx)
+            + [")"]
+        )
         if self.name != "":
-            rtn[-1:-1] = get_pretty_repr(self.name)
+            rtn[-1:-1] = get_pretty_repr(self.name, pretty_repr_ctx)
         return rtn
 
     def build(

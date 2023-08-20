@@ -172,14 +172,14 @@ class LiteralExpr(BaseExpr):
         self.v_lit = v_lit
         self.l_val = None
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         c_name = self.__class__.__name__
         rtn = [c_name, "("]
         if isinstance(self.t_lit, int) and 0 <= self.t_lit < len(self.LIT_lst):
             rtn.extend([c_name, ".", self.LIT_lst[self.t_lit]])
         else:
-            rtn.extend(get_pretty_repr(self.t_lit))
-        rtn.extend([","] + get_pretty_repr(self.v_lit) + [")"])
+            rtn.extend(get_pretty_repr(self.t_lit, pretty_repr_ctx))
+        rtn.extend([","] + get_pretty_repr(self.v_lit, pretty_repr_ctx) + [")"])
         return rtn
 
     def build(

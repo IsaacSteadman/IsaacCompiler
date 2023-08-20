@@ -155,7 +155,7 @@ class UnaryOpExpr(BaseExpr):
     ) -> int:
         raise NotImplementedError("Cannot call 'build' on operator expressions")
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return (
             [
                 self.__class__.__name__,
@@ -165,6 +165,6 @@ class UnaryOpExpr(BaseExpr):
                 self.type_id.name,
                 ",",
             ]
-            + get_pretty_repr(self.a)
+            + get_pretty_repr(self.a, pretty_repr_ctx)
             + [")"]
         )

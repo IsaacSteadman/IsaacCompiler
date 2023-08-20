@@ -17,9 +17,9 @@ class InlineIfExpr(BaseExpr):
         main_temps = self.if_false.init_temps(main_temps)
         return main_temps
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
-            (self.cond, self.if_true, self.if_false)
+            (self.cond, self.if_true, self.if_false), pretty_repr_ctx
         )
 
     def build(

@@ -67,9 +67,9 @@ class SParenthExpr(BaseExpr):
         main_temps = super(SParenthExpr, self).init_temps(main_temps)
         return self.inner_expr.init_temps(self.left_expr.init_temps(main_temps))
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
-            (self.left_expr, self.inner_expr)
+            (self.left_expr, self.inner_expr), pretty_repr_ctx
         )
 
     def build(

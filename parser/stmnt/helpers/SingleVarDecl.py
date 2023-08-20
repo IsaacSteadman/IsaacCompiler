@@ -49,9 +49,10 @@ class SingleVarDecl(PrettyRepr):
 
     # TODO: Maybe put a stub build Method?
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         rtn = [self.__class__.__name__] + get_pretty_repr(
-            (self.type_name, self.var_name, self.init_args, self.ext_spec)
+            (self.type_name, self.var_name, self.init_args, self.ext_spec),
+            pretty_repr_ctx,
         )
         rtn[-1:-1] = [","] + get_pretty_repr_enum(LST_INIT_TYPES, self.init_type)
         return rtn

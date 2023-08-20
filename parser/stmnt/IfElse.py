@@ -18,9 +18,9 @@ class IfElse(BaseStmnt):
         self.stmnt = stmnt
         self.else_stmnt = else_stmnt
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
-            (self.cond, self.stmnt, self.else_stmnt)
+            (self.cond, self.stmnt, self.else_stmnt), pretty_repr_ctx
         )
 
     def build(

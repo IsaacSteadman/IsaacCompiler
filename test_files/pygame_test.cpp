@@ -3,7 +3,7 @@ typedef signed long long ptrdiff_t;
 typedef size_t h_obj_t;
 size_t syscall(size_t sys_n, size_t arg0, size_t arg1, size_t arg2, size_t arg3);
 int print(const char *str);
-const h_obj_t invalid = 0xFFFFFFFFFFFFFFFF;
+h_obj_t invalid = 0xFFFFFFFFFFFFFFFF;
 h_obj_t pyg_id = 0xFFFFFFFFFFFFFFFF;
 h_obj_t pygame_init()
 {

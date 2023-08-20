@@ -23,9 +23,9 @@ class ForLoop(BaseStmnt):
         self.stmnt = stmnt
         self.context = None
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
-            (self.init, self.cond, self.incr, self.stmnt)
+            (self.init, self.cond, self.incr, self.stmnt), pretty_repr_ctx
         )
 
     def build(

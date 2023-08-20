@@ -58,8 +58,10 @@ class SpecialPtrMemberExpr(BaseExpr):
     ) -> int:
         raise NotImplementedError("Cannot call 'build' on operator expressions")
 
-    def pretty_repr(self):
-        return [self.__class__.__name__] + get_pretty_repr((self.obj, self.attr))
+    def pretty_repr(self, pretty_repr_ctx=None):
+        return [self.__class__.__name__] + get_pretty_repr(
+            (self.obj, self.attr), pretty_repr_ctx
+        )
 
 
 from .CastOpExpr import CastOpExpr

@@ -50,17 +50,27 @@ OPT_USER_INSPECT = 0
 OPT_CODE_GEN = 1
 
 
-class CompileContext(ContextMember):
+class CompileContext(ContextMember, PrettyRepr):
     # Optimize tells the rest of the code to optimize (very slightly and not runtime performance-wise)
     #   the representation for the code generator
     Optimize = OPT_CODE_GEN
 
-    def __init__(self, name: str, parent: Optional["CompileContext"] = None):
+    def __init__(
+        self,
+        name: str,
+        parent: Optional["CompileContext"] = None,
+        scopes: Optional[List["LocalScope"]] = None,
+        types: Optional[Dict[str, "BaseType"]] = None,
+        namespaces: Optional[Dict[str, "CompileContext"]] = None,
+        vars: Optional[Dict[str, "ContextVariable"]] = None,
+    ):
         super(CompileContext, self).__init__(name, parent)
-        self.scopes: List["LocalScope"] = []
-        self.types: Dict[str, "BaseType"] = {}
-        self.namespaces: Dict[str, "CompileContext"] = {}
-        self.vars: Dict[str, "ContextVariable"] = {}
+        self.scopes: List["LocalScope"] = [] if scopes is None else scopes
+        self.types: Dict[str, "BaseType"] = {} if types is None else types
+        self.namespaces: Dict[str, "CompileContext"] = (
+            {} if namespaces is None else namespaces
+        )
+        self.vars: Dict[str, "ContextVariable"] = {} if vars is None else vars
 
     def is_namespace(self):
         return True
@@ -267,6 +277,19 @@ class CompileContext(ContextMember):
         return member.get_full_name()
 
     # def __setitem__(self, k, v): raise NotImplementedError("NOT IMPLEMENTED")
+
+    def pretty_repr(self, pretty_repr_ctx=None):
+        return [self.__class__.__name__] + get_pretty_repr(
+            (
+                self.name,
+                self.parent,
+                self.scopes,
+                self.types,
+                self.namespaces,
+                self.vars,
+            ),
+            pretty_repr_ctx,
+        )
 
 
 class PrimitiveTypeId(Enum):
@@ -558,7 +581,7 @@ class PrimitiveType(BaseType):
             lst.insert(0, "signed" if self.sign else "unsigned")
         return lst
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return ["PrimitiveType", ".", "from_type_code", "("] + [
             "PrimitiveTypeId",
             ".",
@@ -892,7 +915,7 @@ class ClassType(CompileContext, BaseType):
             off += size_of(self.var_order[0].typ)
         return off
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
             (
                 self.parent,
@@ -902,7 +925,8 @@ class ClassType(CompileContext, BaseType):
                 self.var_order,
                 self.defined,
                 self.the_base_type,
-            )
+            ),
+            pretty_repr_ctx,
         )
 
     def merge_to(self, other: "ClassType"):
@@ -1031,7 +1055,7 @@ class StructType(CompileContext, BaseType):
             off += size_of(self.var_order[0].typ)
         return off
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
             (
                 self.parent,
@@ -1041,7 +1065,8 @@ class StructType(CompileContext, BaseType):
                 self.var_order,
                 self.defined,
                 self.the_base_type,
-            )
+            ),
+            pretty_repr_ctx,
         )
 
     def merge_to(self, other):
@@ -1286,7 +1311,7 @@ class EnumType(CompileContext, BaseType):
             cmpl_obj, init_args, context, ref, cmpl_data, temp_links
         )
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
             (
                 self.parent,
@@ -1295,7 +1320,8 @@ class EnumType(CompileContext, BaseType):
                 self.vars,
                 self.defined,
                 self.the_base_type,
-            )
+            ),
+            pretty_repr_ctx,
         )
 
     def merge_to(self, other):
@@ -1420,7 +1446,7 @@ class UnionType(CompileContext, BaseType):
         self.defined = defined
         self.the_base_type = the_base_type
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
             (
                 self.parent,
@@ -1429,7 +1455,8 @@ class UnionType(CompileContext, BaseType):
                 self.definition,
                 self.defined,
                 self.the_base_type,
-            )
+            ),
+            pretty_repr_ctx,
         )
 
     def merge_to(self, other: "UnionType"):
@@ -1672,8 +1699,12 @@ class DeclStmnt(BaseStmnt):
     def __init__(self, decl_lst: Optional[List["SingleVarDecl"]] = None):
         self.decl_lst = decl_lst
 
-    def pretty_repr(self):
-        return [self.__class__.__name__, "("] + get_pretty_repr(self.decl_lst) + [")"]
+    def pretty_repr(self, pretty_repr_ctx=None):
+        return (
+            [self.__class__.__name__, "("]
+            + get_pretty_repr(self.decl_lst, pretty_repr_ctx)
+            + [")"]
+        )
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
@@ -2199,11 +2230,11 @@ class QualType(BaseType):
         self.tgt_type = tgt_type
         self.ext_inf = ext_inf
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         c_name = self.__class__.__name__
         rtn = (
             [c_name, "(", c_name, ".", self.QUAL_Lst[self.qual_id], ","]
-            + get_pretty_repr(self.tgt_type)
+            + get_pretty_repr(self.tgt_type, pretty_repr_ctx)
             + [")"]
         )
         if self.ext_inf is not None:
@@ -2664,9 +2695,11 @@ class TypeDefStmnt(BaseStmnt):
     def __init__(self, id_qual_types: Optional[List["IdentifiedQualType"]] = None):
         self.id_qual_types = id_qual_types
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return (
-            [self.__class__.__name__, "("] + get_pretty_repr(self.id_qual_types) + [")"]
+            [self.__class__.__name__, "("]
+            + get_pretty_repr(self.id_qual_types, pretty_repr_ctx)
+            + [")"]
         )
 
     def build(
@@ -2742,8 +2775,10 @@ class IdentifiedQualType(PrettyRepr):
     def to_mangle_str(self):
         return self.typ.to_mangle_str()
 
-    def pretty_repr(self):
-        return [self.__class__.__name__] + get_pretty_repr((self.name, self.typ))
+    def pretty_repr(self, pretty_repr_ctx=None):
+        return [self.__class__.__name__] + get_pretty_repr(
+            (self.name, self.typ), pretty_repr_ctx
+        )
 
     def to_user_str(self):
         return self.name + " is a " + get_user_str_from_type(self.typ)
@@ -2771,9 +2806,9 @@ class ContextVariable(ContextMember, PrettyRepr):
         self.typ: "BaseType" = typ
         self.mods = mods
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
-            (self.name, self.typ, self.init_expr, self.mods)
+            (self.name, self.typ, self.init_expr, self.mods), pretty_repr_ctx
         )
 
     def get_link_name(self):
@@ -2832,9 +2867,9 @@ class OverloadedCtxVar(ContextVariable):
         super(OverloadedCtxVar, self).__init__(name, MultiType())
         self.specific_ctx_vars = [] if specific_ctx_vars is None else specific_ctx_vars
 
-    def pretty_repr(self):
+    def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
-            (self.name, self.specific_ctx_vars)
+            (self.name, self.specific_ctx_vars), pretty_repr_ctx
         )
 
     def add_ctx_var(self, inst: ContextVariable):
