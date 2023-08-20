@@ -283,22 +283,26 @@ from ..StackVM.PyStackVM import (
     BC_SWAP,
     BC_XOR1,
 )
-from ..parser.context.CompileContext import CompileContext
-from ..parser.context.ContextVariable import ContextVariable
-from ..parser.expr.BinaryOpExpr import ASSIGNMENT_OPS, BinaryExprSubType, BinaryOpExpr
+from ..parser.expr.BaseExpr import ExprType
+from ..parser.expr.BinaryOpExpr import (
+    ASSIGNMENT_OPS,
+    BinaryExprSubType,
+    BinaryOpExpr,
+)
 from ..parser.expr.NameRefExpr import NameRefExpr
 from ..parser.expr.OperatorType import OperatorType
-from ..parser.expr.BaseExpr import ExprType
 from ..parser.type.BaseType import BaseType
-from ..parser.type.PrimitiveType import (
+from ..parser.type.get_user_str_from_type import get_user_str_from_type
+from ..parser.type.types import (
+    CompileContext,
+    ContextVariable,
     FLT_TYPE_CODES,
     PrimitiveType,
     PrimitiveTypeId,
+    QualType,
+    compare_no_cvr,
+    get_tgt_ref_type,
     prim_types,
+    size_of,
     void_t,
 )
-from ..parser.type.QualType import QualType
-from ..parser.type.compare_no_cvr import compare_no_cvr
-from ..parser.type.get_tgt_ref_type import get_tgt_ref_type
-from ..parser.type.get_user_str_from_type import get_user_str_from_type
-from ..parser.type.size_of import size_of

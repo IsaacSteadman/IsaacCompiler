@@ -64,12 +64,14 @@ class SpecialPtrMemberExpr(BaseExpr):
 
 from .CastOpExpr import CastOpExpr
 from ...PrettyRepr import get_pretty_repr
-from ..context.CompileContext import CompileContext
 from ..type.BaseType import TypeClass
-from ..type.ClassType import ClassType
-from ..type.QualType import QualType
-from ..type.StructType import StructType
-from ..type.UnionType import UnionType
-from ..type.get_base_prim_type import get_base_prim_type
-from ..type.get_tgt_ref_type import get_tgt_ref_type
+from ..type.types import (
+    ClassType,
+    CompileContext,
+    QualType,
+    StructType,
+    UnionType,
+    get_base_prim_type,
+    get_tgt_ref_type,
+)
 from ...lexer.lexer import Token

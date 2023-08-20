@@ -12,4 +12,4 @@ def is_type_name_part(s: str, context: "CompileContext", only_tn: bool = False) 
 
 
 from ..constants import META_TYPE_WORDS, TYPE_WORDS
-from ..context.CompileContext import CompileContext
+from ..type.types import CompileContext

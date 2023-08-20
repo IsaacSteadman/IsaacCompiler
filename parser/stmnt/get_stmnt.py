@@ -66,21 +66,17 @@ def get_stmnt(
     return rtn, c
 
 
-from ...lexer.lexer import Token, TokenType
-from ..type.is_type_name_part import is_type_name_part
-from .BaseStmnt import BaseStmnt, StmntType, STMNT_KEY_TO_ID
 from .AsmStmnt import AsmStmnt
+from .BaseStmnt import BaseStmnt, STMNT_KEY_TO_ID, StmntType
 from .BreakStmnt import BreakStmnt
 from .ContinueStmnt import ContinueStmnt
 from .CurlyStmnt import CurlyStmnt
+from .ForLoop import ForLoop
+from .IfElse import IfElse
 from .NamespaceStmnt import NamespaceStmnt
 from .ReturnStmnt import ReturnStmnt
 from .SemiColonStmnt import SemiColonStmnt
-from .TypeDefStmnt import TypeDefStmnt
 from .WhileLoop import WhileLoop
-from .DeclStmnt import DeclStmnt
-from .ForLoop import ForLoop
-from .IfElse import IfElse
-
-if TYPE_CHECKING:
-    from ..context.CompileContext import CompileContext
+from ..type.is_type_name_part import is_type_name_part
+from ..type.types import CompileContext, DeclStmnt, TypeDefStmnt
+from ...lexer.lexer import Token, TokenType

@@ -1,14 +1,19 @@
 from enum import Enum
 from typing import List
 from .BaseExpr import BaseExpr, ExprType
-from ..type.PrimitiveType import bool_t, int_types, prim_types, size_l_t,\
-    snz_l_t
 from ..type.get_arithmetic_op_fn_type import get_arithmetic_op_fn_type
 from ..type.get_asgn_fn_type import get_asgn_fn_type
 from ..type.get_asgn_sh_fn_type import get_asgn_sh_fn_type
 from ..type.get_cmp_op_fn_type import get_cmp_op_fn_type
 from ..type.get_sh_fn_type import get_sh_fn_type
-
+from ..type.types import (
+    QualType,
+    bool_t,
+    int_types,
+    prim_types,
+    size_l_t,
+    snz_l_t,
+)
 
 
 class BinaryExprSubType(Enum):
@@ -42,6 +47,7 @@ class BinaryExprSubType(Enum):
     SS_AND = 27
     SS_OR = 28
 
+
 ASSIGNMENT_OPS = {
     BinaryExprSubType.ASSGN,
     BinaryExprSubType.ASSGN_MOD,
@@ -53,7 +59,7 @@ ASSIGNMENT_OPS = {
     BinaryExprSubType.ASSGN_OR,
     BinaryExprSubType.ASSGN_XOR,
     BinaryExprSubType.ASSGN_RSHIFT,
-    BinaryExprSubType.ASSGN_LSHIFT
+    BinaryExprSubType.ASSGN_LSHIFT,
 }
 CMP_OPS = {
     BinaryExprSubType.LT,
@@ -61,7 +67,7 @@ CMP_OPS = {
     BinaryExprSubType.LE,
     BinaryExprSubType.GE,
     BinaryExprSubType.NE,
-    BinaryExprSubType.EQ
+    BinaryExprSubType.EQ,
 }
 DCT_INFIX_OP_NAME = {
     "=": BinaryExprSubType.ASSGN,
@@ -92,7 +98,7 @@ DCT_INFIX_OP_NAME = {
     ">>": BinaryExprSubType.RSHIFT,
     "<<": BinaryExprSubType.LSHIFT,
     "&&": BinaryExprSubType.SS_AND,
-    "||": BinaryExprSubType.SS_OR
+    "||": BinaryExprSubType.SS_OR,
 }
 
 
@@ -151,11 +157,14 @@ class BinaryOpExpr(BaseExpr):
                     if tgt_vt.qual_id == QualType.QUAL_PTR:
                         ok = True
                 if not ok:
-                    raise TypeError("No overloaded operator function for %s exists for types: %s and %s" % (
-                        type_id.name,
-                        get_user_str_from_type(a.t_anot),
-                        get_user_str_from_type(b.t_anot)
-                    ))
+                    raise TypeError(
+                        "No overloaded operator function for %s exists for types: %s and %s"
+                        % (
+                            type_id.name,
+                            get_user_str_from_type(a.t_anot),
+                            get_user_str_from_type(b.t_anot),
+                        )
+                    )
                 self.op_fn_type = OperatorType.PTR_GENERIC
                 self.op_fn_data = 0
                 if type_id == BinaryExprSubType.ASSGN:
@@ -164,7 +173,10 @@ class BinaryOpExpr(BaseExpr):
                     b = get_implicit_conv_expr(b, tgt_vt)[0]
                     self.t_anot = ref_type
                     ok = True
-                elif type_id in [BinaryExprSubType.ASSGN_MINUS, BinaryExprSubType.ASSGN_PLUS]:
+                elif type_id in [
+                    BinaryExprSubType.ASSGN_MINUS,
+                    BinaryExprSubType.ASSGN_PLUS,
+                ]:
                     ref_type = QualType(QualType.QUAL_REF, tgt_vt)
                     a = get_implicit_conv_expr(a, ref_type)[0]
                     res = get_implicit_conv_expr(b, snz_l_t)
@@ -172,7 +184,9 @@ class BinaryOpExpr(BaseExpr):
                         res = get_implicit_conv_expr(b, size_l_t)
                     else:
                         self.op_fn_data = 1
-                    assert res is not None and res[1] != 0, "Expected resolution of overloaded pointer arithmetic"
+                    assert (
+                        res is not None and res[1] != 0
+                    ), "Expected resolution of overloaded pointer arithmetic"
                     b = res[0]
                     self.t_anot = ref_type
                     ok = True
@@ -183,17 +197,17 @@ class BinaryOpExpr(BaseExpr):
                         res = get_implicit_conv_expr(b, size_l_t)
                     else:
                         self.op_fn_data = 1
-                    assert res is not None and res[1] != 0, "Expected resolution of overloaded pointer arithmetic"
+                    assert (
+                        res is not None and res[1] != 0
+                    ), "Expected resolution of overloaded pointer arithmetic"
                     b = res[0]
                     self.t_anot = tgt_vt
                     ok = True
                 elif type_id == BinaryExprSubType.MINUS:
-                    lst_try = [
-                        size_l_t,
-                        snz_l_t,
-                        tgt_vt
-                    ]
-                    lst_try = list(map(lambda to_type: get_implicit_conv_expr(b, to_type), lst_try))
+                    lst_try = [size_l_t, snz_l_t, tgt_vt]
+                    lst_try = list(
+                        map(lambda to_type: get_implicit_conv_expr(b, to_type), lst_try)
+                    )
                     best = None
                     best_c = 0
                     for c, res in enumerate(lst_try):
@@ -208,7 +222,9 @@ class BinaryOpExpr(BaseExpr):
                                 best_c = c
                             else:
                                 raise TypeError(
-                                    "resolution of overloaded pointer subtraction is ambiguous a = %r, b = %r" % (a, b))
+                                    "resolution of overloaded pointer subtraction is ambiguous a = %r, b = %r"
+                                    % (a, b)
+                                )
                     if best is not None:
                         self.op_fn_data = best_c
                         if best_c >= 2:
@@ -222,11 +238,14 @@ class BinaryOpExpr(BaseExpr):
                 if not ok and type_id == BinaryExprSubType.ASSGN:
                     self.op_fn_type = OperatorType.GENERIC
                 if not ok:
-                    raise TypeError("No overloaded operator function for %s exists for types: %s and %s" % (
-                        type_id.name,
-                        get_user_str_from_type(a.t_anot),
-                        get_user_str_from_type(b.t_anot)
-                    ))
+                    raise TypeError(
+                        "No overloaded operator function for %s exists for types: %s and %s"
+                        % (
+                            type_id.name,
+                            get_user_str_from_type(a.t_anot),
+                            get_user_str_from_type(b.t_anot),
+                        )
+                    )
             else:
                 self.op_fn_data = index_fn_t
                 a = lst_conv[0]
@@ -239,11 +258,19 @@ class BinaryOpExpr(BaseExpr):
         main_temps = super(BinaryOpExpr, self).init_temps(main_temps)
         return self.a.init_temps(self.b.init_temps(main_temps))
 
-    def build(self, tokens: List["Token"], c: int, end: int, context: "CompileContext") -> int:
+    def build(
+        self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
+    ) -> int:
         raise NotImplementedError("Cannot call 'build' on operator expressions")
 
     def pretty_repr(self):
-        rtn = [self.__class__.__name__, "(", "BinaryExprSubType", ".", self.type_id.name]
+        rtn = [
+            self.__class__.__name__,
+            "(",
+            "BinaryExprSubType",
+            ".",
+            self.type_id.name,
+        ]
         for inst in (self.a, self.b):
             rtn.extend([","] + get_pretty_repr(inst))
         rtn.append(")")
@@ -254,9 +281,7 @@ from .OperatorType import OperatorType
 from .abstract_overload_resolver import abstract_overload_resolver
 from .get_implicit_conv_expr import get_implicit_conv_expr
 from ...PrettyRepr import get_pretty_repr
-from ..context.CompileContext import CompileContext
 from ..type.BaseType import TypeClass
-from ..type.QualType import QualType
-from ..type.get_tgt_ref_type import get_tgt_ref_type
 from ..type.get_user_str_from_type import get_user_str_from_type
+from ..type.types import CompileContext, get_tgt_ref_type
 from ...lexer.lexer import Token

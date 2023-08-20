@@ -32,7 +32,7 @@ class ReturnStmnt(BaseStmnt):
 
 
 from ..ParsingError import ParsingError
-from ..context.CompileContext import CompileContext
+from ..type.types import CompileContext
 from ...lexer.lexer import Token
 from ...PrettyRepr import get_pretty_repr
 from ..expr.get_expr import get_expr

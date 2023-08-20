@@ -15,6 +15,6 @@ class OffsetIndirectLink(BaseLink):
         memory.append(BC_ADD8)
 
 
-from ...StackVM.PyStackVM import BC_ADD8
+from ..StackVM.PyStackVM import BC_ADD8
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from .IndirectLink import IndirectLink

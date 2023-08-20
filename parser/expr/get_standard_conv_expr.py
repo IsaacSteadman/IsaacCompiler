@@ -114,5 +114,16 @@ def get_standard_conv_expr(
 
 from .expr_constants import OVERLOAD_VERBOSE, OVERLOAD_BAN_ARR_VAL
 from .BaseExpr import BaseExpr
-from .CastOpExpr import CastOpExpr
-from ..type.BaseType import BaseType
+from ..type.BaseType import BaseType, TypeClass
+from .CastOpExpr import CastOpExpr, CastType
+from ..type.types import (
+    get_tgt_ref_type,
+    compare_no_cvr,
+    QualType,
+    PrimitiveType,
+    PrimitiveTypeId,
+    INT_TYPE_CODES,
+    FLT_TYPE_CODES,
+    is_prim_type_id,
+    is_prim_or_ptr,
+)

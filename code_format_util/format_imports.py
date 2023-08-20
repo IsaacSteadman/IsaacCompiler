@@ -11,12 +11,24 @@ def format_imports():
     MAX_LINE_LEN = 80
     import_set: Set[tuple] = set()
     from_import_dict: Dict[tuple, Set[str]] = {}
-    for line in pyperclip.paste().replace("\\\n", "").split("\n"):
+    s = pyperclip.paste()
+    s = s.replace("\\\n", "")
+    pos = 0
+    while True:
+        lparen = s.find("(", pos)
+        if lparen == -1:
+            break
+        rparen = s.find(")", lparen)
+        assert rparen != -1, "failed to find matching paren"
+        s_processed = s[:lparen] + s[lparen + 1 : rparen].replace("\n", " ")
+        s = s_processed + s[rparen + 1 :]
+        pos = len(s_processed)
+    for line in s.split("\n"):
         line = line.strip()
         match = from_import_re.match(line)
         if match:
             module_str = match.group(1)
-            imports = set(map(str.strip, match.group(2).split(",")))
+            imports = set(filter(len, map(str.strip, match.group(2).split(","))))
             module_key = tuple(module_str.split("."))
             total_imports = from_import_dict.get(module_key)
             if total_imports is None:
@@ -42,27 +54,32 @@ def format_imports():
         elif len(entry[1]):
             module_str = ".".join(entry[0])
             imports = entry[1]
-            local_output_lines = [f"from {module_str} import {imports[0]}"]
-            for i, import_entry in enumerate(imports[1:], start=1):
-                try_output_line = f", {import_entry}"
-                if i + 1 < len(imports):
-                    if len(local_output_lines[-1]) + len(try_output_line) + 2 > MAX_LINE_LEN:
-                        local_output_lines[-1] += ",\\"
-                        local_output_lines.append(f"    {import_entry}")
-                    else:
-                        local_output_lines[-1] += try_output_line
-                elif len(local_output_lines[-1]) + len(try_output_line) > MAX_LINE_LEN:
-                    local_output_lines[-1] += ",\\"
-                    local_output_lines.append(f"    {import_entry}")
-                else:
-                    local_output_lines[-1] += try_output_line
-            output_lines.append("\n".join(local_output_lines))
+            try_line = f"from {module_str} import {', '.join(imports)}"
+            if len(try_line) <= MAX_LINE_LEN:
+                output_lines.append(try_line)
+            else:
+                output_lines.append(f"from {module_str} import (")
+                for import_entry in imports:
+                    try_output_line = f"    {import_entry},"
+                    output_lines.append(try_output_line)
+                output_lines.append(")")
+            # local_output_lines = [f"from {module_str} import {imports[0]}"]
+            # for i, import_entry in enumerate(imports[1:], start=1):
+            #     try_output_line = f", {import_entry}"
+            #     if i + 1 < len(imports):
+            #         if len(local_output_lines[-1]) + len(try_output_line) + 2 > MAX_LINE_LEN:
+            #             local_output_lines[-1] += ",\\"
+            #             local_output_lines.append(f"    {import_entry}")
+            #         else:
+            #             local_output_lines[-1] += try_output_line
+            #     elif len(local_output_lines[-1]) + len(try_output_line) > MAX_LINE_LEN:
+            #         local_output_lines[-1] += ",\\"
+            #         local_output_lines.append(f"    {import_entry}")
+            #     else:
+            #         local_output_lines[-1] += try_output_line
+            # output_lines.append("\n".join(local_output_lines))
     pyperclip.copy("\n".join(output_lines))
 
 
 if __name__ == "__main__":
     format_imports()
-
-
-
-

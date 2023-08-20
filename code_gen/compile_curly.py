@@ -2,10 +2,10 @@ from typing import Optional
 
 
 def compile_curly(
-        cmpl_obj: "CompileObject",
-        stmnt: "CurlyStmnt",
-        context: "CompileContext",
-        cmpl_data: Optional["LocalCompileData"] = None
+    cmpl_obj: "CompileObject",
+    stmnt: "CurlyStmnt",
+    context: "CompileContext",
+    cmpl_data: Optional["LocalCompileData"] = None,
 ):
     # key format is "name@fullscopename"
     #   fullscopename format is cur.name.rsplit(" ", 1)[-1][:-1] + ("-" + cur.parent.fullscopename)
@@ -23,5 +23,5 @@ def compile_curly(
 from .CompileObject import CompileObject
 from .LocalCompileData import LocalCompileData
 from .compile_stmnt import compile_stmnt
-from ..parser.context.CompileContext import CompileContext
 from ..parser.stmnt.CurlyStmnt import CurlyStmnt
+from ..parser.type.types import CompileContext

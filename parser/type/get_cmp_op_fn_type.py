@@ -5,6 +5,5 @@ def get_cmp_op_fn_type(typ: "BaseType", is_const_ref: bool = False):
     return QualType(QualType.QUAL_FN, bool_t, [arg_t, arg_t])
 
 
-from .PrimitiveType import bool_t
-from .QualType import QualType
 from .BaseType import BaseType
+from .types import QualType, bool_t

@@ -112,21 +112,19 @@ def my_get_expr_part(
         raise ParsingError(tokens, c, "Unrecognized Token Type")
 
 
-from ..ParsingError import ParsingError
+from .CurlyExpr import CurlyExpr
 from .LiteralExpr import LiteralExpr
-from .expr_part.SimpleOpPart import SimpleOpPart
-from .expr_part.SParenthOpPart import SParenthOpPart
+from .NameRefExpr import NameRefExpr
+from .get_expr import get_expr
+from ..ParsingError import ParsingError
+from ..constants import DCT_FIXES
+from .expr_part.BaseOpPart import BaseOpPart
+from .expr_part.CastOpPart import CastOpPart
 from .expr_part.ExprOpPart import ExprOpPart
 from .expr_part.InlineIfOpPart import InlineIfOpPart
-from .expr_part.BaseOpPart import BaseOpPart
-from .CurlyExpr import CurlyExpr
-from ...lexer.lexer import BreakSymClass, TokenType, OperatorClass, Token
-from .get_expr import get_expr
-from .NameRefExpr import NameRefExpr
-from ..type.IdentifiedQualType import IdentifiedQualType
-from ..type.proc_typed_decl import proc_typed_decl
-from ...ParseConstants import OPEN_GROUPS, CLOSE_GROUPS
-from ..constants import DCT_FIXES
-from ..context.CompileContext import CompileContext
 from .expr_part.ParentOpPart import ParenthOpPart
-from .expr_part.CastOpPart import CastOpPart
+from .expr_part.SParenthOpPart import SParenthOpPart
+from .expr_part.SimpleOpPart import SimpleOpPart
+from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
+from ..type.types import IdentifiedQualType, proc_typed_decl, CompileContext
+from ...lexer.lexer import BreakSymClass, OperatorClass, Token, TokenType

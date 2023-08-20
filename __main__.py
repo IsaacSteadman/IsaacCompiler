@@ -5,11 +5,26 @@ from .code_gen.CompilerOptions import CompilerOptions
 from .code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
 from .code_gen.compile_stmnt import compile_stmnt
 from .lexer.lexer import get_list_tokens
-from .parser.context.CompileContext import CompileContext
+from .code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
 from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
-from .code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
+from .parser.type.types import CompileContext
 from .code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import lib_utils_abi
+
+
+def flatify_dep_desc(dep_dct: Dict[str, List[str]], start_k: str) -> Set[str]:
+    rtn = set()
+    set_next = {start_k}
+    while len(set_next):
+        set_get = set_next
+        rtn |= set_get
+        set_next = set()
+        for k in set_get:
+            if k not in dep_dct:
+                raise KeyError("Unresolved External Symbol: " + k)
+            set_next.update(dep_dct[k])
+        set_next -= rtn
+    return rtn
 
 
 argparser = argparse.ArgumentParser(description="Compile C++ code to StackVM bytecode")
@@ -94,21 +109,6 @@ global_ctx = CompileContext("", None)
 c = 0
 end = len(tokens)
 lst_stmnt: List[BaseStmnt] = []
-
-
-def flatify_dep_desc(dep_dct: Dict[str, List[str]], start_k: str) -> Set[str]:
-    rtn = set()
-    set_next = {start_k}
-    while len(set_next):
-        set_get = set_next
-        rtn |= set_get
-        set_next = set()
-        for k in set_get:
-            if k not in dep_dct:
-                raise KeyError("Unresolved External Symbol: " + k)
-            set_next.update(dep_dct[k])
-        set_next -= rtn
-    return rtn
 
 
 if args.output_binary is not None or args.disassembly_output is not None:

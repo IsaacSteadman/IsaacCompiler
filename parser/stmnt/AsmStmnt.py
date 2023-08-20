@@ -55,4 +55,4 @@ class AsmStmnt(BaseStmnt):
 
 from ...lexer.lexer import Token, TokenType
 from ..expr.LiteralExpr import LiteralExpr
-from ..context.CompileContext import CompileContext
+from ..type.types import CompileContext

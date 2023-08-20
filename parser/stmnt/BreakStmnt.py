@@ -20,4 +20,4 @@ class BreakStmnt(BaseStmnt):
 
 from ..ParsingError import ParsingError
 from ...lexer.lexer import Token
-from ..context.CompileContext import CompileContext
+from ..type.types import CompileContext

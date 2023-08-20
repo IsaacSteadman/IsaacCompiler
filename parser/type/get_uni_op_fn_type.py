@@ -1,18 +1,6 @@
-
-
 def get_uni_op_fn_type(
-        typ: "BaseType",
-        is_ref: bool = True,
-        is_const: bool = False,
-        res_ref: bool = True
+    typ: "BaseType", is_ref: bool = True, is_const: bool = False, res_ref: bool = True
 ) -> "QualType":
-    """
-    :param BaseType typ:
-    :param bool is_ref:
-    :param bool is_const:
-    :param bool res_ref:
-    :rtype: QualType
-    """
     arg_t = typ
     res_t = typ
     if is_const:
@@ -41,4 +29,4 @@ def get_uni_op_fn_type_v__v(typ):
 
 
 from .BaseType import BaseType
-from .QualType import QualType
+from .types import QualType

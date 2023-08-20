@@ -212,6 +212,7 @@ from .BaseCmplObj import BaseCmplObj
 from .CompileObject import CompileObject
 from .LinkRef import LinkRef
 from .Linkage import Linkage
+from .LocalCompileData import LocalCompileData
 from .LocalRef import LocalRef
 from .compile_curly import compile_curly
 from .compile_expr import compile_expr
@@ -229,21 +230,22 @@ from ..StackVM.PyStackVM import (
     BC_RET,
     BC_RST_SP1,
 )
-from ..parser.context.CompileContext import CompileContext
-from ..parser.context.ContextVariable import ContextVariable
 from ..parser.stmnt.AsmStmnt import AsmStmnt
 from ..parser.stmnt.BaseStmnt import BaseStmnt, StmntType
 from ..parser.stmnt.CurlyStmnt import CurlyStmnt
-from ..parser.stmnt.DeclStmnt import DeclStmnt
 from ..parser.stmnt.ForLoop import ForLoop
 from ..parser.stmnt.IfElse import IfElse
 from ..parser.stmnt.NamespaceStmnt import NamespaceStmnt
 from ..parser.stmnt.ReturnStmnt import ReturnStmnt
 from ..parser.stmnt.SemiColonStmnt import SemiColonStmnt
 from ..parser.stmnt.WhileLoop import WhileLoop
-from ..parser.type.PrimitiveType import void_t
-from ..parser.type.get_value_type import get_value_type
-from ..parser.type.size_of import size_of
+from ..parser.type.types import (
+    CompileContext,
+    ContextVariable,
+    DeclStmnt,
+    get_value_type,
+    size_of,
+    void_t,
+)
 from ..parser.stmnt.helpers.SingleVarDecl import SingleVarDecl
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc, VarRefTosNamed
-from .LocalCompileData import LocalCompileData

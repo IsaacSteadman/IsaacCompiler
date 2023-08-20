@@ -21,7 +21,11 @@ def get_bc_conv_bits(typ: "BaseType") -> int:
     return out_bits
 
 
-from ..parser.type.BaseType import BaseType,TypeClass
-from ..parser.type.PrimitiveType import PrimitiveType, FLT_TYPE_CODES, INT_TYPE_CODES
-from ..parser.type.QualType import QualType
-from ..parser.type.get_base_prim_type import get_base_prim_type
+from ..parser.type.BaseType import BaseType, TypeClass
+from ..parser.type.types import (
+    FLT_TYPE_CODES,
+    INT_TYPE_CODES,
+    PrimitiveType,
+    QualType,
+    get_base_prim_type,
+)

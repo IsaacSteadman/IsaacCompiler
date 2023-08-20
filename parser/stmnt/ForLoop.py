@@ -69,14 +69,13 @@ class ForLoop(BaseStmnt):
         return c
 
 
+from ..ParsingError import ParsingError
+from ...PrettyRepr import get_pretty_repr
 from ..expr.BaseExpr import BaseExpr
 from ..expr.LiteralExpr import LiteralExpr
-from ..stmnt.BaseStmnt import BaseStmnt, StmntType
-from ..context.CompileContext import CompileContext
-from ..context.LocalScope import LocalScope
-from ...lexer.lexer import Token
-from ..ParsingError import ParsingError
 from ..expr.get_bool_expr import get_bool_expr
-from ..stmnt.get_stmnt import get_stmnt
-from ...PrettyRepr import get_pretty_repr
 from ..expr.get_expr import get_expr
+from ..stmnt.BaseStmnt import BaseStmnt, StmntType
+from ..stmnt.get_stmnt import get_stmnt
+from ..type.types import CompileContext, LocalScope
+from ...lexer.lexer import Token

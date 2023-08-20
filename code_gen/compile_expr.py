@@ -493,11 +493,10 @@ from ..StackVM.PyStackVM import (
     double_t,
     float_t,
 )
-from ..parser.context.CompileContext import CompileContext
-from ..parser.context.ContextVariable import ContextVariable
 from ..parser.expr.BaseExpr import BaseExpr, ExprType
 from ..parser.expr.BinaryOpExpr import BinaryOpExpr
 from ..parser.expr.CastOpExpr import CastOpExpr, CastType
+from ..parser.expr.FnCallExpr import FnCallExpr
 from ..parser.expr.LiteralExpr import LiteralExpr
 from ..parser.expr.NameRefExpr import NameRefExpr
 from ..parser.expr.OperatorType import OperatorType
@@ -507,16 +506,22 @@ from ..parser.expr.SpecialDotExpr import SpecialDotExpr
 from ..parser.expr.SpecialPtrMemberExpr import SpecialPtrMemberExpr
 from ..parser.expr.UnaryOpExpr import UnaryExprSubType, UnaryOpExpr
 from ..parser.type.BaseType import BaseType, TypeClass
-from ..parser.type.ClassType import ClassType
-from ..parser.type.IdentifiedQualType import IdentifiedQualType
-from ..parser.type.PrimitiveType import PrimitiveType, bool_t, prim_types, void_t
-from ..parser.type.QualType import QualType
-from ..parser.type.StructType import StructType
-from ..parser.type.UnionType import UnionType
-from ..parser.type.compare_no_cvr import compare_no_cvr
-from ..parser.type.get_base_prim_type import get_base_prim_type
-from ..parser.type.get_tgt_ref_type import get_tgt_ref_type
 from ..parser.type.get_user_str_from_type import get_user_str_from_type
-from ..parser.type.get_value_type import get_value_type
-from ..parser.type.size_of import size_of
-from ..parser.expr.FnCallExpr import FnCallExpr
+from ..parser.type.types import (
+    ClassType,
+    CompileContext,
+    ContextVariable,
+    IdentifiedQualType,
+    PrimitiveType,
+    QualType,
+    StructType,
+    UnionType,
+    bool_t,
+    compare_no_cvr,
+    get_base_prim_type,
+    get_tgt_ref_type,
+    get_value_type,
+    prim_types,
+    size_of,
+    void_t,
+)

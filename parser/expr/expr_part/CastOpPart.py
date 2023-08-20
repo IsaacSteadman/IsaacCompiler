@@ -34,6 +34,6 @@ class CastOpPart(BaseOpPart):
 
 
 from ..CastOpExpr import CastOpExpr
-from ...type.get_tgt_ref_type import get_tgt_ref_type
+from ...type.types import get_tgt_ref_type
 from ...type.get_user_str_from_type import get_user_str_from_type
 from ..get_standard_conv_expr import get_standard_conv_expr

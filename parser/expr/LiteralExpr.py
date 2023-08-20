@@ -1,6 +1,6 @@
-from typing import List, Tuple, Optional
-from ...lexer.constants import TokenType
+from typing import List, Optional, Tuple, Union
 from .BaseExpr import BaseExpr, ExprType
+from ...lexer.constants import TokenType
 
 
 LITERAL_TYPES = {
@@ -24,7 +24,7 @@ class LiteralExpr(BaseExpr):
     LIT_lst = ["LIT_INT", "LIT_FLOAT", "LIT_CHR", "LIT_STR", "LIT_BOOL"]
 
     @classmethod
-    def is_literal_token(cls, tok):
+    def is_literal_token(cls, tok: "Token") -> bool:
         """
         :param Token tok:
         :rtype: bool
@@ -34,11 +34,7 @@ class LiteralExpr(BaseExpr):
         )
 
     @classmethod
-    def literal_to_value(cls, tok):
-        """
-        :param Token tok:
-        :rtype: str|int|float
-        """
+    def literal_to_value(cls, tok: "Token") -> Union[str, int, float, bool]:
         s = tok.str
         if tok.type_id == TokenType.DBL_QUOTE:
             vals, uni_spec = cls.parse_str_lit(s)
@@ -171,11 +167,7 @@ class LiteralExpr(BaseExpr):
         return lst_res, uni_spec
 
     # init-args added for __repr__
-    def __init__(self, t_lit=None, v_lit=None):
-        """
-        :param int t_lit:
-        :param str v_lit:
-        """
+    def __init__(self, t_lit: Optional[int] = None, v_lit: Optional[str] = None):
         self.t_lit = t_lit
         self.v_lit = v_lit
         self.l_val = None
@@ -379,10 +371,12 @@ class LiteralExpr(BaseExpr):
 
 
 from ..ParsingError import ParsingError
-from ..context.CompileContext import CompileContext
 from ...PrettyRepr import get_pretty_repr
-from ..context.CompileContext import CompileContext
-from ..type.QualType import QualType
+from ..type.types import (
+    CompileContext,
+    PrimitiveType,
+    PrimitiveTypeId,
+    QualType,
+    size_of,
+)
 from ...lexer.lexer import Token
-from ..type.PrimitiveType import PrimitiveType, PrimitiveTypeId
-from ..type.size_of import size_of

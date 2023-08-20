@@ -1,7 +1,9 @@
 from typing import Optional, Tuple
 
 
-def get_implicit_conv_expr(expr: "BaseExpr", to_type: "BaseType") -> Optional[Tuple["BaseExpr", int]]:
+def get_implicit_conv_expr(
+    expr: "BaseExpr", to_type: "BaseType"
+) -> Optional[Tuple["BaseExpr", int]]:
     """
     Rating is
       0 if conversion could not be done
@@ -36,14 +38,17 @@ def get_implicit_conv_expr(expr: "BaseExpr", to_type: "BaseType") -> Optional[Tu
         return None
     if expr3.t_anot is not to_type and not compare_no_cvr(expr3.t_anot, to_type):
         if OVERLOAD_VERBOSE:
-            print("Conversion attempt failed, got expr3.t_anot = %s\n  to_type = %s" % (repr(expr3.t_anot), repr(to_type)))
+            print(
+                "Conversion attempt failed, got expr3.t_anot = %s\n  to_type = %s"
+                % (repr(expr3.t_anot), repr(to_type))
+            )
         return None
     return expr3, max([rate1, rate2, rate3])
 
 
 from .BaseExpr import BaseExpr
 from .expr_constants import OVERLOAD_VERBOSE
+from ..type.BaseType import BaseType
 from .get_standard_conv_expr import get_standard_conv_expr
 from .get_user_def_conv_expr import get_user_def_conv_expr
-from ..type.BaseType import BaseType
-from ..type.compare_no_cvr import compare_no_cvr
+from ..type.types import compare_no_cvr

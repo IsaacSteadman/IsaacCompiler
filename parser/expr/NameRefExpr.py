@@ -43,12 +43,9 @@ class NameRefExpr(BaseExpr):
         return [self.__class__.__name__, "("] + get_pretty_repr(self.name) + [")"]
 
 
-from ...lexer.lexer import Token, TokenType
-from ...PrettyRepr import get_pretty_repr
-from ..context.CompileContext import CompileContext
-from ..context.ContextVariable import ContextVariable
-from ..type.BaseType import TypeClass
-from ..type.QualType import QualType
-from ..type.get_value_type import get_value_type
 from ..ParsingError import ParsingError
 from ..get_name_from_tokens import get_name_from_tokens
+from ...PrettyRepr import get_pretty_repr
+from ..type.BaseType import TypeClass
+from ..type.types import QualType, get_value_type, CompileContext, ContextVariable
+from ...lexer.lexer import Token, TokenType

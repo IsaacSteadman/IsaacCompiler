@@ -69,6 +69,6 @@ from .mk_postfix import mk_postfix
 from ..ParsingError import ParsingError
 from ..get_user_str_parse_pos import get_user_str_parse_pos
 from .expr_part.BaseOpPart import BaseOpPart
-from ..context.CompileContext import CompileContext
+from ..type.types import CompileContext
 from ...lexer.lexer import Token
 from .my_get_expr_part import my_get_expr_part

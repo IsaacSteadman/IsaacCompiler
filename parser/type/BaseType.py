@@ -67,7 +67,7 @@ class BaseType(PrettyRepr):
 
 if TYPE_CHECKING:
     from .helpers.VarRef import VarRef
-    from ..context.CompileContext import CompileContext
+    from ..type.types import CompileContext
     from ..stmnt.CurlyStmnt import CurlyStmnt
     from ..expr.BaseExpr import BaseExpr
     from ...code_gen.BaseCmplObj import BaseCmplObj

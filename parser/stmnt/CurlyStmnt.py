@@ -1,5 +1,5 @@
 from .BaseStmnt import BaseStmnt, StmntType
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional
 
 
 class CurlyStmnt(BaseStmnt):
@@ -30,11 +30,7 @@ class CurlyStmnt(BaseStmnt):
         return c
 
 
-from ...PrettyRepr import get_pretty_repr
-from ..context.LocalScope import LocalScope
-from ...lexer.lexer import Token
-
-if TYPE_CHECKING:
-    from ..context.CompileContext import CompileContext
-
 from .get_stmnt import get_stmnt
+from ...PrettyRepr import get_pretty_repr
+from ..type.types import CompileContext, LocalScope
+from ...lexer.lexer import Token

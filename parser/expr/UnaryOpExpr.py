@@ -1,10 +1,28 @@
 from enum import Enum
 from typing import List
 from .BaseExpr import BaseExpr, ExprType
+from .CastOpExpr import CastOpExpr, CastType
 from .OperatorType import OperatorType
-from ..type.PrimitiveType import bool_t, int_types, prim_types, signed_num_types
-from ..type.get_uni_op_fn_type import get_uni_op_fn_type_r__r,\
-    get_uni_op_fn_type_r__v, get_uni_op_fn_type_v__v
+from .abstract_overload_resolver import abstract_overload_resolver
+from ...PrettyRepr import get_pretty_repr
+from ..type.BaseType import TypeClass
+from ..type.get_uni_op_fn_type import (
+    get_uni_op_fn_type_r__r,
+    get_uni_op_fn_type_r__v,
+    get_uni_op_fn_type_v__v,
+)
+from ..type.get_user_str_from_type import get_user_str_from_type
+from ..type.types import (
+    CompileContext,
+    QualType,
+    bool_t,
+    get_tgt_ref_type,
+    int_types,
+    prim_types,
+    signed_num_types,
+    size_of,
+)
+from ...lexer.lexer import Token
 
 
 class UnaryExprSubType(Enum):
@@ -49,7 +67,7 @@ class UnaryOpExpr(BaseExpr):
         UnaryExprSubType.STAR: None,
         UnaryExprSubType.REFERENCE: None,
         UnaryExprSubType.MINUS: list(map(get_uni_op_fn_type_v__v, signed_num_types)),
-        UnaryExprSubType.PLUS: list(map(get_uni_op_fn_type_v__v, prim_types))
+        UnaryExprSubType.PLUS: list(map(get_uni_op_fn_type_v__v, prim_types)),
     }
 
     def __init__(self, type_id: UnaryExprSubType, a: BaseExpr):
@@ -63,17 +81,22 @@ class UnaryOpExpr(BaseExpr):
             if index_fn_t >= len(fn_types):
                 tgt_type = None
                 src_vt = None
-                if type_id in [UnaryExprSubType.PRE_DEC, UnaryExprSubType.POST_DEC, UnaryExprSubType.PRE_INC, UnaryExprSubType.POST_INC]:
+                if type_id in [
+                    UnaryExprSubType.PRE_DEC,
+                    UnaryExprSubType.POST_DEC,
+                    UnaryExprSubType.PRE_INC,
+                    UnaryExprSubType.POST_INC,
+                ]:
                     src_pt, src_vt, is_src_ref = get_tgt_ref_type(a.t_anot)
                     if src_vt.type_class_id == TypeClass.QUAL:
                         assert isinstance(src_vt, QualType)
                         if src_vt.qual_id == QualType.QUAL_PTR and is_src_ref:
                             tgt_type = src_vt.tgt_type
                 if tgt_type is None:
-                    raise TypeError("No overloaded operator function for %s exists for type: %s" % (
-                        type_id.name,
-                        get_user_str_from_type(a.t_anot)
-                    ))
+                    raise TypeError(
+                        "No overloaded operator function for %s exists for type: %s"
+                        % (type_id.name, get_user_str_from_type(a.t_anot))
+                    )
                 assert isinstance(src_vt, QualType)
                 if type_id in [UnaryExprSubType.PRE_DEC, UnaryExprSubType.PRE_INC]:
                     self.t_anot = a.t_anot
@@ -88,7 +111,10 @@ class UnaryOpExpr(BaseExpr):
         elif type_id == UnaryExprSubType.REFERENCE:
             src_pt, src_vt, is_src_ref = get_tgt_ref_type(a.t_anot)
             if not is_src_ref:
-                raise TypeError("Cannot get the pointer to a non-reference type %s" % get_user_str_from_type(a.t_anot))
+                raise TypeError(
+                    "Cannot get the pointer to a non-reference type %s"
+                    % get_user_str_from_type(a.t_anot)
+                )
             self.t_anot = QualType(QualType.QUAL_PTR, src_vt)
         elif type_id == UnaryExprSubType.STAR:
             src_pt, src_vt, is_src_ref = get_tgt_ref_type(a.t_anot)
@@ -98,16 +124,19 @@ class UnaryOpExpr(BaseExpr):
                 if src_vt.qual_id == QualType.QUAL_PTR:
                     tgt_type = src_vt.tgt_type
             if tgt_type is None:
-                err_fmt = "\n".join([
-                    "Expected a pointer type for UnaryExprSubType.STAR, given complete type %s,",
-                    "  obtained prim_type = %s",
-                    "  val_type = %s"
-                ])
+                err_fmt = "\n".join(
+                    [
+                        "Expected a pointer type for UnaryExprSubType.STAR, given complete type %s,",
+                        "  obtained prim_type = %s",
+                        "  val_type = %s",
+                    ]
+                )
                 raise TypeError(
-                    err_fmt % (
+                    err_fmt
+                    % (
                         get_user_str_from_type(a.t_anot),
                         get_user_str_from_type(src_pt),
-                        get_user_str_from_type(src_vt)
+                        get_user_str_from_type(src_vt),
                     )
                 )
             if is_src_ref:
@@ -121,20 +150,21 @@ class UnaryOpExpr(BaseExpr):
         main_temps = super(UnaryOpExpr, self).init_temps(main_temps)
         return self.a.init_temps(main_temps)
 
-    def build(self, tokens: List["Token"], c: int, end: int, context: "CompileContext") -> int:
+    def build(
+        self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
+    ) -> int:
         raise NotImplementedError("Cannot call 'build' on operator expressions")
 
     def pretty_repr(self):
-        return [self.__class__.__name__, "(", "UnaryExprSubType", ".", self.type_id.name, ","] + get_pretty_repr(self.a) + [")"]
-
-
-from .CastOpExpr import CastOpExpr, CastType
-from .abstract_overload_resolver import abstract_overload_resolver
-from ...PrettyRepr import get_pretty_repr
-from ..context.CompileContext import CompileContext
-from ..type.BaseType import TypeClass
-from ..type.QualType import QualType
-from ..type.get_tgt_ref_type import get_tgt_ref_type
-from ..type.get_user_str_from_type import get_user_str_from_type
-from ..type.size_of import size_of
-from ...lexer.lexer import Token
+        return (
+            [
+                self.__class__.__name__,
+                "(",
+                "UnaryExprSubType",
+                ".",
+                self.type_id.name,
+                ",",
+            ]
+            + get_pretty_repr(self.a)
+            + [")"]
+        )

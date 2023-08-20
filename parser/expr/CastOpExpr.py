@@ -12,7 +12,12 @@ class CastType(Enum):
 class CastOpExpr(BaseExpr):
     expr_id = ExprType.CAST
 
-    def __init__(self, type_name: "BaseType", expr: BaseExpr, cast_type: CastType = CastType.EXPLICIT):
+    def __init__(
+        self,
+        type_name: "BaseType",
+        expr: BaseExpr,
+        cast_type: CastType = CastType.EXPLICIT,
+    ):
         assert expr.t_anot is not None, repr(expr)
         src_pt, src_vt, is_src_ref = get_tgt_ref_type(expr.t_anot)
         tgt_pt, tgt_vt, is_tgt_ref = get_tgt_ref_type(type_name)
@@ -27,10 +32,14 @@ class CastOpExpr(BaseExpr):
         # NOTE: figure out why temp_links is inconsistent between compile-time and parse-time
         main_temps = super(CastOpExpr, self).init_temps(main_temps)
         res = self.expr.init_temps(main_temps)
-        assert self.temps is self.expr.temps, "self.temps = %r, self.expr.temps = %r" % (self.temps, self.expr.temps)
+        assert (
+            self.temps is self.expr.temps
+        ), "self.temps = %r, self.expr.temps = %r" % (self.temps, self.expr.temps)
         return res
 
-    def build(self, tokens: List["Token"], c: int, end: int, context: "CompileContext") -> int:
+    def build(
+        self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
+    ) -> int:
         raise NotImplementedError("Cannot call 'build' on C-Style Cast operator")
 
     def pretty_repr(self):
@@ -41,8 +50,6 @@ class CastOpExpr(BaseExpr):
 
 
 from ...PrettyRepr import get_pretty_repr
-from ..context.CompileContext import CompileContext
 from ..type.BaseType import BaseType
-from ..type.compare_no_cvr import compare_no_cvr
-from ..type.get_tgt_ref_type import get_tgt_ref_type
+from ..type.types import CompileContext, compare_no_cvr, get_tgt_ref_type
 from ...lexer.lexer import Token

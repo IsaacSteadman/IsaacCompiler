@@ -28,7 +28,6 @@ class InlineIfExpr(BaseExpr):
         raise NotImplementedError("Cannot call 'build' on InlineIfExpr")
 
 
-from ..context.CompileContext import CompileContext
 from ...PrettyRepr import get_pretty_repr
-from ..context.CompileContext import CompileContext
+from ..type.types import CompileContext
 from ...lexer.lexer import Token

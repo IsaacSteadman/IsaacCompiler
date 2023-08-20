@@ -52,8 +52,8 @@ class CurlyExpr(BaseExpr):
         return c
 
 
-from ...lexer.lexer import Token
-from ...PrettyRepr import get_pretty_repr
-from ...ParseConstants import OPEN_GROUPS, CLOSE_GROUPS
-from ..context.CompileContext import CompileContext
 from .get_expr import get_expr
+from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
+from ...PrettyRepr import get_pretty_repr
+from ..type.types import CompileContext
+from ...lexer.lexer import Token

@@ -6,6 +6,5 @@ def get_asgn_sh_fn_type(typ: "BaseType", is_const_ref: bool = False):
     return QualType(QualType.QUAL_FN, lvalue_type, [lvalue_type, arg_t])
 
 
-from .PrimitiveType import PrimitiveType, PrimitiveTypeId
-from .QualType import QualType
 from .BaseType import BaseType
+from .types import PrimitiveType, PrimitiveTypeId, QualType

@@ -6,6 +6,5 @@ def get_sh_fn_type(typ: "BaseType"):
     )
 
 
-from .PrimitiveType import PrimitiveType, PrimitiveTypeId
-from .QualType import QualType
 from .BaseType import BaseType
+from .types import PrimitiveType, PrimitiveTypeId, QualType

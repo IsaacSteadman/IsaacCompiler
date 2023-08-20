@@ -2,11 +2,12 @@ from typing import List, Optional, Tuple
 
 
 def abstract_overload_resolver(
-    lst_args: List["BaseExpr"],
-    fn_types: List["BaseType"]
+    lst_args: List["BaseExpr"], fn_types: List["BaseType"]
 ) -> Tuple[int, Optional[List["BaseExpr"]]]:
     n_args = len(lst_args)
-    lst_viable: List[Optional[Tuple[BaseType, Optional[List[Tuple[BaseExpr, int]]]]]] = [None] * len(fn_types)
+    lst_viable: List[
+        Optional[Tuple[BaseType, Optional[List[Tuple[BaseExpr, int]]]]]
+    ] = [None] * len(fn_types)
     for c, typ in enumerate(fn_types):
         assert typ.type_class_id == TypeClass.QUAL
         assert isinstance(typ, QualType)
@@ -33,7 +34,9 @@ def abstract_overload_resolver(
         c1 = 0
         lst_conv: List[Optional[Tuple[BaseExpr, int]]] = [None] * n_args
         while c1 < n_type:
-            conv_expr = get_implicit_conv_expr(lst_args[c1], get_actual_type(typ.ext_inf[c1]))
+            conv_expr = get_implicit_conv_expr(
+                lst_args[c1], get_actual_type(typ.ext_inf[c1])
+            )
             if conv_expr is None:
                 break
             lst_conv[c1] = conv_expr
@@ -67,8 +70,9 @@ def abstract_overload_resolver(
         cur_fn, lst_conv = entry
         if len(lst_conv) != len(best_lst_conv):
             raise ValueError(
-                "Inconsistent length %u and %u for lst_conv = %r, best_lst_conv = %r" % (
-                    len(lst_conv), len(best_lst_conv), lst_conv, best_lst_conv))
+                "Inconsistent length %u and %u for lst_conv = %r, best_lst_conv = %r"
+                % (len(lst_conv), len(best_lst_conv), lst_conv, best_lst_conv)
+            )
         status = 0  # 0 is ambiguous, 1 is eliminated, 2 is promoted
         for c1 in range(len(lst_conv)):
             a = lst_conv[c1]
@@ -86,7 +90,9 @@ def abstract_overload_resolver(
             best_entry = c, entry[1]
     if last_ambiguous is not None:
         raise ValueError(
-            "Resolution of Overloaded function is Ambiguous: %r AND %r" % (best_entry, last_ambiguous))
+            "Resolution of Overloaded function is Ambiguous: %r AND %r"
+            % (best_entry, last_ambiguous)
+        )
     if best_entry is None:
         return len(fn_types), None  # TODO: find better error code
     else:
@@ -95,9 +101,9 @@ def abstract_overload_resolver(
 
 from .BaseExpr import BaseExpr
 from .expr_constants import OVERLOAD_VERBOSE
+from ..type.BaseType import BaseType, TypeClass
+from ..type.types import QualType
 from .get_ellipses_conv_expr import get_ellipses_conv_expr
 from .get_implicit_conv_expr import get_implicit_conv_expr
-from ..type.BaseType import BaseType, TypeClass
-from ..type.QualType import QualType
 from ..type.get_actual_type import get_actual_type
 from ..type.is_default import is_default

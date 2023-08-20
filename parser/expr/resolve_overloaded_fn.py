@@ -119,9 +119,7 @@ from .NameRefExpr import NameRefExpr
 from .expr_constants import OVERLOAD_VERBOSE
 from .get_ellipses_conv_expr import get_ellipses_conv_expr
 from .get_implicit_conv_expr import get_implicit_conv_expr
-from ..context.ContextVariable import ContextVariable
 from ..type.BaseType import TypeClass
-from ..type.QualType import QualType
 from ..type.get_actual_type import get_actual_type
 from ..type.is_default import is_default
-from ..context.OverloadedCtxVar import OverloadedCtxVar
+from ..type.types import QualType, ContextVariable, OverloadedCtxVar

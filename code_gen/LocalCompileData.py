@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple, TypeVar, Union, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING, Tuple, TypeVar, Union
 
 
 class LocalCompileData(object):
@@ -120,14 +120,13 @@ class LocalCompileData(object):
 
 if TYPE_CHECKING:
     from .BaseCmplObj import BaseCmplObj
-    from ..parser.context.CompileContext import CompileContext
     from .BaseLink import BaseLink
     from .LocalRef import LocalRef
     from ..parser.type.BaseType import BaseType
-    from ..parser.context.ContextVariable import ContextVariable
+    from ..parser.type.types import ContextVariable
 
-from ..StackVM.PyStackVM import BC_RST_SP1
-from ..parser.type.helpers.VarRef import VarRefTosNamed
-from .stackvm_binutils.emit_load_i_const import emit_load_i_const
-from ..parser.type.size_of import size_of
 from .Linkage import Linkage
+from .stackvm_binutils.emit_load_i_const import emit_load_i_const
+from ..StackVM.PyStackVM import BC_RST_SP1
+from ..parser.type.types import CompileContext, size_of
+from ..parser.type.helpers.VarRef import VarRefTosNamed

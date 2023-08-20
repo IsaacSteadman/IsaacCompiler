@@ -26,8 +26,7 @@ from .BaseLink import BaseLink
 from .LocalCompileData import LocalCompileData
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import BC_RST_SP1
-from ..parser.context.CompileContext import CompileContext
 from ..parser.expr.BaseExpr import BaseExpr
 from ..parser.type.BaseType import BaseType
+from ..parser.type.types import CompileContext, size_of
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc
-from ..parser.type.size_of import size_of

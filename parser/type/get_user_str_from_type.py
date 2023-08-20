@@ -6,4 +6,4 @@ def get_user_str_from_type(typ: Union["BaseType", "IdentifiedQualType"]) -> str:
 
 
 from .BaseType import BaseType
-from .IdentifiedQualType import IdentifiedQualType
+from .types import IdentifiedQualType

@@ -8,5 +8,5 @@ def is_fn_type(typ: "BaseType") -> bool:
 
 
 from .BaseType import BaseType, TypeClass
-from .QualType import QualType
-from .get_base_prim_type import get_base_prim_type
+from .types import QualType
+from .types import get_base_prim_type
