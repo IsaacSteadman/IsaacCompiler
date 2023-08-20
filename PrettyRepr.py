@@ -1,3 +1,6 @@
+from typing import Union, List, Dict, Optional
+
+
 def format_pretty(obj, indent="  "):
     rtn = get_pretty_repr(obj)
     indent_lvl = 0
@@ -17,14 +20,11 @@ def format_pretty(obj, indent="  "):
     return "".join(rtn)
 
 
-def get_pretty_repr_enum(enum_data, num, enum_name=None):
-    """
-
-    :param dict[int|long,str|unicode]|list[str|unicode] enum_data:
-    :param int|long num:
-    :param str|unicode|None enum_name:
-    :rtype: list[str|unicode]
-    """
+def get_pretty_repr_enum(
+    enum_data: Union[Dict[int, str], List[str]],
+    num: int,
+    enum_name: Optional[str] = None,
+) -> List[str]:
     rtn = [enum_data[num]]
     if enum_name is not None:
         rtn[0:0] = [enum_name, "."]
@@ -74,7 +74,12 @@ def get_pretty_repr(obj):
         if len(lst) >= 1:
             rtn.extend(get_pretty_repr(lst[0]) + [":"] + get_pretty_repr(obj[lst[0]]))
             for c in range(1, len(obj)):
-                rtn.extend([","] + get_pretty_repr(lst[c]) + [":"] + get_pretty_repr(obj[lst[c]]))
+                rtn.extend(
+                    [","]
+                    + get_pretty_repr(lst[c])
+                    + [":"]
+                    + get_pretty_repr(obj[lst[c]])
+                )
         rtn.append("}")
         return rtn
     elif i == 5:

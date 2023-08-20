@@ -1,5 +1,6 @@
 from typing import Any, Callable, Dict, Literal, Optional, Tuple, TypeVar, Union
-'''from PyIsaacUtils.AlgoUtils import bisect_search_base
+
+"""from PyIsaacUtils.AlgoUtils import bisect_search_base
 from StackVM.PyStackVM import BC_ADD8, BC_ADD_SP1, BC_CALL_E, BC_CONV, BC_GE0, BC_INT, BC_LOAD, BC_LSHIFT1, BC_NOP,\
     BC_RET_E, BC_RET_N2, BC_RST_SP1, BC_STOR, BC_SWAP, BC_SYSRET, BCC_I_MASK, BCC_O_MASK, BCCE_N_REL, BCCE_SYSCALL,\
     BCR_ABS_A4, BCR_ABS_A8, BCR_ABS_C, BCR_ABS_S8, BCR_EA_R_IP, BCR_R_BP1, BCR_R_BP_MASK, BCR_R_BP_VAL, BCR_REG_BP,\
@@ -7,7 +8,7 @@ from StackVM.PyStackVM import BC_ADD8, BC_ADD_SP1, BC_CALL_E, BC_CONV, BC_GE0, B
     BCS_SZ8_B, BCS_SZ_A_MASK, BCS_SZ_B_MASK, MRQ_DONT_CHECK, VM_4_LVL_9_BIT, VM_DISABLED, LstStackVM_BCC_Types,\
     LstStackVM_BCR_Types, LstStackVM_BCS_Types, LstStackVM_Codes, LstStackVM_sysregs, StackVM_BCC_Codes,\
     StackVM_BCCE_Codes, StackVM_BCR_Codes, StackVM_BCRE_Codes, StackVM_BCS_Codes, StackVM_Codes, StackVM_SVSR_Codes,\
-    float_t, double_t'''
+    float_t, double_t"""
 
 from PyIsaacUtils.AlgoUtils import *
 
@@ -27,22 +28,6 @@ T = TypeVar("T")
 # @@ByteCopyFn2 is (SizeL sz, void *dest) -> None
 #   push order [dest] [sz]
 #    src is implicit as (bp + 16 + 16 for arguments)
-
-
-def get_dict_link_src(cmpl_obj: "BaseCmplObj") -> Dict[int, str]:
-    rtn = {}
-    for k in cmpl_obj.linkages:
-        lnk = cmpl_obj.linkages[k]
-        assert isinstance(lnk, Linkage)
-        if lnk.src is not None:
-            rtn[lnk.src] = k
-    for k in cmpl_obj.string_pool:
-        lnk = cmpl_obj.string_pool[k]
-        assert isinstance(lnk, Linkage)
-        if lnk.src is not None:
-            rtn[lnk.src] = "<bytes %r>" % k
-    return rtn
-
 
 
 '''MyMalloc = Compilation()

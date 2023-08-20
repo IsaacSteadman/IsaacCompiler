@@ -1,16 +1,15 @@
+from typing import Union, List, Dict, Optional, Tuple, Callable
 from .disassembly_lst_lines import disassembly_lst_lines
 
 
-def disassemble(memory, start, end, named_indices, address_fmt=None, src_pos=None):
-    """
-    :param bytearray memory:
-    :param int|None start:
-    :param int|None end:
-    :param dict[int, (str, bool)] named_indices:
-    :param str|None|((str, int) -> str) address_fmt:
-    :param dict[int, str]|None src_pos:
-    :rtype: str
-    """
+def disassemble(
+    memory: Union[bytearray, bytes, memoryview],
+    start: Optional[int],
+    end: Optional[int],
+    named_indices: Dict[int, Tuple[str, bool]],
+    address_fmt: Optional[Union[str, Callable[[str, int], str]]] = None,
+    src_pos: Optional[Dict[int, str]] = None,
+) -> str:
     lst = disassembly_lst_lines(memory, start, end, named_indices)
     lst_lines = [""] * len(lst)
     if address_fmt is None:
