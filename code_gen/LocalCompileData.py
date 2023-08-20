@@ -121,11 +121,11 @@ class LocalCompileData(object):
 if TYPE_CHECKING:
     from .BaseCmplObj import BaseCmplObj
     from .BaseLink import BaseLink
-    from .LocalRef import LocalRef
     from ..parser.type.BaseType import BaseType
     from ..parser.type.types import ContextVariable
 
 from .Linkage import Linkage
+from .LocalRef import LocalRef
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import BC_RST_SP1
 from ..parser.type.types import CompileContext, size_of

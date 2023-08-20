@@ -1,3 +1,5 @@
+from typing import List, Optional, Tuple, Callable, Dict, Union
+
 
 def take_prev(op_tuple):
     return op_tuple[0] > 0 and bool(op_tuple[3] & 0x02)
@@ -9,6 +11,8 @@ def take_next(op_tuple):
 
 def take_both(op_tuple):
     return op_tuple[0] >= 2 and (op_tuple[3] & 0x03) == 0x03
+
+
 # Ternary/special operator format:
 #   k, v = begin token, tuple of stuff
 #   v[0] = operator precedence
@@ -17,7 +21,17 @@ def take_both(op_tuple):
 #     0x01 is prefix<meaning ()b>, 0x02 is postfix<meaning a()>
 
 
-def mk_postfix(tokens, c, end, context, get_expr_part, delim=None, l_t_r=None):
+def mk_postfix(
+    tokens: List["Token"],
+    c: int,
+    end: int,
+    context: "CompileContext",
+    get_expr_part: Callable[
+        [List["Token"], int, int, "CompileContext"], Tuple["BaseOpPart", int]
+    ],
+    delim: Optional[str] = None,
+    l_t_r: Optional[Union[Dict[int, bool], List[bool]]] = None,
+):
     """
     :param list[Token] tokens:
     :param int c:
@@ -53,7 +67,9 @@ def mk_postfix(tokens, c, end, context, get_expr_part, delim=None, l_t_r=None):
         is_prefix, is_infix, is_postfix = tok.can_prefix, tok.can_infix, tok.can_postfix
         the_sum = is_prefix + is_infix + is_postfix
         if tok.can_nofix:
-            assert not is_prefix, "prefix operators cannot nofix (disambiguation requires backtracking)"
+            assert (
+                not is_prefix
+            ), "prefix operators cannot nofix (disambiguation requires backtracking)"
         if tok.is_expr:
             next_op = (0, tok)
         elif the_sum == 1:
@@ -78,9 +94,17 @@ def mk_postfix(tokens, c, end, context, get_expr_part, delim=None, l_t_r=None):
                     end_type = 2
             elif is_infix and is_postfix:
                 if prev_op is None:
-                    raise ParsingError(tokens, c, "postfix/infix operator must appear after an expression")
+                    raise ParsingError(
+                        tokens,
+                        c,
+                        "postfix/infix operator must appear after an expression",
+                    )
                 elif take_next(prev_op):
-                    raise ParsingError(tokens, c, "Previous operator cannot directly capture infix or postfix")
+                    raise ParsingError(
+                        tokens,
+                        c,
+                        "Previous operator cannot directly capture infix or postfix",
+                    )
                 if next_item.is_expr:  # its prefix
                     end_type = 1  # TODO: verify changed 2 -> 1 is it correct? (also postfix->prefix)
                 else:
@@ -117,15 +141,21 @@ def mk_postfix(tokens, c, end, context, get_expr_part, delim=None, l_t_r=None):
             else:  # Nofix
                 next_op = (0, tok)
         elif the_sum == 3:
-            raise ParsingError(tokens, c, "Operators must only be able to be one of prefix, infix, or postfix")
+            raise ParsingError(
+                tokens,
+                c,
+                "Operators must only be able to be one of prefix, infix, or postfix",
+            )
         elif prev_op is not None:
             fix = 0
             if not take_next(prev_op):  # REMEMBER: tok is in Syms ^^^^
                 fix |= 2
-            lst_lvls = list(filter(lambda x: x[1] is not None, (
-                next_item.prefix_lvl,
-                next_item.infix_lvl,
-                next_item.postfix_lvl)))
+            lst_lvls = list(
+                filter(
+                    lambda x: x[1] is not None,
+                    (next_item.prefix_lvl, next_item.infix_lvl, next_item.postfix_lvl),
+                )
+            )
             if len(lst_lvls) == 0:
                 fix |= 1  # cur is definitely going to capture next_item
             elif len(lst_lvls) == 1:
@@ -151,21 +181,36 @@ def mk_postfix(tokens, c, end, context, get_expr_part, delim=None, l_t_r=None):
             elif next_item.can_infix and tok.can_postfix:  # tok: Postfix unary operator
                 next_op = (1, tok, tok.postfix_lvl, 2)
             else:
-                raise ParsingError(tokens, c, "two operators cannot be the same type (binary, post-unary, pre-unary")
+                raise ParsingError(
+                    tokens,
+                    c,
+                    "two operators cannot be the same type (binary, post-unary, pre-unary",
+                )
         else:
             if prev is None:
                 if not tok.can_prefix:
-                    raise ParsingError(tokens, c, "operator misused as postfix at BOL (it cannot be postfix)")
+                    raise ParsingError(
+                        tokens,
+                        c,
+                        "operator misused as postfix at BOL (it cannot be postfix)",
+                    )
                 next_op = (1, tok, tok.prefix_lvl, 1)
             elif next_item is None:
                 if not tok.can_postfix:
-                    raise ParsingError(tokens, c, "operator misused as prefix at EOL (it cannot be prefix)")
+                    raise ParsingError(
+                        tokens,
+                        c,
+                        "operator misused as prefix at EOL (it cannot be prefix)",
+                    )
                 next_op = (1, tok, tok.prefix_lvl, 2)
             elif tok.can_infix and not prev.can_infix and not next_item.can_infix:
                 next_op = (2, tok, tok.infix_lvl, 2)
             else:
                 raise ParsingError(
-                    tokens, c, "could not resolve prev = %r, tok = %r, next_item = %r" % (prev, tok, next_item)
+                    tokens,
+                    c,
+                    "could not resolve prev = %r, tok = %r, next_item = %r"
+                    % (prev, tok, next_item),
                 )
         if next_op is None:
             pass
@@ -189,3 +234,8 @@ def mk_postfix(tokens, c, end, context, get_expr_part, delim=None, l_t_r=None):
 
 
 from ..ParsingError import ParsingError
+from .expr_part.BaseOpPart import BaseOpPart
+from ...ParseConstants import LST_LTR_OPS
+from ...lexer.lexer import Token
+
+from ..type.types import CompileContext

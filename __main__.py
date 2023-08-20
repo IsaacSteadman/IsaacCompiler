@@ -2,6 +2,8 @@ import argparse
 import os
 import struct
 from typing import Callable, Dict, List, Optional, Set, Union
+from .PrettyRepr import format_pretty
+from .StackVM.PyStackVM import BC_CALL, BC_HLT
 from .code_gen.Compilation import Compilation
 from .code_gen.CompilerOptions import CompilerOptions
 from .code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
@@ -15,7 +17,6 @@ from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
 from .parser.type.types import CompileContext
 from .code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import lib_utils_abi
-from .PrettyRepr import format_pretty
 
 
 def flatify_dep_desc(dep_dct: Dict[str, List[str]], start_k: str) -> Set[str]:
@@ -158,7 +159,7 @@ if args.output_ast is not None:
     assert os.path.isdir(
         os.path.dirname(os.path.abspath(args.output_ast))
     ), "parent directory of ast output file does not exist"
-input_file = args.input[0]
+input_file = args.input
 
 
 if (
@@ -195,7 +196,7 @@ if args.output_binary is not None or args.output_disassembly is not None:
         main_fn = cmpl_obj.get_link("?FiPPczmain")
         emit_load_i_const(cmpl_obj.memory, 1, True, 2)
         main_fn.emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([lib_utils_abi.BC_CALL, lib_utils_abi.BC_HLT])
+        cmpl_obj.memory.extend([BC_CALL, BC_HLT])
     print("Generating AST and binary inline")
     while c < end:
         prev_c = c
@@ -205,7 +206,7 @@ if args.output_binary is not None or args.output_disassembly is not None:
             ln = tokens[c].line
             col = tokens[c].col
             raise SyntaxError(
-                f"Syntax error when attempting to parse statement after {input_file}:{ln}:{col}"
+                f"error when attempting to parse statement after {input_file}:{ln}:{col}"
             ) from exc
         lst_stmnt.append(stmnt)
         try:
@@ -279,7 +280,7 @@ else:
             ln = tokens[c].line
             col = tokens[c].col
             raise SyntaxError(
-                f"Syntax error when attempting to parse statement after {input_file}:{ln}:{col}"
+                f"error when attempting to parse statement after {input_file}:{ln}:{col}"
             ) from exc
         lst_stmnt.append(stmnt)
 if args.output_ast is not None:
