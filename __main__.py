@@ -3,6 +3,7 @@ import os
 import struct
 from typing import Callable, Dict, List, Optional, Set, Union
 from .PrettyRepr import format_pretty
+from .Preprocessing import preprocess as cpp_preprocess
 from .StackVM.PyStackVM import BC_CALL, BC_HLT
 from .StackVM.runner import add_cmd_argv_vm, run_in_vm
 from .code_gen.Compilation import Compilation
@@ -189,6 +190,15 @@ compile_parser.add_argument(
     default=None,
 )
 compile_parser.add_argument(
+    "-I",
+    "--include-dir",
+    metavar="dir",
+    action="append",
+    default=[],
+    dest="include_dirs",
+    help="add a directory to the #include search path (may be given multiple times)",
+)
+compile_parser.add_argument(
     "-r",
     "--run",
     action="store_true",
@@ -279,7 +289,12 @@ if args.subcommand == "compile":
 
     print("Tokenizing")
     with open(input_file, "r") as fl:
-        tokens = get_list_tokens(fl)
+        _source = fl.read()
+    _pkg_include = os.path.join(os.path.dirname(__file__), "StackVM", "include")
+    _src_dir = os.path.dirname(os.path.abspath(input_file))
+    _include_dirs = [_src_dir, _pkg_include] + (args.include_dirs or [])
+    _source = cpp_preprocess(_source, _include_dirs)
+    tokens = get_list_tokens(_source)
 
     global_ctx = CompileContext("", None)
     c = 0

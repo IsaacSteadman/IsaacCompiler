@@ -60,7 +60,7 @@ def get_standard_conv_expr(
                         return expr, 1
                     else:
                         return CastOpExpr(tgt_vt, expr, CastType.IMPLICIT), 2
-                elif is_prim_type_id(tgt_vt.tgt_type, PrimitiveTypeId.TYP_VOID):
+                elif is_prim_type_id(get_base_prim_type(tgt_vt.tgt_type), PrimitiveTypeId.TYP_VOID):
                     return CastOpExpr(tgt_vt, expr, CastType.IMPLICIT), 4
                 if OVERLOAD_VERBOSE:
                     print("REASON: src_vt Pointer General")
@@ -126,4 +126,5 @@ from ..type.types import (
     FLT_TYPE_CODES,
     is_prim_type_id,
     is_prim_or_ptr,
+    get_base_prim_type,
 )

@@ -8,8 +8,10 @@ def get_stmnt(
 ) -> Tuple["BaseStmnt", int]:
     start = c
     position = tokens[c].line, tokens[c].col
-    if tokens[c].type_id == TokenType.NAME and is_type_name_part(
-        tokens[c].str, context
+    _DECL_SPECIFIERS = {"extern", "static", "inline"}
+    if tokens[c].type_id == TokenType.NAME and (
+        is_type_name_part(tokens[c].str, context)
+        or tokens[c].str in _DECL_SPECIFIERS
     ):
         pos = StmntType.DECL
     else:

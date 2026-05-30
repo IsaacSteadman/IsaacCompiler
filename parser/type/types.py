@@ -1710,13 +1710,13 @@ class DeclStmnt(BaseStmnt):
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
     ) -> int:
         ext_spec = 0
-        if tokens[c].type_id == TokenType.NAME:
+        while tokens[c].type_id == TokenType.NAME and tokens[c].str in {"extern", "static", "inline"}:
             if tokens[c].str == "static":
                 ext_spec = 1
-                c += 1
             elif tokens[c].str == "extern":
                 ext_spec = 2
-                c += 1
+            # inline is a no-op hint for this compiler
+            c += 1
         if (
             isinstance(context, BaseType)
             and context.type_class_id
