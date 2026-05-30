@@ -203,6 +203,8 @@ def compile_stmnt(
             compile_stmnt(cmpl_obj, inner_stmnt, stmnt.ns, cmpl_data)
     elif stmnt.stmnt_type == StmntType.TYPEDEF:
         pass  # Do nothing for typedef statement
+    elif stmnt.stmnt_type == StmntType.STATIC_ASSERT:
+        pass  # Evaluated at parse time; no code to emit
     else:
         raise ValueError("Unrecognized Statement Type")
     return 0
@@ -238,6 +240,7 @@ from ..parser.stmnt.IfElse import IfElse
 from ..parser.stmnt.NamespaceStmnt import NamespaceStmnt
 from ..parser.stmnt.ReturnStmnt import ReturnStmnt
 from ..parser.stmnt.SemiColonStmnt import SemiColonStmnt
+from ..parser.stmnt.StaticAssertStmnt import StaticAssertStmnt
 from ..parser.stmnt.WhileLoop import WhileLoop
 from ..parser.type.types import (
     CompileContext,

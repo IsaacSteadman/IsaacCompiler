@@ -16,6 +16,7 @@ class StmntType(Enum):
     DECL = 9
     ASM = 10
     SEMI_COLON = 11  # always at end ('expr;' expression)
+    STATIC_ASSERT = 12
 
 
 STMNT_KEY_TO_ID = {
@@ -30,6 +31,7 @@ STMNT_KEY_TO_ID = {
     "typedef": StmntType.TYPEDEF,
     "<DECL_STMNT>": StmntType.DECL,
     "asm": StmntType.ASM,
+    "_Static_assert": StmntType.STATIC_ASSERT,
 }
 
 

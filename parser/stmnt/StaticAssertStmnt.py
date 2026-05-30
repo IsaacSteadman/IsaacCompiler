@@ -1,0 +1,331 @@
+"""
+_Static_assert(const_expr [, string_literal]) statement.
+
+Evaluates `const_expr` as a compile-time integer constant.  If the result
+is zero the compilation is aborted with the optional message; otherwise the
+statement is a no-op.
+
+Supported constant expressions:
+  - Integer literals (decimal / hex / octal / binary)
+  - sizeof(type)
+  - Binary: + - * / % == != < > <= >= << >> & ^ | && ||
+  - Unary:  ! ~ - +
+  - Parentheses
+"""
+
+from typing import List, Optional, TYPE_CHECKING
+from .BaseStmnt import BaseStmnt, StmntType
+
+if TYPE_CHECKING:
+    from ...lexer.lexer import Token
+    from ..type.types import CompileContext
+
+
+class StaticAssertStmnt(BaseStmnt):
+    stmnt_type = StmntType.STATIC_ASSERT
+
+    def __init__(self):
+        self.cond_value: Optional[int] = None  # None = could not evaluate
+        self.message: Optional[str] = None
+
+    def pretty_repr(self, pretty_repr_ctx=None):
+        return [
+            "StaticAssertStmnt(",
+            str(self.cond_value),
+            ", ",
+            repr(self.message),
+            ")",
+        ]
+
+    def build(
+        self,
+        tokens: List["Token"],
+        c: int,
+        end: int,
+        context: "CompileContext",
+    ) -> int:
+        # tokens[c].str == '_Static_assert'
+        c += 1
+        if tokens[c].str != "(":
+            raise ParsingError(tokens, c, "expected '(' after '_Static_assert'")
+        c += 1  # skip '('
+
+        # Collect argument tokens up to the matching ')'.
+        depth = 1
+        arg_start = c
+        while c < end and depth > 0:
+            s = tokens[c].str
+            if s in ("(", "{", "["):
+                depth += 1
+            elif s in (")", "}", "]"):
+                depth -= 1
+            if depth > 0:
+                c += 1
+            else:
+                break  # c is now pointing at the closing ')'
+
+        # tokens[arg_start : c] are all argument tokens (everything inside the outer parens).
+        # Split on ',' at depth 0 to separate condition from message.
+        cond_end = c  # default: no comma found
+        msg_start: Optional[int] = None
+        d2 = 0
+        for k in range(arg_start, c):
+            s = tokens[k].str
+            if s in ("(", "{", "["):
+                d2 += 1
+            elif s in (")", "}", "]"):
+                d2 -= 1
+            elif s == "," and d2 == 0:
+                cond_end = k
+                msg_start = k + 1
+                break
+
+        # Evaluate the condition.
+        self.cond_value = _try_eval_const(tokens, arg_start, cond_end, context)
+
+        # Extract the message string (optional).
+        if msg_start is not None:
+            # Find a string literal token in the message range.
+            for k in range(msg_start, c):
+                if tokens[k].type_id == TokenType.DBL_QUOTE:
+                    raw = tokens[k].str
+                    # Strip surrounding "..." quotes.
+                    if raw.startswith('"') and raw.endswith('"'):
+                        self.message = raw[1:-1]
+                    break
+
+        if tokens[c].str != ")":
+            raise ParsingError(tokens, c, "expected ')' to close '_Static_assert'")
+        c += 1  # skip ')'
+
+        if tokens[c].str != ";":
+            raise ParsingError(tokens, c, "expected ';' after '_Static_assert'")
+        c += 1  # skip ';'
+
+        # Assert at parse time.
+        if self.cond_value is not None and self.cond_value == 0:
+            msg = self.message if self.message else "_Static_assert failed"
+            raise ParsingError(tokens, arg_start, f"static assertion failed: {msg}")
+
+        if self.cond_value is None:
+            import sys
+
+            print(
+                "warning: _Static_assert: could not evaluate constant expression "
+                "— assertion skipped",
+                file=sys.stderr,
+            )
+
+        return c
+
+
+# ---------------------------------------------------------------------------
+# Compile-time constant expression evaluator (token-level)
+# ---------------------------------------------------------------------------
+
+# Operator precedence levels, lowest first.  Each tuple contains operators of
+# the same precedence.  Longer operators must come before shorter ones that
+# are prefixes of them (e.g. '<=' before '<').
+_BINOP_LEVELS = [
+    ("||",),
+    ("&&",),
+    ("|",),
+    ("^",),
+    ("&",),
+    ("==", "!="),
+    ("<=", ">=", "<", ">"),
+    ("<<", ">>"),
+    ("+", "-"),
+    ("*", "/", "%"),
+]
+
+
+def _try_eval_const(
+    tokens: List["Token"],
+    start: int,
+    end: int,
+    context: "CompileContext",
+) -> Optional[int]:
+    """Return the integer value of tokens[start:end] or None."""
+    try:
+        return _eval_tokens(tokens, start, end, context)
+    except Exception:
+        return None
+
+
+def _eval_tokens(
+    tokens: List["Token"],
+    start: int,
+    end: int,
+    context: "CompileContext",
+) -> int:
+    """Recursively evaluate tokens[start:end] as a compile-time integer."""
+    # Skip trailing/leading whitespace (no-op: tokens have no whitespace).
+    while start < end and tokens[start].str in ("", " "):
+        start += 1
+    while end > start and tokens[end - 1].str in ("", " "):
+        end -= 1
+
+    if start >= end:
+        raise ValueError("empty expression")
+
+    n = end - start
+
+    # --- Single token ---
+    if n == 1:
+        tok = tokens[start]
+        if tok.type_id in (
+            TokenType.DEC_INT,
+            TokenType.HEX_INT,
+            TokenType.OCT_INT,
+            TokenType.BIN_INT,
+        ):
+            return LiteralExpr.literal_to_value(tok)
+        if tok.type_id == TokenType.NAME and tok.str in ("true", "1"):
+            return 1
+        if tok.type_id == TokenType.NAME and tok.str in ("false", "0"):
+            return 0
+        raise ValueError(f"cannot evaluate: {tok.str!r}")
+
+    # --- sizeof(type) ---
+    if tokens[start].str == "sizeof" and tokens[start + 1].str == "(":
+        depth = 0
+        j = start + 1
+        while j < end:
+            if tokens[j].str in ("(", "[", "{"):
+                depth += 1
+            elif tokens[j].str in (")", "]", "}"):
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        inner_start = start + 2
+        inner_end = j  # tokens[inner_start:inner_end] are inside sizeof(...)
+        try:
+            type_decl, _ = proc_typed_decl(tokens, inner_start, inner_end, context)
+            if type_decl is not None and hasattr(type_decl, "typ"):
+                return size_of(type_decl.typ)
+        except Exception:
+            pass
+        raise ValueError("sizeof argument is not a type")
+
+    # --- Outer parentheses: ( expr ) ---
+    if tokens[start].str == "(":
+        # Check if the entire range is wrapped in matching parens.
+        depth = 0
+        for k in range(start, end):
+            s = tokens[k].str
+            if s in ("(", "[", "{"):
+                depth += 1
+            elif s in (")", "]", "}"):
+                depth -= 1
+            if depth == 0 and k < end - 1:
+                # Opening paren closed before the last token — not fully wrapped.
+                break
+        else:
+            # Loop completed without hitting depth==0 early → fully wrapped.
+            if tokens[end - 1].str == ")":
+                return _eval_tokens(tokens, start + 1, end - 1, context)
+
+    # --- Binary operators (scan right-to-left for left-associativity) ---
+    for level in _BINOP_LEVELS:
+        depth = 0
+        k = end - 1
+        while k >= start:
+            s = tokens[k].str
+            if s in (")", "]", "}"):
+                depth += 1
+            elif s in ("(", "[", "{"):
+                depth -= 1
+            elif depth == 0:
+                for op in level:
+                    op_len = len(op)
+                    # Check whether tokens[k : k + op_len] match the operator.
+                    # For single-char operators check the single token string;
+                    # for two-char operators check two adjacent tokens' concat.
+                    matched = False
+                    op_end_idx = k  # first token after the operator
+                    if op_len == 1 and tokens[k].str == op:
+                        matched = True
+                        op_end_idx = k + 1
+                    elif op_len == 2:
+                        # Multi-char operators are stored as a single token.
+                        if tokens[k].str == op:
+                            matched = True
+                            op_end_idx = k + 1
+                    if not matched:
+                        continue
+                    # Guard: don't match unary - or + at the leftmost position.
+                    if op in ("+", "-") and k == start:
+                        continue
+                    lhs_str_start = start
+                    lhs_str_end = k
+                    rhs_str_start = op_end_idx
+                    rhs_str_end = end
+                    if lhs_str_start >= lhs_str_end or rhs_str_start >= rhs_str_end:
+                        continue
+                    lhs = _eval_tokens(tokens, lhs_str_start, lhs_str_end, context)
+                    rhs = _eval_tokens(tokens, rhs_str_start, rhs_str_end, context)
+                    if op == "||":
+                        return int(bool(lhs) or bool(rhs))
+                    if op == "&&":
+                        return int(bool(lhs) and bool(rhs))
+                    if op == "|":
+                        return lhs | rhs
+                    if op == "^":
+                        return lhs ^ rhs
+                    if op == "&":
+                        return lhs & rhs
+                    if op == "==":
+                        return int(lhs == rhs)
+                    if op == "!=":
+                        return int(lhs != rhs)
+                    if op == "<=":
+                        return int(lhs <= rhs)
+                    if op == ">=":
+                        return int(lhs >= rhs)
+                    if op == "<":
+                        return int(lhs < rhs)
+                    if op == ">":
+                        return int(lhs > rhs)
+                    if op == "<<":
+                        return lhs << rhs
+                    if op == ">>":
+                        return lhs >> rhs
+                    if op == "+":
+                        return lhs + rhs
+                    if op == "-":
+                        return lhs - rhs
+                    if op == "*":
+                        return lhs * rhs
+                    if op == "/":
+                        if rhs == 0:
+                            raise ValueError("division by zero")
+                        return int(lhs / rhs)
+                    if op == "%":
+                        if rhs == 0:
+                            raise ValueError("modulo by zero")
+                        return lhs % rhs
+            k -= 1
+
+    # --- Unary operators ---
+    if tokens[start].str == "!":
+        return int(not _eval_tokens(tokens, start + 1, end, context))
+    if tokens[start].str == "~":
+        return ~_eval_tokens(tokens, start + 1, end, context)
+    if tokens[start].str == "-":
+        return -_eval_tokens(tokens, start + 1, end, context)
+    if tokens[start].str == "+":
+        return _eval_tokens(tokens, start + 1, end, context)
+
+    raise ValueError(f"cannot evaluate: {' '.join(t.str for t in tokens[start:end])!r}")
+
+
+# ---------------------------------------------------------------------------
+# Deferred imports
+# ---------------------------------------------------------------------------
+
+from ..ParsingError import ParsingError
+from ..type.types import proc_typed_decl, size_of, CompileContext
+from ...lexer.lexer import Token, TokenType
+from ..expr.LiteralExpr import LiteralExpr

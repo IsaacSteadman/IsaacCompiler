@@ -102,6 +102,19 @@ class Preprocessor:
     set for the entire unit).
     """
 
+    # GNU keyword aliases → canonical keyword replacements (object-like macros).
+    _GNU_ALIASES: Dict[str, str] = {
+        "__asm__": "asm",
+        "__volatile__": "volatile",
+        "__inline__": "inline",
+        "__inline": "inline",
+        "__const__": "const",
+        "__signed__": "signed",
+        "__typeof__": "typeof",
+        "__restrict__": "restrict",
+        "__restrict": "restrict",
+    }
+
     def __init__(
         self,
         include_dirs: List[str],
@@ -120,6 +133,29 @@ class Preprocessor:
         # True when the scan position is inside a /* ... */ block comment
         # that has not yet been closed (spans multiple source lines).
         self._in_block_comment: bool = False
+        # __COUNTER__: incremented each time the macro is expanded.
+        self._counter: int = 0
+        # Absolute paths of files that have seen #pragma once.
+        self._pragma_once_files: Set[str] = set()
+        # Predefined C standard macros (freestanding C11 environment).
+        _builtin: Dict[str, str] = {
+            "__STDC__": "1",
+            "__STDC_VERSION__": "201112L",
+            "__STDC_HOSTED__": "0",
+            "__STDC_NO_ATOMICS__": "1",
+        }
+        for name, repl in _builtin.items():
+            if name not in self.defines:
+                self.defines[name] = MacroDef(name, None, repl)
+        # C11 static_assert convenience alias (from <assert.h>).
+        if "static_assert" not in self.defines:
+            self.defines["static_assert"] = MacroDef(
+                "static_assert", None, "_Static_assert"
+            )
+        # GNU keyword aliases (only inject if not overridden by caller).
+        for alias, canonical in self._GNU_ALIASES.items():
+            if alias not in self.defines:
+                self.defines[alias] = MacroDef(alias, None, canonical)
 
     # ------------------------------------------------------------------
     # Properties
@@ -141,6 +177,9 @@ class Preprocessor:
             # Cycle detected — return empty string.
             # (Normal double-inclusion is handled by include guards in the
             # file itself; this only fires when A includes B includes A.)
+            return ""
+        if abs_path in self._pragma_once_files:
+            # Already processed and the file contained #pragma once.
             return ""
         self._included_files.add(abs_path)
         try:
@@ -198,6 +237,9 @@ class Preprocessor:
             return ""
         if not self.including:
             return ""
+        # Inject dynamic predefined macros — updated every line.
+        self.defines["__FILE__"] = MacroDef("__FILE__", None, f'"{source_path}"')
+        self.defines["__LINE__"] = MacroDef("__LINE__", None, str(lineno))
         return self._apply_macros(line)
 
     # ------------------------------------------------------------------
@@ -291,7 +333,13 @@ class Preprocessor:
             return ""
 
         if name == "pragma":
-            return ""  # silently ignored
+            # Handle #pragma once: skip this file on subsequent includes.
+            rest = args.strip()
+            if rest == "once":
+                abs_path = os.path.abspath(source_path)
+                self._pragma_once_files.add(abs_path)
+            # All other #pragma directives are silently ignored.
+            return ""
 
         if name == "line":
             return ""  # silently ignored
@@ -345,6 +393,44 @@ class Preprocessor:
         return None
 
     # ------------------------------------------------------------------
+    # __has_attribute / __has_builtin / __has_feature
+    # ------------------------------------------------------------------
+
+    # Attributes / builtins that this compiler (or the StackVM toolchain)
+    # actually supports.  Grow these sets as features are implemented.
+    _SUPPORTED_ATTRIBUTES: FrozenSet[str] = frozenset(
+        {
+            "packed",
+            "noreturn",
+            "unused",
+            "always_inline",
+            "noinline",
+            "warn_unused_result",
+            "weak",
+        }
+    )
+    _SUPPORTED_BUILTINS: FrozenSet[str] = frozenset(
+        {
+            "builtin_expect",
+            "builtin_unreachable",
+            "builtin_offsetof",
+            "builtin_types_compatible_p",
+            "builtin_constant_p",
+        }
+    )
+    _SUPPORTED_FEATURES: FrozenSet[str] = frozenset()
+
+    def _has_attribute_value(self, macro: str, arg: str) -> int:
+        """Return 1 if the queried attribute/builtin/feature is supported, else 0."""
+        if macro == "__has_attribute":
+            return 1 if arg in self._SUPPORTED_ATTRIBUTES else 0
+        if macro in ("__has_builtin", "__has_extension"):
+            return 1 if arg in self._SUPPORTED_BUILTINS else 0
+        if macro == "__has_feature":
+            return 1 if arg in self._SUPPORTED_FEATURES else 0
+        return 0
+
+    # ------------------------------------------------------------------
     # #define
     # ------------------------------------------------------------------
 
@@ -375,77 +461,225 @@ class Preprocessor:
     # ------------------------------------------------------------------
 
     def _eval_if_expr(self, expr: str, source_path: str, lineno: int) -> bool:
-        """Evaluate a simple #if / #elif expression.
+        """Evaluate a #if / #elif expression and return its boolean value.
 
-        Supported forms:
-          integer literal (0, 1, 0xFF, ...)
-          defined(X)  /  defined X
-          !defined(X) / !defined X
-          expr && expr
-          expr || expr
-          ! expr
+        The expression is first processed for ``defined(X)`` / ``defined X``
+        sub-expressions (which must NOT be macro-expanded), then the
+        remainder is macro-expanded, and finally evaluated as a 64-bit
+        signed integer constant expression.
+
+        Supported operators (full C preprocessor precedence):
+          Unary:        !  ~  -  +
+          Multiplicative: *  /  %
+          Additive:     +  -
+          Shift:        <<  >>
+          Relational:   <  >  <=  >=
+          Equality:     ==  !=
+          Bitwise:      &  ^  |
+          Logical:      &&  ||
+          Parentheses:  ( )
+          defined(X) / defined X
+          __has_attribute(X) / __has_builtin(X) / __has_feature(X)
+          __has_include("f") / __has_include(<f>)
         """
         expr = expr.strip()
         if not expr:
             return False
 
-        # Integer literal (decimal, hex, octal, binary)
+        # Replace defined(X) / defined X with 0 or 1 BEFORE macro expansion.
+        def _sub_defined(s: str) -> str:
+            # defined(MACRO) form
+            s = re.sub(
+                r"\bdefined\s*\(\s*(\w+)\s*\)",
+                lambda m: "1" if m.group(1) in self.defines else "0",
+                s,
+            )
+            # defined MACRO form (not followed by '(')
+            s = re.sub(
+                r"\bdefined\s+(\w+)",
+                lambda m: "1" if m.group(1) in self.defines else "0",
+                s,
+            )
+            return s
+
+        expr = _sub_defined(expr)
+
+        # Replace __has_include("f") / __has_include(<f>) with 0 or 1
+        # BEFORE general macro expansion.
+        def _sub_has_include(s: str) -> str:
+            def _repl(m: "re.Match") -> str:
+                arg = m.group(1).strip()
+                if arg.startswith('"') and arg.endswith('"'):
+                    filename = arg[1:-1]
+                    is_angled = False
+                elif arg.startswith("<") and arg.endswith(">"):
+                    filename = arg[1:-1]
+                    is_angled = True
+                else:
+                    return "0"
+                found = self._find_include(filename, source_path, is_angled)
+                return "1" if found is not None else "0"
+
+            return re.sub(r"__has_include\s*\(([^)]*)\)", _repl, s)
+
+        expr = _sub_has_include(expr)
+
+        # Macro-expand the remaining expression text.
+        expr = self._apply_macros(expr)
+        expr = expr.strip()
+        if not expr:
+            return False
+
+        # Evaluate the expanded integer constant expression.
         try:
-            return bool(int(expr, 0))
+            val = self._eval_int_expr(expr)
+            return bool(val)
+        except Exception:
+            print(
+                f"{source_path}:{lineno}: warning: "
+                f"unsupported #if expression {expr!r}, treating as 0",
+                file=sys.stderr,
+            )
+            return False
+
+    # Operator precedence levels for _eval_int_expr (lowest first).
+    # Each entry is a tuple of operator strings at the same precedence.
+    _IF_BINOP_LEVELS: List[Tuple[str, ...]] = [
+        ("||",),
+        ("&&",),
+        ("|",),
+        ("^",),
+        ("&",),
+        ("==", "!="),
+        ("<=", ">=", "<", ">"),  # two-char before one-char
+        ("<<", ">>"),
+        ("+", "-"),
+        ("*", "/", "%"),
+    ]
+
+    def _eval_int_expr(self, expr: str) -> int:
+        """Recursively evaluate an integer constant expression string.
+
+        Returns a 64-bit signed integer value.  Raises ValueError on
+        syntax errors or unsupported constructs.
+        """
+        expr = expr.strip()
+        if not expr:
+            raise ValueError("empty expression")
+
+        # Try a plain integer literal (decimal, hex, octal, binary).
+        # Strip common C suffixes: U, L, UL, LL, ULL (case-insensitive).
+        lit = re.sub(r"[uUlL]+$", "", expr)
+        try:
+            return int(lit, 0)
         except ValueError:
             pass
 
-        # defined(X) or !defined(X) — with optional spaces
-        m = re.match(r"^(!?)\s*defined\s*\(\s*(\w+)\s*\)\s*$", expr)
-        if not m:
-            m = re.match(r"^(!?)\s*defined\s+(\w+)\s*$", expr)
-        if m:
-            is_negated = bool(m.group(1))
-            is_defined = m.group(2) in self.defines
-            return is_defined if not is_negated else not is_defined
-
-        # Split on || first (lower precedence), then && within each part.
-        or_parts = self._split_logical(expr, "||")
-        if len(or_parts) > 1:
-            return any(self._eval_if_expr(p, source_path, lineno) for p in or_parts)
-
-        and_parts = self._split_logical(expr, "&&")
-        if len(and_parts) > 1:
-            return all(self._eval_if_expr(p, source_path, lineno) for p in and_parts)
-
-        # Leading '!'
-        if expr.startswith("!"):
-            return not self._eval_if_expr(expr[1:].strip(), source_path, lineno)
-
-        # Parenthesised sub-expression
+        # Outer parentheses stripping — only if the ENTIRE expr is wrapped.
         if expr.startswith("(") and expr.endswith(")"):
-            return self._eval_if_expr(expr[1:-1], source_path, lineno)
+            depth = 0
+            all_wrapped = True
+            for idx, ch in enumerate(expr):
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                if depth == 0 and idx < len(expr) - 1:
+                    all_wrapped = False
+                    break
+            if all_wrapped:
+                return self._eval_int_expr(expr[1:-1])
 
-        # Unsupported — warn and treat as False
-        print(
-            f"{source_path}:{lineno}: warning: "
-            f"unsupported #if expression {expr!r}, treating as 0",
-            file=sys.stderr,
-        )
-        return False
+        # Binary operator search: scan right-to-left through each precedence
+        # level (lowest first).  Finding the rightmost operator at depth 0
+        # gives left-associativity via recursion on the left sub-expression.
+        for level in self._IF_BINOP_LEVELS:
+            i = len(expr) - 1
+            depth = 0
+            while i >= 0:
+                ch = expr[i]
+                if ch in ")]}":
+                    depth += 1
+                elif ch in "([{":
+                    depth -= 1
+                elif depth == 0:
+                    for op in level:
+                        end_op = i + 1
+                        start_op = i - len(op) + 1
+                        if start_op >= 0 and expr[start_op:end_op] == op:
+                            # Make sure it is not part of a longer operator.
+                            # e.g. '<' should not match inside '<<' or '<='.
+                            before = expr[start_op - 1] if start_op > 0 else ""
+                            after = expr[end_op] if end_op < len(expr) else ""
+                            if op == "<" and (before == "<" or after in "<="):
+                                break
+                            if op == ">" and (before in ">=" or after in ">="):
+                                break
+                            if op == "&" and (before == "&" or after == "&"):
+                                break
+                            if op == "|" and (before == "|" or after == "|"):
+                                break
+                            if op in ("+", "-") and start_op == 0:
+                                break  # would be unary — handled below
+                            lhs_str = expr[:start_op].strip()
+                            rhs_str = expr[end_op:].strip()
+                            if not lhs_str or not rhs_str:
+                                break
+                            lhs = self._eval_int_expr(lhs_str)
+                            rhs = self._eval_int_expr(rhs_str)
+                            if op == "||":
+                                return int(bool(lhs) or bool(rhs))
+                            if op == "&&":
+                                return int(bool(lhs) and bool(rhs))
+                            if op == "|":
+                                return lhs | rhs
+                            if op == "^":
+                                return lhs ^ rhs
+                            if op == "&":
+                                return lhs & rhs
+                            if op == "==":
+                                return int(lhs == rhs)
+                            if op == "!=":
+                                return int(lhs != rhs)
+                            if op == "<=":
+                                return int(lhs <= rhs)
+                            if op == ">=":
+                                return int(lhs >= rhs)
+                            if op == "<":
+                                return int(lhs < rhs)
+                            if op == ">":
+                                return int(lhs > rhs)
+                            if op == "<<":
+                                return lhs << rhs
+                            if op == ">>":
+                                return lhs >> rhs
+                            if op == "+":
+                                return lhs + rhs
+                            if op == "-":
+                                return lhs - rhs
+                            if op == "*":
+                                return lhs * rhs
+                            if op == "/":
+                                if rhs == 0:
+                                    raise ValueError("division by zero")
+                                return int(lhs / rhs)  # truncate towards zero
+                            if op == "%":
+                                if rhs == 0:
+                                    raise ValueError("modulo by zero")
+                                return lhs % rhs
+                i -= 1
 
-    @staticmethod
-    def _split_logical(expr: str, op: str) -> List[str]:
-        """Split *expr* on *op* ('||' or '&&') at parenthesis depth 0."""
-        depth = 0
-        parts: List[str] = []
-        start = 0
-        op_len = len(op)
-        for i in range(len(expr)):
-            if expr[i] == "(":
-                depth += 1
-            elif expr[i] == ")":
-                depth -= 1
-            elif depth == 0 and expr[i : i + op_len] == op:
-                parts.append(expr[start:i].strip())
-                start = i + op_len
-        parts.append(expr[start:].strip())
-        return parts
+        # Unary operators.
+        if expr.startswith("!"):
+            return int(not self._eval_int_expr(expr[1:]))
+        if expr.startswith("~"):
+            return ~self._eval_int_expr(expr[1:])
+        if expr.startswith("-"):
+            return -self._eval_int_expr(expr[1:])
+        if expr.startswith("+"):
+            return self._eval_int_expr(expr[1:])
+
+        raise ValueError(f"cannot evaluate constant expression: {expr!r}")
 
     # ------------------------------------------------------------------
     # Macro substitution
@@ -541,6 +775,51 @@ class Preprocessor:
                 while j < n and (text[j].isalnum() or text[j] == "_"):
                     j += 1
                 ident = text[i:j]
+
+                # __COUNTER__ — expands to an incrementing integer.
+                if ident == "__COUNTER__" and ident not in _expanding:
+                    result.append(str(self._counter))
+                    self._counter += 1
+                    i = j
+                    continue
+
+                # __has_attribute / __has_builtin / __has_feature / __has_include —
+                # consume the following (...) argument and expand to 0 or 1.
+                if (
+                    ident
+                    in (
+                        "__has_attribute",
+                        "__has_builtin",
+                        "__has_feature",
+                        "__has_extension",
+                    )
+                    and ident not in _expanding
+                ):
+                    k = j
+                    while k < n and text[k] in " \t":
+                        k += 1
+                    if k < n and text[k] == "(":
+                        args, end_args = self._parse_macro_args(text, k)
+                        if args is not None:
+                            arg_name = args[0].strip().strip("_") if args else ""
+                            val = self._has_attribute_value(ident, arg_name)
+                            result.append(str(val))
+                            i = end_args
+                            continue
+
+                if ident == "__has_include" and ident not in _expanding:
+                    k = j
+                    while k < n and text[k] in " \t":
+                        k += 1
+                    if k < n and text[k] == "(":
+                        # Find the closing paren (the argument may contain < > or " ")
+                        args, end_args = self._parse_macro_args(text, k)
+                        if args is not None:
+                            val = 0  # not evaluated at expansion time; handled in _eval_if_expr
+                            result.append(str(val))
+                            i = end_args
+                            continue
+
                 macro = self.defines.get(ident)
                 if macro is not None and ident not in _expanding:
                     if macro.params is None:

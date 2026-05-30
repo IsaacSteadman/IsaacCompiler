@@ -587,9 +587,11 @@ class PrimitiveType(BaseType):
             ".",
             self.typ.name,
             ",",
-            "0"
-            if SIZE_SIGN_MAP[self.typ][1] == self.sign
-            else ("-1" if self.sign else "1"),
+            (
+                "0"
+                if SIZE_SIGN_MAP[self.typ][1] == self.sign
+                else ("-1" if self.sign else "1")
+            ),
             ")",
         ]
 
@@ -1595,6 +1597,9 @@ def get_base_type(
             elif tokens[c].str in MODIFIERS:
                 str_name.append(tokens[c].str)
                 c += 1
+            elif tokens[c].str in ("_Noreturn",):
+                # C11 function specifier — no-op, silently skip.
+                c += 1
             else:
                 # raise ParsingError(tokens, c, "Keyword not allowed in declaration")
                 return None, main_start
@@ -1710,7 +1715,12 @@ class DeclStmnt(BaseStmnt):
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
     ) -> int:
         ext_spec = 0
-        while tokens[c].type_id == TokenType.NAME and tokens[c].str in {"extern", "static", "inline"}:
+        while tokens[c].type_id == TokenType.NAME and tokens[c].str in {
+            "extern",
+            "static",
+            "inline",
+            "_Noreturn",
+        }:
             if tokens[c].str == "static":
                 ext_spec = 1
             elif tokens[c].str == "extern":
@@ -1964,7 +1974,8 @@ def proc_typed_decl(
                 break
         elif (
             tokens[c].type_id == TokenType.NAME
-            and tokens[c].str not in {"const", "auto", "volatile", "register"}
+            and tokens[c].str
+            not in {"const", "auto", "volatile", "register", "restrict", "_Noreturn"}
         ) or tokens[c].str == "::":
             i_type = 2
             i_start = c
@@ -2019,6 +2030,8 @@ def proc_typed_decl(
         c0 -= 1
         if tokens[c0].str in QualType.QUAL_Dct:
             rtn.add_qual_type(QualType.QUAL_Dct[tokens[c0].str])
+        elif tokens[c0].str in ("restrict", "_Noreturn"):
+            pass  # no-op qualifier/specifier
         else:
             raise ParsingError(tokens, c0, "Unexpected token")
     # process items after the identifier by creating QualType instances

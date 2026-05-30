@@ -8,10 +8,9 @@ def get_stmnt(
 ) -> Tuple["BaseStmnt", int]:
     start = c
     position = tokens[c].line, tokens[c].col
-    _DECL_SPECIFIERS = {"extern", "static", "inline"}
+    _DECL_SPECIFIERS = {"extern", "static", "inline", "_Noreturn"}
     if tokens[c].type_id == TokenType.NAME and (
-        is_type_name_part(tokens[c].str, context)
-        or tokens[c].str in _DECL_SPECIFIERS
+        is_type_name_part(tokens[c].str, context) or tokens[c].str in _DECL_SPECIFIERS
     ):
         pos = StmntType.DECL
     else:
@@ -56,6 +55,9 @@ def get_stmnt(
     elif pos == StmntType.ASM:
         rtn = AsmStmnt()
         c = rtn.build(tokens, c, end, context)
+    elif pos == StmntType.STATIC_ASSERT:
+        rtn = StaticAssertStmnt()
+        c = rtn.build(tokens, c, end, context)
     elif pos == StmntType.SEMI_COLON:
         # NOTE: Make sure that DeclStmnt would not work here
         rtn = SemiColonStmnt()
@@ -78,6 +80,7 @@ from .IfElse import IfElse
 from .NamespaceStmnt import NamespaceStmnt
 from .ReturnStmnt import ReturnStmnt
 from .SemiColonStmnt import SemiColonStmnt
+from .StaticAssertStmnt import StaticAssertStmnt
 from .WhileLoop import WhileLoop
 from ..type.is_type_name_part import is_type_name_part
 from ..type.types import CompileContext, DeclStmnt, TypeDefStmnt
