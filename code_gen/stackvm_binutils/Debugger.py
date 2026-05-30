@@ -1,5 +1,5 @@
 from typing import Tuple
-from ...StackVM import VM_DISABLED, VM_4_LVL_9_BIT, MRQ_DONT_CHECK
+from ...StackVM.PyStackVM import VM_DISABLED, VM_4_LVL_9_BIT, MRQ_DONT_CHECK
 from .disassembly_lst_lines import disassembly_lst_lines
 from ...PyIsaacUtils.AlgoUtils import bisect_search_base
 
@@ -31,13 +31,20 @@ class Debugger(object):
             else:
                 full_pg_code_end = part_pg_code_end + 0x1000
             for addr in range(code_start, part_pg_code_end, 4096):
-                mv = vm_inst.get_mv_as_priv(vm_inst.priv_lvl, 4096, addr, MRQ_DONT_CHECK)
-                memory[addr: addr + 4096] = mv
-            memory[part_pg_code_end: code_end] = vm_inst.get_mv_as_priv(
-                vm_inst.priv_lvl, code_end - part_pg_code_end, part_pg_code_end, MRQ_DONT_CHECK
+                mv = vm_inst.get_mv_as_priv(
+                    vm_inst.priv_lvl, 4096, addr, MRQ_DONT_CHECK
+                )
+                memory[addr : addr + 4096] = mv
+            memory[part_pg_code_end:code_end] = vm_inst.get_mv_as_priv(
+                vm_inst.priv_lvl,
+                code_end - part_pg_code_end,
+                part_pg_code_end,
+                MRQ_DONT_CHECK,
             )
             self.ip_offset = code_start
-        self.lst_code = disassembly_lst_lines(memory, code_start, code_end, named_indices)
+        self.lst_code = disassembly_lst_lines(
+            memory, code_start, code_end, named_indices
+        )
         self.cur_loc = len(self.lst_code)
         self.set_of_brks = set()
         self.calc_loc()
@@ -73,11 +80,16 @@ class Debugger(object):
         lst_code = self.lst_code
         begin, end = bisect_search_base(lst_code, ip, lst_code_key_fn)
         if begin == end:
-            print("WARN: ip = %u, which splits the LOC %u and %u" % (ip, begin - 1, begin))
+            print(
+                "WARN: ip = %u, which splits the LOC %u and %u" % (ip, begin - 1, begin)
+            )
         self.cur_loc = begin
         if self.cur_loc > len(lst_code):
             if len(lst_code) > 0:
-                print("WARN: ip = %u, greater than the address of the last LOC %u" % (ip, lst_code[-1][0]))
+                print(
+                    "WARN: ip = %u, greater than the address of the last LOC %u"
+                    % (ip, lst_code[-1][0])
+                )
             else:
                 print("WARN: ip = %u, and no lines of code were found")
 
@@ -122,15 +134,31 @@ class Debugger(object):
 
     def get_state_data(self, do_tb=False):
         vm_inst = self.vm_inst
-        return self.cur_loc, vm_inst.ip, vm_inst.bp, vm_inst.sp, (self.get_stack_data() if do_tb else None)
+        return (
+            self.cur_loc,
+            vm_inst.ip,
+            vm_inst.bp,
+            vm_inst.sp,
+            (self.get_stack_data() if do_tb else None),
+        )
 
     def get_ext_state_data(self, prev_sp, do_tb=False):
         vm_inst = self.vm_inst
         stack_diff = None
         sp_diff = prev_sp - vm_inst.sp
         if sp_diff != 0:
-            stack_diff = (sp_diff, vm_inst.get(sp_diff, vm_inst.sp) if sp_diff > 0 else None)
-        return self.cur_loc, vm_inst.ip, vm_inst.bp, vm_inst.sp, (self.get_stack_data() if do_tb else None), stack_diff
+            stack_diff = (
+                sp_diff,
+                vm_inst.get(sp_diff, vm_inst.sp) if sp_diff > 0 else None,
+            )
+        return (
+            self.cur_loc,
+            vm_inst.ip,
+            vm_inst.bp,
+            vm_inst.sp,
+            (self.get_stack_data() if do_tb else None),
+            stack_diff,
+        )
 
     def get_state_data_watched(self, do_tb=False):
         vm_inst = self.vm_inst
@@ -138,17 +166,34 @@ class Debugger(object):
         if len(vm_inst.WatchData):
             stack_diff = vm_inst.WatchData
             vm_inst.WatchData = []
-        return self.cur_loc, vm_inst.ip, vm_inst.bp, vm_inst.sp, (self.get_stack_data() if do_tb else None), stack_diff
+        return (
+            self.cur_loc,
+            vm_inst.ip,
+            vm_inst.bp,
+            vm_inst.sp,
+            (self.get_stack_data() if do_tb else None),
+            stack_diff,
+        )
 
     def get_state_entry_watched_str(self, data):
         loc, ip, bp, sp, the_tb, stack_diff = data
         line = self.lst_code[loc]
-        s = "0x%04X: %s ;; line=%04u\n  sp = %u (0x%X) bp = %u (0x%X)" % (line[0], line[1], loc, sp, sp, bp, bp)
+        s = "0x%04X: %s ;; line=%04u\n  sp = %u (0x%X) bp = %u (0x%X)" % (
+            line[0],
+            line[1],
+            loc,
+            sp,
+            sp,
+            bp,
+            bp,
+        )
         if the_tb is not None:
-            s += "\n  TRACEBACK:\n    " + "\n    ".join([
-                "CodeAddr = 0x%04X, BasePointer = 0x%04X" % (bp1, ip1)
-                for bp1, ip1 in the_tb
-            ])
+            s += "\n  TRACEBACK:\n    " + "\n    ".join(
+                [
+                    "CodeAddr = 0x%04X, BasePointer = 0x%04X" % (bp1, ip1)
+                    for bp1, ip1 in the_tb
+                ]
+            )
         if stack_diff is not None:
             s += "\n  STACK-DIFF:"
             for sz, Val in stack_diff:
@@ -158,29 +203,63 @@ class Debugger(object):
     def get_ext_state_entry_str(self, data):
         loc, ip, bp, sp, the_tb, stack_diff = data
         line = self.lst_code[loc]
-        s = "0x%04X: %s ;; line=%04u\n  sp = %u (0x%X) bp = %u (0x%X)" % (line[0], line[1], loc, sp, sp, bp, bp)
+        s = "0x%04X: %s ;; line=%04u\n  sp = %u (0x%X) bp = %u (0x%X)" % (
+            line[0],
+            line[1],
+            loc,
+            sp,
+            sp,
+            bp,
+            bp,
+        )
         if the_tb is not None:
-            s += "\n  TRACEBACK:\n    " + "\n    ".join([
-                "CodeAddr = 0x%04X, BasePointer = 0x%04X" % (bp1, ip1)
-                for bp1, ip1 in the_tb
-            ])
+            s += "\n  TRACEBACK:\n    " + "\n    ".join(
+                [
+                    "CodeAddr = 0x%04X, BasePointer = 0x%04X" % (bp1, ip1)
+                    for bp1, ip1 in the_tb
+                ]
+            )
         if stack_diff is not None:
             s += "\n  STACK-DIFF: %u" % stack_diff[0]
             if stack_diff[1] is not None:
-                s += ("\n    %ux%0" + "%uX" % (2 * stack_diff[0])) % (stack_diff[0], stack_diff[1])
+                s += ("\n    %ux%0" + "%uX" % (2 * stack_diff[0])) % (
+                    stack_diff[0],
+                    stack_diff[1],
+                )
         return s
 
     def get_state_entry_str(self, data):
         loc, ip, bp, sp, the_tb = data
         line = self.lst_code[loc]
         if the_tb is None:
-            return "0x%04X: %s ;; line=%04u\n  sp = %u (0x%X) bp = %u (0x%X)" % (line[0], line[1], loc, sp, sp, bp, bp)
+            return "0x%04X: %s ;; line=%04u\n  sp = %u (0x%X) bp = %u (0x%X)" % (
+                line[0],
+                line[1],
+                loc,
+                sp,
+                sp,
+                bp,
+                bp,
+            )
         else:
-            return "0x%04X: %s ;; line=%04u\n  sp = %u (0x%X) bp = %u (0x%X)\n  TRACEBACK:\n    %s" % (
-                line[0], line[1], loc, sp, sp, bp, bp, "\n    ".join([
-                    "CodeAddr = 0x%04X, BasePointer = 0x%04X" % (bp1, ip1)
-                    for bp1, ip1 in the_tb
-                ]))
+            return (
+                "0x%04X: %s ;; line=%04u\n  sp = %u (0x%X) bp = %u (0x%X)\n  TRACEBACK:\n    %s"
+                % (
+                    line[0],
+                    line[1],
+                    loc,
+                    sp,
+                    sp,
+                    bp,
+                    bp,
+                    "\n    ".join(
+                        [
+                            "CodeAddr = 0x%04X, BasePointer = 0x%04X" % (bp1, ip1)
+                            for bp1, ip1 in the_tb
+                        ]
+                    ),
+                )
+            )
 
     def get_stack_data(self):
         vm_inst = self.vm_inst
