@@ -3,13 +3,8 @@ import os
 import struct
 from typing import Callable, Dict, List, Optional, Set, Union
 from .PrettyRepr import format_pretty
-from .StackVM.PyStackVM import (
-    BC_CALL,
-    BC_HLT,
-    VirtualMachine,
-    PageAllocator,
-    enable_virt_mem,
-)
+from .StackVM.PyStackVM import BC_CALL, BC_HLT
+from .StackVM.runner import add_cmd_argv_vm, run_in_vm
 from .code_gen.Compilation import Compilation
 from .code_gen.CompilerOptions import CompilerOptions
 from .code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
@@ -18,7 +13,6 @@ from .code_gen.get_dict_link_src import get_dict_link_src
 from .code_gen.get_dict_links import get_dict_links
 from .lexer.lexer import get_list_tokens
 from .code_gen.stackvm_binutils.disassemble import disassemble
-from .code_gen.stackvm_binutils.Debugger import Debugger
 from .code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
 from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
@@ -79,83 +73,6 @@ incl_sym_options = {
 }
 
 
-def add_cmd_argv_vm(vm_inst, i_end_prog: int, lst_args: List[str]):
-    """Set up argc/argv on the stack and write argument strings into VM memory.
-
-    Strings are written starting at i_end_prog (past the loaded program image).
-    Then pushes argv (pointer to the pointer array) and argc onto the stack,
-    matching the C calling convention expected by main(int argc, char **argv).
-    """
-    argc = len(lst_args)
-    lst_arg_ptrs = [0] * argc
-    bytes_args = bytearray()
-    for i, arg in enumerate(lst_args):
-        lst_arg_ptrs[i] = i_end_prog + len(bytes_args)
-        bytes_args.extend((arg + "\0").encode("utf-8"))
-    vm_inst.set_bytes(i_end_prog, bytes_args)
-    argv = i_end_prog + len(bytes_args)
-    ptr_cur = argv
-    for ptr in lst_arg_ptrs:
-        vm_inst.set(8, ptr_cur, ptr)
-        ptr_cur += 8
-    vm_inst.push(8, argv)
-    vm_inst.push(4, argc, 1)
-    return vm_inst
-
-
-def run_in_vm(
-    memory: bytearray,
-    code_segment_end: int,
-    data_segment_start: int,
-    named_indices: dict,
-    program_args: List[str],
-    vm_size: int,
-    use_virt_mem: bool,
-    use_debugger: bool,
-    backend: str = "python",
-) -> None:
-    """Create a VirtualMachine, load the program, and either debug or execute it.
-
-    named_indices: dict[int, (str, bool)] mapping address to symbol name — pass {} if
-    no debug symbols are available (e.g. when loading a bare .sbc binary).
-    program_args: argv list passed to the compiled program (argv[0] is the program name).
-    backend: 'python' uses PyStackVM (pure Python); 'cpp' uses CppStackVM (native via ctypes).
-    """
-    if backend == "cpp":
-        from .StackVM.CppStackVM import VirtualMachine as _CppVM
-
-        vm = _CppVM(vm_size)
-        if use_virt_mem:
-            print(
-                "Warning: --virt-mem is not supported with --backend cpp; "
-                "virtual memory will be disabled."
-            )
-    else:
-        vm = VirtualMachine(vm_size)
-        if use_virt_mem:
-            vm_alloc = PageAllocator(len(vm.memory) >> 12)
-            # Uses data_segment_start for code_segment_end so that all bytes before
-            # the data segment (including alignment padding) are mapped as executable.
-            enable_virt_mem(
-                vm,
-                vm_alloc,
-                vm.priv_lvl,
-                0,
-                data_segment_start,
-                data_segment_start,
-                None,
-            )
-    vm.load_program(memory, 0)
-    i_end_prog = len(memory)
-    vm.push(4, 0)  # return value slot for main()
-    add_cmd_argv_vm(vm, i_end_prog, program_args)
-    if use_debugger:
-        dbg = Debugger(vm, 0, code_segment_end, named_indices)
-        dbg.debug()
-    else:
-        vm.execute()
-
-
 # ---------------------------------------------------------------------------
 # Shared optional flags inherited by both subparsers via parents=
 # ---------------------------------------------------------------------------
@@ -185,6 +102,14 @@ _vm_flags_parser.add_argument(
     default="python",
     help="StackVM backend to use: 'python' (default) or 'cpp' (native via ctypes)",
     dest="backend",
+)
+_vm_flags_parser.add_argument(
+    "--syscalls",
+    nargs="*",
+    metavar="SET",
+    default=[],
+    dest="syscalls",
+    help="syscall sets to enable: os, pygame, all, none (default: none)",
 )
 
 # ---------------------------------------------------------------------------
@@ -453,6 +378,7 @@ if args.subcommand == "compile":
                 fl.write(cmpl_obj.memory)
         if args.run:
             print("Running in StackVM")
+            syscall_sets = args.syscalls or []
             run_in_vm(
                 cmpl_obj.memory,
                 cmpl_obj.code_segment_end,
@@ -463,6 +389,7 @@ if args.subcommand == "compile":
                 args.virt_mem,
                 args.debug,
                 args.backend,
+                syscall_sets if syscall_sets else None,
             )
     else:
         print("Generating AST")
@@ -517,6 +444,7 @@ elif args.subcommand == "run":
         f"  memory_size        = {total_memory_length:#010x}"
     )
     print("Running in StackVM")
+    syscall_sets = args.syscalls or []
     run_in_vm(
         memory,
         code_segment_end,
@@ -527,4 +455,5 @@ elif args.subcommand == "run":
         args.virt_mem,
         args.debug,
         args.backend,
+        syscall_sets if syscall_sets else None,
     )
