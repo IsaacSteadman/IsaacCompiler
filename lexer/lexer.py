@@ -3,7 +3,6 @@ from io import TextIOBase
 from typing import Union, Tuple, Optional, List
 from .constants import TokenType, LST_OPS
 
-
 THROW_ON_EOL_QUOTE = True
 
 
@@ -199,7 +198,23 @@ class DotClass(Token):
             return Rtn
         if prev_cls.type_id in {TokenType.DEC_INT}:
             return DecimalClass
+        if prev_cls.type_id == TokenType.DOT:
+            return DotDotClass
+        if prev_cls.type_id == TokenType.DOT_DOT:
+            return EllipsisClass
         return None
+
+
+class DotDotClass(Token):
+    type_id = TokenType.DOT_DOT
+
+
+class EllipsisClass(Token):
+    type_id = TokenType.ELLIPSIS
+
+
+class DotDotEqClass(Token):
+    type_id = TokenType.DOT_DOT_EQ
 
 
 class WSClass(Token):
@@ -298,6 +313,8 @@ class OperatorClass(Token):
         rtn = super(OperatorClass, self).can_prev_take(prev_cls)
         if rtn is not None:
             return rtn
+        if prev_cls.type_id == TokenType.DOT_DOT and self.str == "=":
+            return DotDotEqClass
         if prev_cls.type_id in {TokenType.PLUS_MINUS, TokenType.OPERATOR}:
             test = prev_cls.str + self.str
             if test == "//":

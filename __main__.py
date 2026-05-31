@@ -17,7 +17,7 @@ from .code_gen.stackvm_binutils.disassemble import disassemble
 from .code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
 from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
-from .parser.type.types import CompileContext
+from .parser.type.types import CompileContext, QualType, PrimitiveType, TypeDefCtxMember
 from .code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import lib_utils_abi
 
 
@@ -297,6 +297,10 @@ if args.subcommand == "compile":
     tokens = get_list_tokens(_source)
 
     global_ctx = CompileContext("", None)
+    # Register built-in type alias: typedef unsigned char *va_list
+    _va_list_base = PrimitiveType.from_str_name(["unsigned", "char"])
+    _va_list_t = QualType(QualType.QUAL_PTR, _va_list_base)
+    global_ctx.new_type("va_list", TypeDefCtxMember("va_list", global_ctx, _va_list_t))
     c = 0
     end = len(tokens)
     lst_stmnt: List[BaseStmnt] = []

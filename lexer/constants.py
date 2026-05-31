@@ -20,8 +20,12 @@ class TokenType(Enum):
     # intermediate token types (pre-parse)
     PLUS_MINUS = 15
     DOT = 16
+    DOT_DOT = 17
+    DOT_DOT_EQ = 18
+    ELLIPSIS = 19
     # post-parse token types
     ARRAY_LEN = 15
+
 
 token_class_abreviation = {
     TokenType.BLANK: "Bln",
@@ -41,13 +45,48 @@ token_class_abreviation = {
     TokenType.BLK_COMMENT: "BlC",
     TokenType.PLUS_MINUS: "PMC",
     TokenType.DOT: "Dot",
-    TokenType.ARRAY_LEN: "ArL"
+    TokenType.DOT_DOT: "DtD",
+    TokenType.DOT_DOT_EQ: "DtE",
+    TokenType.ELLIPSIS: "Ell",
+    TokenType.ARRAY_LEN: "ArL",
 }
 
 
 LST_OPS = {
-    "+",  "-",  "*",  "/",  "%",  "&",  "|",  "^",  "<<",  ">>",
-    "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
-    "<",  ">",  "!",  "=", ":",
-    "<=", ">=", "!=", "==", "::",
-    "&&", "||", "~", "++", "--", "->"}
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "&",
+    "|",
+    "^",
+    "<<",
+    ">>",
+    "+=",
+    "-=",
+    "*=",
+    "/=",
+    "%=",
+    "&=",
+    "|=",
+    "^=",
+    "<<=",
+    ">>=",
+    "<",
+    ">",
+    "!",
+    "=",
+    ":",
+    "<=",
+    ">=",
+    "!=",
+    "==",
+    "::",
+    "&&",
+    "||",
+    "~",
+    "++",
+    "--",
+    "->",
+}

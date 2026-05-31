@@ -1,3 +1,15 @@
+from .CastOpExpr import CastOpExpr, CastType
+from ..type.BaseType import TypeClass
+from ..type.types import (
+    QualType,
+    PrimitiveType,
+    PrimitiveTypeId,
+    INT_TYPE_CODES,
+    FLT_TYPE_CODES,
+    SIZE_SIGN_MAP,
+    get_base_prim_type,
+)
+
 
 def get_ellipses_conv_expr(expr):
     """
@@ -19,7 +31,9 @@ def get_ellipses_conv_expr(expr):
         assert isinstance(src_vt, PrimitiveType)
         if src_vt.typ in INT_TYPE_CODES:
             if src_vt.size < SIZE_SIGN_MAP[PrimitiveTypeId.INT_I][0]:
-                to_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_I, -1 if src_vt.sign else 1)
+                to_type = PrimitiveType.from_type_code(
+                    PrimitiveTypeId.INT_I, -1 if src_vt.sign else 1
+                )
         elif src_vt.typ in FLT_TYPE_CODES:
             if src_vt.size < SIZE_SIGN_MAP[PrimitiveTypeId.FLT_D][0]:
                 to_type = PrimitiveType.from_type_code(PrimitiveTypeId.FLT_D)
@@ -31,4 +45,3 @@ def get_ellipses_conv_expr(expr):
     if to_type is not expr.t_anot:
         rtn = CastOpExpr(to_type, expr, CastType.IMPLICIT)
     return rtn, 6
-

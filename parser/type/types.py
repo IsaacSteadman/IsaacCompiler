@@ -2127,6 +2127,8 @@ class DeclStmnt(BaseStmnt):
                         stmnt = CurlyStmnt()
                         fn_ctx = context.new_scope(LocalScope(named_qual_type.name))
                         for param in params:
+                            if param is None:  # variadic sentinel
+                                continue
                             assert isinstance(param, (IdentifiedQualType, BaseType))
                             if isinstance(param, IdentifiedQualType):
                                 fn_ctx.new_var(
@@ -2261,6 +2263,8 @@ class DeclStmnt(BaseStmnt):
                                 ),
                             )
                         for param in prim_type.ext_inf:
+                            if param is None:  # variadic sentinel
+                                continue
                             assert isinstance(param, (IdentifiedQualType, BaseType))
                             if isinstance(param, IdentifiedQualType):
                                 fn_ctx.new_var(
@@ -2443,6 +2447,11 @@ def proc_typed_decl(
                     if (lvl == 1 and tokens[c].str == ",") or lvl == 0:
                         n_end = c
                         c = n_start
+                        # Detect variadic '...' (single ELLIPSIS token)
+                        if n_end == c + 1 and tokens[c].type_id == TokenType.ELLIPSIS:
+                            ext_inf.append(None)  # None sentinel marks variadic
+                            c = n_end + 1  # advance past ')'
+                            break
                         n_decl, c = proc_typed_decl(tokens, c, n_end, context)
                         if n_decl is None:
                             cancel = True
@@ -2652,10 +2661,19 @@ class QualType(BaseType):
         ):
             return ch + self.tgt_type.to_mangle_str()
         elif self.qual_id == QualType.QUAL_FN:
+            _variadic = (
+                isinstance(self.ext_inf, list)
+                and len(self.ext_inf) > 0
+                and self.ext_inf[-1] is None
+            )
+            _params = self.ext_inf[:-1] if _variadic else self.ext_inf
             rtn = ch
             if not top_decl:
                 rtn += "Z" + self.tgt_type.to_mangle_str()
-            return rtn + "".join(map(lambda x: x.to_mangle_str(), self.ext_inf)) + "z"
+            rtn += "".join(map(lambda x: x.to_mangle_str(), _params))
+            if _variadic:
+                rtn += "."
+            return rtn + "z"
         else:
             raise TypeError("Unrecognized qual_id = %u" % self.qual_id)
 
@@ -2678,9 +2696,16 @@ class QualType(BaseType):
             if self.ext_inf is not None:
                 s += "%u " % self.ext_inf
         elif self.qual_id == QualType.QUAL_FN:
-            s = "function (%s) -> " % ", ".join(
-                map(get_user_str_from_type, self.ext_inf)
+            _variadic = (
+                isinstance(self.ext_inf, list)
+                and len(self.ext_inf) > 0
+                and self.ext_inf[-1] is None
             )
+            _params = self.ext_inf[:-1] if _variadic else self.ext_inf
+            _params_str = ", ".join(map(get_user_str_from_type, _params))
+            if _variadic:
+                _params_str += (", " if _params else "") + "..."
+            s = "function (%s) -> " % _params_str
         else:
             s %= self.qual_id
         s += get_user_str_from_type(self.tgt_type)
@@ -2941,19 +2966,23 @@ class QualType(BaseType):
             the_arg = init_args[0]
             assert isinstance(the_arg, CurlyStmnt)
             cmpl_data1 = LocalCompileData()
-            variadic = False
+            variadic = (
+                isinstance(self.ext_inf, list)
+                and len(self.ext_inf) > 0
+                and self.ext_inf[-1] is None
+            )
+            params = self.ext_inf[:-1] if variadic else self.ext_inf
             off = -16
             fn_ctx = the_arg.context.parent
             assert isinstance(fn_ctx, LocalScope)
-            assert not isinstance(self.ext_inf, int)
-            assert self.ext_inf is not None
+            assert not isinstance(params, int)
             res_link = None
             res_type = self.tgt_type
             if variadic:
                 sz1 = 8  # sizeof(T*)
                 res_link = IndirectLink(LocalRef.from_bp_off_post_inc(off, sz1))
                 off -= 8
-            for Param in self.ext_inf:
+            for Param in params:
                 assert isinstance(Param, (IdentifiedQualType, BaseType))
                 sz1 = size_of(Param)
                 if isinstance(Param, IdentifiedQualType):
@@ -3145,12 +3174,26 @@ def compare_no_cvr(
         if type_a.qual_id != type_b.qual_id:
             return False
         elif type_a.qual_id == QualType.QUAL_FN:
-            if len(type_a.ext_inf) != len(type_b.ext_inf):
+            _var_a = (
+                isinstance(type_a.ext_inf, list)
+                and len(type_a.ext_inf) > 0
+                and type_a.ext_inf[-1] is None
+            )
+            _var_b = (
+                isinstance(type_b.ext_inf, list)
+                and len(type_b.ext_inf) > 0
+                and type_b.ext_inf[-1] is None
+            )
+            if _var_a != _var_b:
+                return False
+            _params_a = type_a.ext_inf[:-1] if _var_a else type_a.ext_inf
+            _params_b = type_b.ext_inf[:-1] if _var_b else type_b.ext_inf
+            if len(_params_a) != len(_params_b):
                 return False
             if not compare_no_cvr(type_a.tgt_type, type_b.tgt_type):
                 return False
-            for c in range(len(type_a.ext_inf)):
-                if not compare_no_cvr(type_a.ext_inf[c], type_b.ext_inf[c]):
+            for c in range(len(_params_a)):
+                if not compare_no_cvr(_params_a[c], _params_b[c]):
                     return False
             return True
         elif type_a.qual_id == QualType.QUAL_ARR:

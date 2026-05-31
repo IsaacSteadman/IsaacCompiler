@@ -21,10 +21,15 @@ def resolve_overloaded_fn(call_expr: "FnCallExpr"):
         assert typ.type_class_id == TypeClass.QUAL
         assert isinstance(typ, QualType)
         assert typ.qual_id == QualType.QUAL_FN
-        variadic = False
-        assert typ.ext_inf is not None
-        assert not isinstance(typ.ext_inf, int)
-        n_type = len(typ.ext_inf)
+        variadic = (
+            isinstance(typ.ext_inf, list)
+            and len(typ.ext_inf) > 0
+            and typ.ext_inf[-1] is None
+        )
+        named_params = typ.ext_inf[:-1] if variadic else typ.ext_inf
+        assert named_params is not None
+        assert not isinstance(named_params, int)
+        n_type = len(named_params)
         viable = False
         if n_type == n_args:
             viable = True
@@ -33,7 +38,7 @@ def resolve_overloaded_fn(call_expr: "FnCallExpr"):
         elif n_type > n_args:
             c1 = n_args
             while c1 < n_type:
-                if not is_default(typ.ext_inf[c1]):
+                if not is_default(named_params[c1]):
                     break
                 c1 += 1
             if c1 >= n_type:
@@ -44,7 +49,7 @@ def resolve_overloaded_fn(call_expr: "FnCallExpr"):
         lst_conv: List[Optional[Tuple[BaseExpr, int]]] = [None] * n_args
         while c1 < n_type:
             conv_expr = get_implicit_conv_expr(
-                lst_args[c1], get_actual_type(typ.ext_inf[c1])
+                lst_args[c1], get_actual_type(named_params[c1])
             )
             if conv_expr is None:
                 break

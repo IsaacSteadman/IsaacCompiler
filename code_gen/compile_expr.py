@@ -143,7 +143,13 @@ def compile_expr(
                 print("Cannot call a non-function expression")
                 # raise TypeError("Cannot call a non-function expression")
             else:
-                lst_arg_types = list(fn_type.ext_inf)
+                variadic = (
+                    isinstance(fn_type.ext_inf, list)
+                    and len(fn_type.ext_inf) > 0
+                    and fn_type.ext_inf[-1] is None
+                )
+                named_params = fn_type.ext_inf[:-1] if variadic else fn_type.ext_inf
+                lst_arg_types = list(named_params)
                 for c in range(len(lst_arg_types)):
                     cur = lst_arg_types[c]
                     if cur is not None and isinstance(cur, IdentifiedQualType):
@@ -161,9 +167,7 @@ def compile_expr(
             arg = expr.lst_args[c]
             coerce_t = None
             if c < len(lst_arg_types):
-                coerce_t = fn_type.ext_inf[c]
-                if isinstance(coerce_t, IdentifiedQualType):
-                    coerce_t = coerce_t.typ
+                coerce_t = lst_arg_types[c]  # already unwrapped IdentifiedQualType
             assert coerce_t is None or isinstance(coerce_t, BaseType)
             sz = compile_expr(cmpl_obj, arg, context, cmpl_data, coerce_t, temp_links)
             cmpl_data.bp_off += sz
@@ -489,6 +493,86 @@ def compile_expr(
 
             res_type = result_type
             sz = sz_result
+    elif expr.expr_id == ExprType.VA_INTRINSIC:
+        assert isinstance(expr, VaIntrinsicExpr)
+        if expr.intrinsic_id == VaIntrinsicExpr.INTRINSIC_VA_START:
+            # va_start(ap, last): ap = &last + sizeof(last)
+            # (variadic args are pushed before named params, at higher addresses)
+            ap_expr, last_expr = expr.args
+            last_vt = get_value_type(last_expr.t_anot)
+            sz_last = size_of(last_vt)
+            # Emit LEA of last parameter directly
+            assert isinstance(last_expr, NameRefExpr)
+            _last_cv = last_expr.ctx_var
+            _last_lnk = (
+                cmpl_data.get_local(_last_cv.get_link_name())
+                if _last_cv.parent.is_local_scope()
+                else cmpl_obj.get_link(_last_cv.get_link_name())
+            )
+            _last_lnk.emit_lea(cmpl_obj.memory)
+            # Add sizeof(last) to get address of first variadic arg
+            emit_load_i_const(cmpl_obj.memory, sz_last, False, 3)
+            cmpl_obj.memory.extend([BC_ADD8])
+            # Store result into ap
+            assert isinstance(ap_expr, NameRefExpr)
+            _ap_cv = ap_expr.ctx_var
+            _ap_lnk = (
+                cmpl_data.get_local(_ap_cv.get_link_name())
+                if _ap_cv.parent.is_local_scope()
+                else cmpl_obj.get_link(_ap_cv.get_link_name())
+            )
+            _ap_lnk.emit_stor(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+            sz = 0
+            res_type = void_t
+        elif expr.intrinsic_id == VaIntrinsicExpr.INTRINSIC_VA_ARG:
+            # va_arg(ap, T): read T at *ap then ap -= sizeof(T)
+            ap_expr = expr.args[0]
+            T = expr.arg_type
+            sz_T = size_of(T)
+            sz_cls_T = sz_T.bit_length() - 1
+            assert isinstance(ap_expr, NameRefExpr)
+            _ap_cv = ap_expr.ctx_var
+            _ap_lnk = (
+                cmpl_data.get_local(_ap_cv.get_link_name())
+                if _ap_cv.parent.is_local_scope()
+                else cmpl_obj.get_link(_ap_cv.get_link_name())
+            )
+            # Load current ap value (pointer, 8 bytes)
+            _ap_lnk.emit_load(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+            # Duplicate ap value (DUP TOS)
+            cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | BCR_SZ_8])
+            # Compute new ap = ap_old + sizeof(T) (advance to next variadic arg)
+            emit_load_i_const(cmpl_obj.memory, sz_T, False, 3)
+            cmpl_obj.memory.extend([BC_ADD8])
+            # Store new ap back (pops ap_new; leaves ap_old on TOS)
+            _ap_lnk.emit_stor(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+            # Dereference ap_old: load sz_T bytes from the address
+            cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls_T << 5)])
+            sz = sz_T
+            res_type = T
+        elif expr.intrinsic_id == VaIntrinsicExpr.INTRINSIC_VA_END:
+            # va_end(ap): no-op
+            sz = 0
+            res_type = void_t
+        elif expr.intrinsic_id == VaIntrinsicExpr.INTRINSIC_VA_COPY:
+            # va_copy(dst, src): dst = src (pointer copy)
+            dst_expr, src_expr = expr.args
+            # Load src pointer value (va_list is a pointer, 8 bytes)
+            src_vt = get_value_type(src_expr.t_anot)
+            compile_expr(cmpl_obj, src_expr, context, cmpl_data, src_vt, temp_links)
+            # Store into dst
+            assert isinstance(dst_expr, NameRefExpr)
+            _dst_cv = dst_expr.ctx_var
+            _dst_lnk = (
+                cmpl_data.get_local(_dst_cv.get_link_name())
+                if _dst_cv.parent.is_local_scope()
+                else cmpl_obj.get_link(_dst_cv.get_link_name())
+            )
+            _dst_lnk.emit_stor(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+            sz = 0
+            res_type = void_t
+        else:
+            raise ValueError("Unknown va intrinsic id: %d" % expr.intrinsic_id)
     else:
         raise NotImplementedError(
             "Expression (id = %u) compilation is not supported" % expr.expr_id
@@ -572,6 +656,7 @@ from ..parser.expr.SpecialDotExpr import SpecialDotExpr
 from ..parser.expr.SpecialPtrMemberExpr import SpecialPtrMemberExpr
 from ..parser.expr.StmntExpr import StmntExpr
 from ..parser.expr.UnaryOpExpr import UnaryExprSubType, UnaryOpExpr
+from ..parser.expr.VaIntrinsicExpr import VaIntrinsicExpr
 from ..parser.stmnt.SemiColonStmnt import SemiColonStmnt
 from ..parser.type.BaseType import BaseType, TypeClass
 from ..parser.type.get_user_str_from_type import get_user_str_from_type

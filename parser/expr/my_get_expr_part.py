@@ -111,6 +111,26 @@ def my_get_expr_part(
         expr, c = get_expr(tokens, c, ":", end, context)
         c += 1
         return InlineIfOpPart(expr), c
+    elif (
+        s in {"va_start", "va_arg", "va_end", "va_copy"}
+        and c + 1 < end
+        and tokens[c + 1].str == "("
+    ):
+        intrinsic_name = s
+        c += 2  # consume name + '('
+        lvl = 1
+        paren_end = c
+        while paren_end < end and lvl > 0:
+            if tokens[paren_end].str in OPEN_GROUPS:
+                lvl += 1
+            elif tokens[paren_end].str in CLOSE_GROUPS:
+                lvl -= 1
+            if lvl > 0:
+                paren_end += 1
+        # paren_end is at ')'
+        rtn_expr = _build_va_intrinsic(intrinsic_name, tokens, c, paren_end, context)
+        c = paren_end + 1
+        return ExprOpPart(rtn_expr), c
     elif tokens[c].type_id == TokenType.NAME:
         rtn = NameRefExpr()
         c = rtn.build(tokens, c, end, context)
@@ -123,6 +143,7 @@ from .CurlyExpr import CurlyExpr
 from .LiteralExpr import LiteralExpr
 from .NameRefExpr import NameRefExpr
 from .StmntExpr import StmntExpr
+from .VaIntrinsicExpr import VaIntrinsicExpr
 from .get_expr import get_expr
 from ..ParsingError import ParsingError
 from ..constants import DCT_FIXES
@@ -134,5 +155,44 @@ from .expr_part.ParentOpPart import ParenthOpPart
 from .expr_part.SParenthOpPart import SParenthOpPart
 from .expr_part.SimpleOpPart import SimpleOpPart
 from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
-from ..type.types import IdentifiedQualType, proc_typed_decl, CompileContext
+from ..type.types import IdentifiedQualType, proc_typed_decl, CompileContext, void_t
 from ...lexer.lexer import BreakSymClass, OperatorClass, Token, TokenType
+
+
+def _build_va_intrinsic(name, tokens, c, end, context):
+    if name == "va_start":
+        ap_expr, c = get_expr(tokens, c, ",", end, context)
+        assert tokens[c].str == ",", "va_start expects two arguments"
+        c += 1  # skip ','
+        last_expr, _c = get_expr(tokens, c, None, end, context)
+        from .BaseExpr import ExprType
+
+        rtn = VaIntrinsicExpr(VaIntrinsicExpr.INTRINSIC_VA_START, [ap_expr, last_expr])
+        rtn.t_anot = void_t
+        return rtn
+    elif name == "va_arg":
+        ap_expr, c = get_expr(tokens, c, ",", end, context)
+        assert tokens[c].str == ",", "va_arg expects two arguments"
+        c += 1  # skip ','
+        type_decl, _c = proc_typed_decl(tokens, c, end, context)
+        assert type_decl is not None, "va_arg: second argument must be a type"
+        rtn = VaIntrinsicExpr(
+            VaIntrinsicExpr.INTRINSIC_VA_ARG, [ap_expr], arg_type=type_decl.typ
+        )
+        rtn.t_anot = type_decl.typ
+        return rtn
+    elif name == "va_end":
+        ap_expr, _c = get_expr(tokens, c, None, end, context)
+        rtn = VaIntrinsicExpr(VaIntrinsicExpr.INTRINSIC_VA_END, [ap_expr])
+        rtn.t_anot = void_t
+        return rtn
+    elif name == "va_copy":
+        dst_expr, c = get_expr(tokens, c, ",", end, context)
+        assert tokens[c].str == ",", "va_copy expects two arguments"
+        c += 1  # skip ','
+        src_expr, _c = get_expr(tokens, c, None, end, context)
+        rtn = VaIntrinsicExpr(VaIntrinsicExpr.INTRINSIC_VA_COPY, [dst_expr, src_expr])
+        rtn.t_anot = void_t
+        return rtn
+    else:
+        raise ValueError("Unknown va intrinsic: %s" % name)
