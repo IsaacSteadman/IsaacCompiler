@@ -912,9 +912,9 @@ class ClassType(CompileContext, BaseType):
     def offset_of(self, attr: str) -> int:
         # TODO: improve speed of OffsetOf by tracking the offsets along-side the types
         index = self.definition[attr]
-        off = 0
+        off = 0 if self.the_base_type is None else size_of(self.the_base_type)
         for c in range(index):
-            off += size_of(self.var_order[0].typ)
+            off += size_of(self.var_order[c].typ)
         return off
 
     def pretty_repr(self, pretty_repr_ctx=None):
@@ -1052,9 +1052,9 @@ class StructType(CompileContext, BaseType):
     def offset_of(self, attr: str) -> int:
         # TODO: improve speed of OffsetOf by tracking the offsets along-side the types
         index = self.definition[attr]
-        off = 0
+        off = 0 if self.the_base_type is None else size_of(self.the_base_type)
         for c in range(index):
-            off += size_of(self.var_order[0].typ)
+            off += size_of(self.var_order[c].typ)
         return off
 
     def pretty_repr(self, pretty_repr_ctx=None):
@@ -1163,6 +1163,97 @@ class StructType(CompileContext, BaseType):
             link = ref.lnk
         else:
             raise TypeError("Unrecognized VarRef: %s" % repr(ref))
+        # ── Designated-initialiser path:  struct foo f = { .a = 1, .b = 2 } ─────
+        if (
+            len(init_args) == 1
+            and isinstance(init_args[0], CurlyExpr)
+            and init_args[0].lst_expr is not None
+            and len(init_args[0].lst_expr) > 0
+            and all(
+                isinstance(e, DesigInitExpr) and e.kind == DesigInitExpr.KIND_FIELD
+                for e in init_args[0].lst_expr
+            )
+        ):
+            curly = init_args[0]
+            desig_map = {e.designator: e for e in curly.lst_expr}
+            if link is None:
+                # ── Local variable ───────────────────────────────────────────
+                assert is_local
+                assert cmpl_data is not None
+                assert ctx_var is not None
+                # 1. Allocate space on the stack (BC_ADD_SP does NOT zero memory)
+                sz_cls = emit_load_i_const(cmpl_obj.memory, sz_var, False)
+                cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls])
+                # 2. Register the variable so later code can reference it
+                lnk = cmpl_data.put_local(ctx_var, name, sz_var, None, True)
+                # 3. For every field: store designated value or push zeros
+                field_offset = (
+                    0 if self.the_base_type is None else size_of(self.the_base_type)
+                )
+                for fvar in self.var_order:
+                    field_sz = size_of(fvar.typ)
+                    field_lnk = lnk.get_offset_link(field_offset)
+                    if fvar.name in desig_map:
+                        desig = desig_map[fvar.name]
+                        expr_vt = get_value_type(desig.expr.t_anot)
+                        sz_e = compile_expr(
+                            cmpl_obj,
+                            desig.expr,
+                            context,
+                            cmpl_data,
+                            expr_vt,
+                            temp_links,
+                        )
+                        assert (
+                            sz_e == field_sz
+                        ), "Designated field '%s' size mismatch: expr=%d field=%d" % (
+                            fvar.name,
+                            sz_e,
+                            field_sz,
+                        )
+                    else:
+                        _emit_push_zeros(cmpl_obj.memory, field_sz)
+                    field_lnk.emit_stor(
+                        cmpl_obj.memory, field_sz, cmpl_obj, byte_copy_cmpl_intrinsic
+                    )
+                    field_offset += field_sz
+            else:
+                # ── Global variable (memory already zeroed in the setup stage) ─
+                assert cmpl_data is None
+                assert ctx_var is not None
+                field_offset = (
+                    0 if self.the_base_type is None else size_of(self.the_base_type)
+                )
+                for fvar in self.var_order:
+                    field_sz = size_of(fvar.typ)
+                    if fvar.name in desig_map:
+                        desig = desig_map[fvar.name]
+                        expr_vt = get_value_type(desig.expr.t_anot)
+                        sz_e = compile_expr(
+                            cmpl_obj,
+                            desig.expr,
+                            context,
+                            cmpl_data,
+                            expr_vt,
+                            temp_links,
+                        )
+                        assert (
+                            sz_e == field_sz
+                        ), "Designated field '%s' size mismatch: expr=%d field=%d" % (
+                            fvar.name,
+                            sz_e,
+                            field_sz,
+                        )
+                        field_lnk = link.get_offset_link(field_offset)
+                        field_lnk.emit_stor(
+                            cmpl_obj.memory,
+                            field_sz,
+                            cmpl_obj,
+                            byte_copy_cmpl_intrinsic,
+                        )
+                    field_offset += field_sz
+            return sz_var
+        # ── End designated-initialiser path ──────────────────────────────────────
         if len(init_args) > 1:
             raise TypeError(
                 "Cannot instantiate struct types with more than one argument"
@@ -2454,6 +2545,81 @@ class QualType(BaseType):
                 cmpl_obj, init_args, context, ref, cmpl_data, temp_links
             )
         elif self.qual_id in [QualType.QUAL_PTR, QualType.QUAL_REF, QualType.QUAL_ARR]:
+            # ── Array designated initialiser:  int arr[N] = { [i] = val, ... } ──
+            if (
+                self.qual_id == QualType.QUAL_ARR
+                and len(init_args) == 1
+                and isinstance(init_args[0], CurlyExpr)
+                and init_args[0].lst_expr is not None
+                and len(init_args[0].lst_expr) > 0
+                and all(
+                    isinstance(e, DesigInitExpr) and e.kind == DesigInitExpr.KIND_INDEX
+                    for e in init_args[0].lst_expr
+                )
+            ):
+                curly = init_args[0]
+                arr_len = self.ext_inf  # number of elements (int)
+                elem_sz = size_of(self.tgt_type)
+                desig_map = {e.designator: e for e in curly.lst_expr}
+                if is_local:
+                    sz_cls = emit_load_i_const(cmpl_obj.memory, sz_var, False)
+                    cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls])
+                    assert ctx_var is not None
+                    assert cmpl_data is not None
+                    lnk = cmpl_data.put_local(ctx_var, name, sz_var, None, True)
+                    for idx in range(arr_len):
+                        elem_lnk = lnk.get_offset_link(idx * elem_sz)
+                        if idx in desig_map:
+                            desig = desig_map[idx]
+                            expr_vt = get_value_type(desig.expr.t_anot)
+                            sz_e = compile_expr(
+                                cmpl_obj,
+                                desig.expr,
+                                context,
+                                cmpl_data,
+                                expr_vt,
+                                temp_links,
+                            )
+                            assert (
+                                sz_e == elem_sz
+                            ), "Array elem[%d] size mismatch: expr=%d elem=%d" % (
+                                idx,
+                                sz_e,
+                                elem_sz,
+                            )
+                        else:
+                            _emit_push_zeros(cmpl_obj.memory, elem_sz)
+                        elem_lnk.emit_stor(
+                            cmpl_obj.memory, elem_sz, cmpl_obj, byte_copy_cmpl_intrinsic
+                        )
+                else:
+                    # Global: zero data segment, then emit stores for designated elements
+                    if ref.ref_type == VAR_REF_TOS_NAMED:
+                        assert cmpl_obj1 is not None
+                        cmpl_obj1.memory.extend([0] * sz_var)
+                    for idx, desig in desig_map.items():
+                        expr_vt = get_value_type(desig.expr.t_anot)
+                        sz_e = compile_expr(
+                            cmpl_obj,
+                            desig.expr,
+                            context,
+                            cmpl_data,
+                            expr_vt,
+                            temp_links,
+                        )
+                        assert (
+                            sz_e == elem_sz
+                        ), "Array elem[%d] size mismatch: expr=%d elem=%d" % (
+                            idx,
+                            sz_e,
+                            elem_sz,
+                        )
+                        elem_lnk = link.get_offset_link(idx * elem_sz)
+                        elem_lnk.emit_stor(
+                            cmpl_obj.memory, elem_sz, cmpl_obj, byte_copy_cmpl_intrinsic
+                        )
+                return sz_var
+            # ── End array designated-initialiser ─────────────────────────────────
             if len(init_args) == 1:
                 expr = init_args[0]
                 # assert CompareNoCVR(self, expr.t_anot), "self = %s, expr.t_anot = %s" % (
@@ -3036,6 +3202,7 @@ from ...ParseConstants import (
 from ..expr.BaseExpr import BaseExpr, ExprType
 from ..expr.CastOpExpr import CastOpExpr, CastType
 from ..expr.CurlyExpr import CurlyExpr
+from ..expr.DesigInitExpr import DesigInitExpr
 from ..expr.LiteralExpr import LiteralExpr
 from ..expr.get_expr import get_expr
 from ..stmnt.CurlyStmnt import CurlyStmnt
@@ -3066,3 +3233,18 @@ from ...code_gen.compile_expr import compile_expr
 from ...lexer.lexer import Token, TokenType, tok_to_str
 from ..stmnt.helpers.SingleVarDecl import SingleVarDecl
 from ...code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
+
+
+def _emit_push_zeros(memory: bytearray, n: int):
+    """Emit bytecode that pushes exactly *n* zero bytes onto the VM stack."""
+    while n >= 8:
+        emit_load_i_const(memory, 0, False, 3)  # 8-byte zero
+        n -= 8
+    if n >= 4:
+        emit_load_i_const(memory, 0, False, 2)  # 4-byte zero
+        n -= 4
+    if n >= 2:
+        emit_load_i_const(memory, 0, False, 1)  # 2-byte zero
+        n -= 2
+    if n == 1:
+        emit_load_i_const(memory, 0, False, 0)  # 1-byte zero

@@ -17,6 +17,7 @@ class ExprType(Enum):
     PARENTH = 10
     INLINE_IF = 11
     DECL_VAR = 12
+    DESIG_INIT = 13  # designated initializer element: .field = expr  or  [index] = expr
 
 
 class BaseExpr(PrettyRepr):
