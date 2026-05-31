@@ -26,10 +26,11 @@ Supports a practical subset of the C preprocessor:
   Macro substitution skips string literals "..." and char literals '...'.
   Object-like macros are expanded recursively (but not re-entrantly).
   Function-like macros with balanced-parenthesis argument parsing.
+  ## token-pasting (left-to-right, identifier/number tokens).
+  # stringification (raw argument, per C11 §6.10.3.2).
 
 Not implemented (future work):
-  ## token-pasting, # stringification, __VA_ARGS__, arithmetic #if
-  expressions, #line, predefined macros (__FILE__, __LINE__).
+  arithmetic #if expressions, #line.
 """
 
 from __future__ import annotations
@@ -57,19 +58,23 @@ class PreprocessorError(Exception):
 class MacroDef:
     """Represents one #define directive."""
 
-    __slots__ = ("name", "params", "replacement")
+    __slots__ = ("name", "params", "replacement", "variadic")
 
     def __init__(
         self,
         name: str,
         params: Optional[List[str]],
         replacement: str,
+        variadic: bool = False,
     ) -> None:
         self.name = name
         # params is None  → object-like macro   (#define A value)
         # params is list  → function-like macro  (#define F(x) expr)
+        # When variadic is True, params ends with "__VA_ARGS__" and the macro
+        # accepts a variable number of trailing arguments.
         self.params = params
         self.replacement = replacement
+        self.variadic = variadic
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +90,10 @@ _DIRECTIVE_RE = re.compile(r"^\s*#\s*(\w+)(.*)", re.DOTALL)
 # group 3: params string inside the parens — None when absent
 # group 4: rest of line (the replacement, to be stripped by caller)
 _DEFINE_RE = re.compile(r"(\w+)(\(([^)]*)\))?(.*)", re.DOTALL)
+
+# Match identifier/number tokens on both sides of a ## token-paste operator.
+# Used by _process_token_paste to concatenate adjacent tokens left-to-right.
+_TOKEN_PASTE_RE = re.compile(r"([A-Za-z0-9_]+)\s*##\s*([A-Za-z0-9_]+)")
 
 
 # ---------------------------------------------------------------------------
@@ -447,14 +456,19 @@ class Preprocessor:
         params_str: Optional[str] = m.group(3)  # text inside the parens, or None
         replacement: str = m.group(4).strip() if m.group(4) else ""
 
+        variadic = False
         if not has_params:
             params: Optional[List[str]] = None  # object-like
         elif params_str and params_str.strip():
-            params = [p.strip() for p in params_str.split(",")]
+            raw_params = [p.strip() for p in params_str.split(",")]
+            if raw_params and raw_params[-1] == "...":
+                variadic = True
+                raw_params[-1] = "__VA_ARGS__"
+            params = raw_params
         else:
             params = []  # function-like with zero parameters
 
-        self.defines[macro_name] = MacroDef(macro_name, params, replacement)
+        self.defines[macro_name] = MacroDef(macro_name, params, replacement, variadic)
 
     # ------------------------------------------------------------------
     # #if / #elif expression evaluation
@@ -823,10 +837,9 @@ class Preprocessor:
                 macro = self.defines.get(ident)
                 if macro is not None and ident not in _expanding:
                     if macro.params is None:
-                        # Object-like: substitute and recursively expand.
-                        expanded = self._apply_macros(
-                            macro.replacement, _expanding | {ident}
-                        )
+                        # Object-like: process ## then recursively expand.
+                        pasted = self._process_token_paste(macro.replacement)
+                        expanded = self._apply_macros(pasted, _expanding | {ident})
                         result.append(expanded)
                         i = j
                         continue
@@ -896,22 +909,155 @@ class Preprocessor:
         _expanding: FrozenSet[str],
     ) -> str:
         """Expand a function-like macro call."""
-        # F() with zero params: _parse_macro_args returns [''], normalise.
-        if len(args) == 1 and args[0] == "" and len(macro.params) == 0:
-            args = []
-        if len(args) != len(macro.params):
-            raise PreprocessorError(
-                f"macro '{macro.name}' takes {len(macro.params)} argument(s), "
-                f"got {len(args)}"
-            )
-        # Expand any macros in the argument expressions first.
+        if macro.variadic:
+            # Collect all arguments beyond the fixed parameters into __VA_ARGS__.
+            # __VA_ARGS__ is always the last entry in macro.params.
+            required = len(macro.params) - 1
+            if len(args) < required:
+                raise PreprocessorError(
+                    f"macro '{macro.name}' takes at least {required} argument(s), "
+                    f"got {len(args)}"
+                )
+            va_str = ", ".join(args[required:])
+            args = list(args[:required]) + [va_str]
+        else:
+            # F() with zero params: _parse_macro_args returns [''], normalise.
+            if len(args) == 1 and args[0] == "" and len(macro.params) == 0:
+                args = []
+            if len(args) != len(macro.params):
+                raise PreprocessorError(
+                    f"macro '{macro.name}' takes {len(macro.params)} argument(s), "
+                    f"got {len(args)}"
+                )
+        # Process # stringification FIRST, using the raw (un-expanded) args.
+        # The C standard requires that stringification captures the token text
+        # before any macro expansion of the argument.
+        replacement = self._process_stringification(
+            macro.replacement, macro.params, args
+        )
+        # GCC ##__VA_ARGS__ extension: handle comma deletion and ## removal
+        # while __VA_ARGS__ is still literally present in the replacement text,
+        # so that the substitution can be targeted precisely.
+        if macro.variadic:
+            va_val = args[-1] if args else ""
+            if va_val == "":
+                # Empty __VA_ARGS__: delete the comma immediately preceding ##
+                # and the ## operator itself (GCC comma-deletion rule).
+                replacement = re.sub(r",\s*##\s*__VA_ARGS__", "", replacement)
+            # Remove any remaining ## before __VA_ARGS__ (non-empty case: just
+            # strip the ## so __VA_ARGS__ is substituted normally below).
+            replacement = re.sub(r"##\s*__VA_ARGS__", "__VA_ARGS__", replacement)
+        # Expand any macros in the argument expressions.
         expanded_args = [self._apply_macros(a, _expanding) for a in args]
         # Substitute parameter names in the replacement template.
-        substituted = self._substitute_params(
-            macro.replacement, macro.params, expanded_args
-        )
-        # Recursively expand macros in the result.
+        substituted = self._substitute_params(replacement, macro.params, expanded_args)
+        # Process ## token-pasting after parameter substitution.
+        substituted = self._process_token_paste(substituted)
+        # Recursively expand macros in the result (allows pasted token to be a macro).
         return self._apply_macros(substituted, _expanding)
+
+    @staticmethod
+    def _stringify_arg(raw_arg: str) -> str:
+        """Wrap *raw_arg* in a C string literal, applying the transformations
+        required by the C11 standard for the ``#`` stringification operator:
+
+        * Leading and trailing whitespace is stripped.
+        * Internal whitespace sequences are collapsed to a single space.
+        * Backslashes are escaped as ``\\\\``.
+        * Double-quote characters are escaped as ``\\"``.
+        """
+        s = raw_arg.strip()
+        s = re.sub(r"\s+", " ", s)
+        s = s.replace("\\", "\\\\")
+        s = s.replace('"', '\\"')
+        return f'"{s}"'
+
+    @staticmethod
+    def _process_stringification(
+        replacement: str, params: List[str], raw_args: List[str]
+    ) -> str:
+        """Replace every ``# param`` occurrence in *replacement* with the
+        stringified form of the corresponding raw (un-expanded) argument.
+
+        A ``#`` immediately followed by optional whitespace and then a
+        parameter name is treated as the stringification operator.  A ``##``
+        token-paste sequence is left untouched.
+
+        String and character literals in the replacement text are copied
+        verbatim so that a ``#`` inside a literal is never misinterpreted.
+        """
+        if "#" not in replacement or not params:
+            return replacement
+
+        param_map = dict(zip(params, raw_args))
+        result: List[str] = []
+        i = 0
+        n = len(replacement)
+
+        while i < n:
+            ch = replacement[i]
+
+            # ---- Skip double-quoted string literals in the replacement ----
+            if ch == '"':
+                j = i + 1
+                while j < n:
+                    c2 = replacement[j]
+                    j += 1
+                    if c2 == "\\":
+                        j += 1
+                        continue
+                    if c2 == '"':
+                        break
+                result.append(replacement[i:j])
+                i = j
+                continue
+
+            # ---- Skip single-quoted char literals in the replacement ------
+            if ch == "'":
+                j = i + 1
+                while j < n:
+                    c2 = replacement[j]
+                    j += 1
+                    if c2 == "\\":
+                        j += 1
+                        continue
+                    if c2 == "'":
+                        break
+                result.append(replacement[i:j])
+                i = j
+                continue
+
+            if ch == "#":
+                # ## token-paste: copy verbatim and advance past both chars.
+                if i + 1 < n and replacement[i + 1] == "#":
+                    result.append("##")
+                    i += 2
+                    continue
+
+                # Potential stringification: # followed by optional whitespace
+                # then a parameter name identifier.
+                j = i + 1
+                while j < n and replacement[j] in " \t":
+                    j += 1
+                if j < n and (replacement[j].isalpha() or replacement[j] == "_"):
+                    k = j + 1
+                    while k < n and (replacement[k].isalnum() or replacement[k] == "_"):
+                        k += 1
+                    ident = replacement[j:k]
+                    if ident in param_map:
+                        result.append(Preprocessor._stringify_arg(param_map[ident]))
+                        i = k
+                        continue
+
+                # Not a stringification operator — copy the # verbatim.
+                result.append("#")
+                i += 1
+                continue
+
+            result.append(ch)
+            i += 1
+
+        return "".join(result)
 
     @staticmethod
     def _substitute_params(replacement: str, params: List[str], args: List[str]) -> str:
@@ -939,6 +1085,45 @@ class Preprocessor:
                 result.append(ch)
                 i += 1
         return "".join(result)
+
+    @staticmethod
+    def _process_token_paste(text: str) -> str:
+        """Process ``##`` token-pasting operators in *text*.
+
+        Concatenates the identifier/number tokens immediately to the left and
+        right of each ``##`` operator, scanning left-to-right so that
+        ``A ## B ## C`` is handled correctly (→ ``AB ## C`` → ``ABC``).
+
+        ``##`` at the very start or end of the replacement list is undefined
+        behaviour in standard C; a warning is emitted to stderr and the
+        stray operator is dropped.
+        """
+        if "##" not in text:
+            return text
+
+        # Warn about ## at start / end (UB — strip the operator).
+        stripped = text.strip()
+        if stripped.startswith("##"):
+            print(
+                "warning: '##' at start of macro replacement is undefined behavior",
+                file=sys.stderr,
+            )
+            text = re.sub(r"^\s*##\s*", "", text)
+        if text.strip().endswith("##"):
+            print(
+                "warning: '##' at end of macro replacement is undefined behavior",
+                file=sys.stderr,
+            )
+            text = re.sub(r"\s*##\s*$", "", text)
+
+        # Paste tokens left-to-right.  Loop because the regex consumes the
+        # right-hand token, leaving a subsequent ## unmatched on one pass
+        # (e.g. "A ## B ## C" → "AB ## C" on the first iteration).
+        prev = None
+        while prev != text:
+            prev = text
+            text = _TOKEN_PASTE_RE.sub(lambda m: m.group(1) + m.group(2), text)
+        return text
 
 
 # ---------------------------------------------------------------------------
