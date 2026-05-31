@@ -66,6 +66,9 @@ def get_stmnt(
     elif pos == StmntType.STATIC_ASSERT:
         rtn = StaticAssertStmnt()
         c = rtn.build(tokens, c, end, context)
+    elif pos == StmntType.SWITCH:
+        rtn = SwitchStmnt()
+        c = rtn.build(tokens, c, end, context)
     elif pos == StmntType.GOTO:
         rtn = GotoStmnt()
         c = rtn.build(tokens, c, end, context)
@@ -97,6 +100,7 @@ from .NamespaceStmnt import NamespaceStmnt
 from .ReturnStmnt import ReturnStmnt
 from .SemiColonStmnt import SemiColonStmnt
 from .StaticAssertStmnt import StaticAssertStmnt
+from .SwitchStmnt import SwitchStmnt
 from .WhileLoop import WhileLoop
 from ..type.is_type_name_part import is_type_name_part
 from ..type.types import CompileContext, DeclStmnt, TypeDefStmnt

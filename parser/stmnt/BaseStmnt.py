@@ -19,6 +19,7 @@ class StmntType(Enum):
     STATIC_ASSERT = 12
     GOTO = 13
     LABEL = 14
+    SWITCH = 15
 
 
 STMNT_KEY_TO_ID = {
@@ -35,6 +36,7 @@ STMNT_KEY_TO_ID = {
     "asm": StmntType.ASM,
     "_Static_assert": StmntType.STATIC_ASSERT,
     "goto": StmntType.GOTO,
+    "switch": StmntType.SWITCH,
 }
 
 

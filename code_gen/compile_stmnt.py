@@ -205,6 +205,83 @@ def compile_stmnt(
         pass  # Do nothing for typedef statement
     elif stmnt.stmnt_type == StmntType.STATIC_ASSERT:
         pass  # Evaluated at parse time; no code to emit
+    elif stmnt.stmnt_type == StmntType.SWITCH:
+        assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
+        assert isinstance(stmnt, SwitchStmnt)
+        assert stmnt.expr is not None
+        assert stmnt.expr.t_anot is not None, "switch expression must be type-annotated"
+
+        # --- Step 1: evaluate the switch expression once ---
+        sz = size_of(get_value_type(stmnt.expr.t_anot))
+        assert sz in (1, 2, 4, 8), "switch expression must be an integer scalar"
+        sz_cls = sz.bit_length() - 1  # 0→1B, 1→2B, 2→4B, 3→8B
+        compile_expr(
+            cmpl_obj,
+            stmnt.expr,
+            context,
+            cmpl_data,
+            get_value_type(stmnt.expr.t_anot),
+        )
+        # sz bytes of the switch expression now sit at TOS.
+
+        # --- Step 2: build a child LocalCompileData with break → switch end ---
+        cmpl_data1 = LocalCompileData(cmpl_data)
+        lnk_end_switch = Linkage()
+        old_breakable = cmpl_data.cur_breakable
+        # Keep the enclosing continue target; replace break target with ours.
+        cmpl_data1.cur_breakable = (
+            old_breakable[0] if old_breakable is not None else None,
+            lnk_end_switch,
+        )
+
+        # One Linkage per segment (points to the start of that segment's body).
+        seg_linkages = [Linkage() for _ in stmnt.segments]
+        default_lnk = None  # will point at the default segment's Linkage, if any
+
+        # CMP opcode appropriate for the expression size.
+        cmp_opcode = (BC_CMP1, BC_CMP2, BC_CMP4, BC_CMP8)[sz_cls]
+
+        # --- Step 3: emit the compare chain ---
+        for seg_idx, (seg_labels, _) in enumerate(stmnt.segments):
+            for label_val in seg_labels:
+                if label_val is None:
+                    # default label — record the target; no compare needed here.
+                    default_lnk = seg_linkages[seg_idx]
+                else:
+                    # Duplicate TOS (the switch expression value) without consuming it.
+                    cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | (sz_cls << 5)])
+                    # Load the case constant at the same size.
+                    emit_load_i_const(cmpl_obj.memory, label_val, label_val < 0, sz_cls)
+                    # Compare: pushes sign(switch_val - case_val) as 1 signed byte.
+                    # Result is 0 iff switch_val == case_val.
+                    cmpl_obj.memory.extend([cmp_opcode, BC_EQ0])
+                    # Jump to this segment's body if equal (condition == 1).
+                    seg_linkages[seg_idx].emit_lea(cmpl_obj.memory)
+                    cmpl_obj.memory.extend([BC_JMPIF])
+
+        # After all comparisons: jump to default (or skip the whole switch).
+        if default_lnk is not None:
+            default_lnk.emit_lea(cmpl_obj.memory)
+        else:
+            lnk_end_switch.emit_lea(cmpl_obj.memory)
+        cmpl_obj.memory.extend([BC_JMP])
+
+        # --- Step 4: emit segment bodies in order (fall-through is automatic) ---
+        for seg_idx, (_, seg_stmnts) in enumerate(stmnt.segments):
+            seg_linkages[seg_idx].src = len(cmpl_obj.memory)
+            for seg_stmnt in seg_stmnts:
+                compile_stmnt(cmpl_obj, seg_stmnt, stmnt.context, cmpl_data1)
+
+        # --- Step 5: end-of-switch — pop the switch expression off the stack ---
+        lnk_end_switch.src = len(cmpl_obj.memory)
+        sz_cls2 = emit_load_i_const(cmpl_obj.memory, sz, False)
+        cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls2])
+
+        # Back-fill all forward references.
+        for lnk in seg_linkages:
+            lnk.fill_all(cmpl_obj.memory)
+        lnk_end_switch.fill_all(cmpl_obj.memory)
+
     elif stmnt.stmnt_type == StmntType.GOTO:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, GotoStmnt)
@@ -237,6 +314,11 @@ from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import (
     BCR_EA_R_IP,
     BCR_SZ_8,
+    BCR_TOS,
+    BC_CMP1,
+    BC_CMP2,
+    BC_CMP4,
+    BC_CMP8,
     BC_EQ0,
     BC_JMP,
     BC_JMPIF,
@@ -255,6 +337,7 @@ from ..parser.stmnt.NamespaceStmnt import NamespaceStmnt
 from ..parser.stmnt.ReturnStmnt import ReturnStmnt
 from ..parser.stmnt.SemiColonStmnt import SemiColonStmnt
 from ..parser.stmnt.StaticAssertStmnt import StaticAssertStmnt
+from ..parser.stmnt.SwitchStmnt import SwitchStmnt
 from ..parser.stmnt.WhileLoop import WhileLoop
 from ..parser.type.types import (
     CompileContext,
