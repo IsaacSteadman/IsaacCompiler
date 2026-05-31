@@ -25,7 +25,9 @@ class StackDict(object):
             del self.data[key]
             lst = self.data[key]
         elif lst[-1] + 1 < len(self.stack):
-            raise KeyError("Cannot delete item that is not at top of stack: key = %s" % repr(key))
+            raise KeyError(
+                "Cannot delete item that is not at top of stack: key = %s" % repr(key)
+            )
         else:
             self.stack.pop()
             lst.pop()
@@ -39,7 +41,9 @@ class StackDict(object):
         return key in self.data or key in self.base
 
 
-def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]], str_asm: str) -> Dict[str, "Linkage"]:
+def assemble(
+    cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]], str_asm: str
+) -> Dict[str, "Linkage"]:
     """
     rel_bp_names: a dictionary mapping variable names to 2-tuples of (base pointer offset, variable size)
     """
@@ -60,8 +64,7 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
                 raise SyntaxError("Only one item per line")
             if part[0][0].isdigit():
                 num, sign, sz_cls, is_float, end = parse_number(part[0])
-                cmpl_unit.memory.extend([
-                    BC_LOAD, BCR_ABS_C | (sz_cls << 5)])
+                cmpl_unit.memory.extend([BC_LOAD, BCR_ABS_C | (sz_cls << 5)])
                 if is_float:
                     if sz_cls == 2:
                         cmpl_unit.memory.extend(float_t.pack(num))
@@ -99,19 +102,25 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
                         rel_spec = ""
                     elif Ch in "ra":
                         if is_rel is None:
-                            is_rel = (Ch == 'r')
+                            is_rel = Ch == "r"
                         else:
-                            raise SyntaxError("Cannot specify 'r' or 'a' more than once")
+                            raise SyntaxError(
+                                "Cannot specify 'r' or 'a' more than once"
+                            )
                     elif Ch in "RA":
                         if is_l_rel is None:
-                            is_l_rel = Ch == 'R'
+                            is_l_rel = Ch == "R"
                         else:
-                            raise SyntaxError("Cannot specify 'R' or 'A' more than once")
+                            raise SyntaxError(
+                                "Cannot specify 'R' or 'A' more than once"
+                            )
                     elif Ch in "gGlL":
                         if is_global is None:
-                            is_global = Ch.lower() == 'g'
+                            is_global = Ch.lower() == "g"
                         else:
-                            raise SyntaxError("Cannot specify 'g' or 'l' more than once")
+                            raise SyntaxError(
+                                "Cannot specify 'g' or 'l' more than once"
+                            )
                     else:
                         raise SyntaxError("unrecognized specifier: '%s'" % Ch)
                 if rel_spec is not None:
@@ -131,12 +140,13 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
                         if lnk is None:
                             lnk = code_links[name] = Linkage()
                     start_pos = len(cmpl_unit.memory)
-                    cmpl_unit.memory.extend([
-                        BC_LOAD, BCR_SZ_8, 0, 0, 0, 0, 0, 0, 0, 0])
+                    cmpl_unit.memory.extend([BC_LOAD, BCR_SZ_8, 0, 0, 0, 0, 0, 0, 0, 0])
                     lnk_ref = LinkRef(start_pos + 2)
                     if is_l_rel:
                         lnk_ref.rel_off = 0
-                        cmpl_unit.memory[start_pos + 1] |= BCR_ABS_C if is_rel else BCR_EA_R_IP
+                        cmpl_unit.memory[start_pos + 1] |= (
+                            BCR_ABS_C if is_rel else BCR_EA_R_IP
+                        )
                     else:
                         if is_rel:
                             raise SyntaxError("Relative result linking is not allowed")
@@ -150,16 +160,15 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
                     off = local_vars[name][0]
                     if is_rel:
                         byts, sz_cls = get_sz_cls_align_long(off, True)
-                        cmpl_unit.memory.extend([
-                            BC_LOAD, BCR_ABS_C | (sz_cls << 5)])
+                        cmpl_unit.memory.extend([BC_LOAD, BCR_ABS_C | (sz_cls << 5)])
                         cmpl_unit.memory.extend(byts)
                     else:
                         byts = sz_cls_align_long(off, True, 3)
-                        cmpl_unit.memory.extend([
-                            BC_LOAD, BCR_ABS_C | BCR_SZ_8])
+                        cmpl_unit.memory.extend([BC_LOAD, BCR_ABS_C | BCR_SZ_8])
                         cmpl_unit.memory.extend(byts)
-                        cmpl_unit.memory.extend([
-                            BC_LOAD, BCR_REG_BP | BCR_SZ_8, BC_ADD8])
+                        cmpl_unit.memory.extend(
+                            [BC_LOAD, BCR_REG_BP | BCR_SZ_8, BC_ADD8]
+                        )
             elif part[0].startswith(":"):  # code-pointer declaration
                 name = part[0][1:]
                 lnk = code_links.get(name, None)
@@ -170,7 +179,9 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
             elif part[0].startswith("~+"):  # local variable decl
                 names = part[0][2:].split(",")
                 if len(names) != 2:
-                    raise SyntaxError("In order to declare a variable, size or an initial value must be provided")
+                    raise SyntaxError(
+                        "In order to declare a variable, size or an initial value must be provided"
+                    )
                 name = names[0]
                 top = (0, 0)
                 try:
@@ -179,17 +190,14 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
                     pass
                 size = int(names[1]) if names[1].isdigit() else None
                 if size is not None:
-                    cmpl_unit.memory.extend([
-                        BC_LOAD, BCR_ABS_C])
+                    cmpl_unit.memory.extend([BC_LOAD, BCR_ABS_C])
                     byts, sz_cls = get_sz_cls_align_long(size, False, 3)
                     cmpl_unit.memory[-1] |= sz_cls << 5
                     cmpl_unit.memory.extend(byts)
-                    cmpl_unit.memory.extend([
-                        BC_ADD_SP1 + sz_cls])
+                    cmpl_unit.memory.extend([BC_ADD_SP1 + sz_cls])
                 else:
                     num, sign, sz_cls, is_float, end = parse_number(names[1])
-                    cmpl_unit.memory.extend([
-                        BC_LOAD, BCR_ABS_C | (sz_cls << 5)])
+                    cmpl_unit.memory.extend([BC_LOAD, BCR_ABS_C | (sz_cls << 5)])
                     if is_float:
                         if sz_cls == 2:
                             cmpl_unit.memory.extend(float_t.pack(num))
@@ -212,15 +220,18 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
                         BC_LOAD, BCR_ABS | BCR_SZ_8, 0, 0, 0, 0, 0, 0, 0, 0
                     ])
                     lnk.lst_tgt.append(LinkRef(len(CmplUnit.memory) - 8, 1))"""
-                    raise NotImplementedError("Dereferencing a global is Not Implemented")
+                    raise NotImplementedError(
+                        "Dereferencing a global is Not Implemented"
+                    )
                 else:
                     var = local_vars[names[1]]
                     off = var[0]
                     sz = var[1]
                     sz_cls_1 = [1, 2, 4, 8].index(sz)
                     byts, sz_cls = get_sz_cls_align_long(off, True)
-                    cmpl_unit.memory.extend([
-                        BC_LOAD, (BCR_R_BP1 + sz_cls) | (sz_cls_1 << 5)])
+                    cmpl_unit.memory.extend(
+                        [BC_LOAD, (BCR_R_BP1 + sz_cls) | (sz_cls_1 << 5)]
+                    )
                     cmpl_unit.memory.extend(byts)
             else:
                 cur_part = part[0]
@@ -237,7 +248,9 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
                         else:
                             byts = sz_cls_align_long(num, sign, sz_cls)
                     else:
-                        byts, end, last_instr, prev_code_type = parse_aux_codes(cur_part, cur_def_code_type)
+                        byts, end, last_instr, prev_code_type = parse_aux_codes(
+                            cur_part, cur_def_code_type
+                        )
                         if last_instr is None:
                             cur_def_code_type = "BCR"
                         elif prev_code_type is None:
@@ -251,10 +264,31 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
                                 cur_def_code_type = "BCRE"
                             elif last_instr == BC_CALL_E:
                                 cur_def_code_type = "BCCE"
+                            elif last_instr == BC_INT128:
+                                cur_def_code_type = "BC128"
+                            elif last_instr == BC_INVTLB:
+                                cur_def_code_type = "INVTLB"
                             else:
                                 cur_def_code_type = "BCR"
-                        elif prev_code_type == "BCR" and last_instr & BCR_TYP_MASK == BCR_SYSREG:
+                        elif (
+                            prev_code_type == "BCR"
+                            and last_instr & BCR_TYP_MASK == BCR_SYSREG
+                        ):
                             cur_def_code_type = "SVSR"
+                        elif prev_code_type == "BCR" and (
+                            last_instr & BCR_TYP_MASK
+                        ) in (
+                            BCR_ATOMIC_LOAD,
+                            BCR_ATOMIC_XCHG,
+                            BCR_ATOMIC_CAS,
+                            BCR_ATOMIC_FADD,
+                            BCR_ATOMIC_FSUB,
+                            BCR_ATOMIC_FAND,
+                            BCR_ATOMIC_FOR,
+                            BCR_ATOMIC_FXOR,
+                            BCR_ATOMIC_STORE,
+                        ):
+                            cur_def_code_type = "ORDERING"
                     if byts is None:
                         raise SyntaxError("No bytes gotten")
                     else:
@@ -265,7 +299,14 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
                             cur_part = cur_part[1:]
                         else:
                             raise SyntaxError("Expected '-' to separate tokens")
-        except (ValueError, SyntaxError, TypeError, LookupError, EnvironmentError, NotImplementedError) as Exc:
+        except (
+            ValueError,
+            SyntaxError,
+            TypeError,
+            LookupError,
+            EnvironmentError,
+            NotImplementedError,
+        ) as Exc:
             if not Exc.args:
                 Exc.args = ("",)
             Exc.args = Exc.args + ("At Line %u" % c,)
@@ -284,7 +325,10 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
             for Ref in lnk.lst_tgt:
                 assert isinstance(Ref, LinkRef)
                 if not Ref.try_fill_ref_rel(cmpl_unit.memory, lnk.src):
-                    print("WARN: Linker Failed to link %s into location 0x%016X (%u)" % (k, Ref.pos, Ref.pos))
+                    print(
+                        "WARN: Linker Failed to link %s into location 0x%016X (%u)"
+                        % (k, Ref.pos, Ref.pos)
+                    )
                     lst_failed.append(Ref)
             if len(lst_failed):
                 out_code_links[k] = Linkage()
@@ -293,9 +337,35 @@ def assemble(cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]],
     return out_code_links
 
 
-from ...StackVM.PyStackVM import BCR_ABS_C, BCR_EA_R_IP, BCR_REG_BP, BCR_R_BP1,\
-    BCR_SYSREG, BCR_SZ_8, BCR_TYP_MASK, BC_ADD8, BC_ADD_SP1, BC_CALL_E,\
-    BC_CONV, BC_LOAD, BC_RET_E, BC_SWAP, double_t, float_t
+from ...StackVM.PyStackVM import (
+    BCR_ABS_C,
+    BCR_EA_R_IP,
+    BCR_REG_BP,
+    BCR_R_BP1,
+    BCR_SYSREG,
+    BCR_SZ_8,
+    BCR_TYP_MASK,
+    BC_ADD8,
+    BC_ADD_SP1,
+    BC_CALL_E,
+    BC_CONV,
+    BC_LOAD,
+    BC_RET_E,
+    BC_SWAP,
+    BC_INT128,
+    BC_INVTLB,
+    double_t,
+    float_t,
+    BCR_ATOMIC_LOAD,
+    BCR_ATOMIC_XCHG,
+    BCR_ATOMIC_CAS,
+    BCR_ATOMIC_FADD,
+    BCR_ATOMIC_FSUB,
+    BCR_ATOMIC_FAND,
+    BCR_ATOMIC_FOR,
+    BCR_ATOMIC_FXOR,
+    BCR_ATOMIC_STORE,
+)
 from ..BaseCmplObj import BaseCmplObj
 from ..LinkRef import LinkRef
 from ..Linkage import Linkage

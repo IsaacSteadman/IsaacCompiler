@@ -1,6 +1,17 @@
 from typing import Optional
 
-from StackVM.PyStackVM import StackVM_Codes, StackVM_BCR_Codes, StackVM_BCS_Codes, StackVM_BCC_Codes, StackVM_BCRE_Codes, StackVM_BCCE_Codes, StackVM_SVSR_Codes
+from ...StackVM.PyStackVM import (
+    StackVM_Codes,
+    StackVM_BCR_Codes,
+    StackVM_BCS_Codes,
+    StackVM_BCC_Codes,
+    StackVM_BCRE_Codes,
+    StackVM_BCCE_Codes,
+    StackVM_SVSR_Codes,
+    StackVM_BC128_Codes,
+    StackVM_INVTLB_Codes,
+    StackVM_ORDERING_Codes,
+)
 
 
 def aggregate_lookup_stack_vm(lookup, s):
@@ -9,20 +20,21 @@ def aggregate_lookup_stack_vm(lookup, s):
         rtn |= lookup[Tok]
     return rtn
 
-def parse_aux_codes(part: str, def_code_type: Optional[str], c: int=0) -> bytearray:
+
+def parse_aux_codes(part: str, def_code_type: Optional[str], c: int = 0) -> bytearray:
     # TODO: this may be extended in the future to support arbitrary inline machine code with syntax like "(8d0)" for 8 BC_NOP instructions
     end = part.find("-", c)
     if end == -1:
         end = len(part)
     code_type = def_code_type
-    pos = part.find('(', c, end)
+    pos = part.find("(", c, end)
     parenth = False
     if pos != -1:
         parenth = True
         if pos > c:
             code_type = part[c:pos]
         c = pos + 1
-        end = part.find(')', c)
+        end = part.find(")", c)
         if end == -1:
             raise SyntaxError("Expected ')' to terminate Auxiliary codes")
     rtn = bytearray()
@@ -42,6 +54,12 @@ def parse_aux_codes(part: str, def_code_type: Optional[str], c: int=0) -> bytear
         last_instr = aggregate_lookup_stack_vm(StackVM_BCCE_Codes, s)
     elif code_type == "SVSR":
         last_instr = aggregate_lookup_stack_vm(StackVM_SVSR_Codes, s)
+    elif code_type == "BC128":
+        last_instr = aggregate_lookup_stack_vm(StackVM_BC128_Codes, s)
+    elif code_type == "INVTLB":
+        last_instr = aggregate_lookup_stack_vm(StackVM_INVTLB_Codes, s)
+    elif code_type == "ORDERING":
+        last_instr = aggregate_lookup_stack_vm(StackVM_ORDERING_Codes, s)
     else:
         raise SyntaxError("Unrecognized code type: '%s'" % code_type)
     rtn.append(last_instr)
