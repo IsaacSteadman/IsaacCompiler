@@ -2,6 +2,7 @@ from Lexing import *
 from PrettyRepr import *
 from CompilingUtils import *
 from typing import List
+from ..code_gen.Compilation import INIT_GLOBALS_LINK_NAME
 
 
 # TODO: fix function overloading (CodeGen and Parse-time resolution)
@@ -164,11 +165,6 @@ def compile_lang1(tokens: List["Token"], cmpl_opts: "CompilerOptions"):
     lst_stmnt = []
     cmpl_obj = Compilation(cmpl_opts.keep_local_syms)
     run_method = link_opts.run_method
-    if run_method == LNK_RUN_STANDALONE:
-        main_fn = cmpl_obj.get_link("?FiPPczmain")
-        emit_load_i_const(cmpl_obj.memory, 1, True, 2)
-        main_fn.emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_CALL, BC_HLT])
     while c < end:
         stmnt, c = get_stmnt(tokens, c, end, global_ctx)
         try:
@@ -178,6 +174,16 @@ def compile_lang1(tokens: List["Token"], cmpl_opts: "CompilerOptions"):
             print(get_user_str_parse_pos(tokens, c))
             raise
         lst_stmnt.append(stmnt)
+    if run_method == LNK_RUN_STANDALONE:
+        init_obj = cmpl_obj.objects.get(INIT_GLOBALS_LINK_NAME)
+        if init_obj is not None:
+            init_obj.memory.append(BC_RET)
+            cmpl_obj.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(cmpl_obj.memory)
+            cmpl_obj.memory.extend([BC_CALL])
+        main_fn = cmpl_obj.get_link("?FiPPczmain")
+        emit_load_i_const(cmpl_obj.memory, 1, True, 2)
+        main_fn.emit_lea(cmpl_obj.memory)
+        cmpl_obj.memory.extend([BC_CALL, BC_HLT])
     dep_tree = [("", sorted(cmpl_obj.linkages))]
     for k in cmpl_obj.objects:
         cur = cmpl_obj.objects[k]
@@ -187,7 +193,7 @@ def compile_lang1(tokens: List["Token"], cmpl_opts: "CompilerOptions"):
             cur = extern_deps[k]
             dep_tree.append((k, sorted(cur.linkages)))
     dep_dct = dict(dep_tree)
-    used_deps = flatify_dep_desc(dep_dct, "?FiPPczmain")
+    used_deps = flatify_dep_desc(dep_dct, "")
     def_deps = set([k for k, Lst in dep_tree if k != ""])
     unused_deps = def_deps - used_deps
     if len(unused_deps):

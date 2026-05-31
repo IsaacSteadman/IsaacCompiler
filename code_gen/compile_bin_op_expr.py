@@ -88,7 +88,7 @@ def compile_bin_op_expr(
         lnk_name = ctx_var.get_link_name()
         lnk = (
             cmpl_data.get_local(lnk_name)
-            if ctx_var.parent.is_local_scope()
+            if ctx_var.uses_stack_storage()
             else cmpl_obj.get_link(lnk_name)
         )
         assert isinstance(lnk, BaseLink)

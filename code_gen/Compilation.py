@@ -2,6 +2,8 @@ from enum import Enum
 from typing import Dict, Optional, Set
 from .BaseCmplObj import BaseCmplObj
 
+INIT_GLOBALS_LINK_NAME = "?Fz__init_globals"
+
 
 class CompileObjectType(Enum):
     GLOBAL = 0  # initialization of a global
@@ -22,6 +24,19 @@ class Compilation(BaseCmplObj):
         rtn = CompileObject(typ, name)
         self.objects[name] = rtn
         return rtn.set_parent(self)
+
+    def ensure_compile_object(
+        self, typ: CompileObjectType, name: str
+    ) -> "CompileObject":
+        cur = self.objects.get(name)
+        if cur is None:
+            return self.spawn_compile_object(typ, name)
+        if cur.typ != typ:
+            raise TypeError(
+                "Compile object %r already exists with type %r (expected %r)"
+                % (name, cur.typ, typ)
+            )
+        return cur
 
     def merge_all(
         self,

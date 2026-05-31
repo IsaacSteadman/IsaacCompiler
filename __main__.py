@@ -4,9 +4,9 @@ import struct
 from typing import Callable, Dict, List, Optional, Set, Union
 from .PrettyRepr import format_pretty
 from .Preprocessing import preprocess as cpp_preprocess
-from .StackVM.PyStackVM import BC_CALL, BC_HLT
+from .StackVM.PyStackVM import BC_CALL, BC_HLT, BC_RET
 from .StackVM.runner import add_cmd_argv_vm, run_in_vm
-from .code_gen.Compilation import Compilation
+from .code_gen.Compilation import Compilation, INIT_GLOBALS_LINK_NAME
 from .code_gen.CompilerOptions import CompilerOptions
 from .code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
 from .code_gen.compile_stmnt import compile_stmnt
@@ -319,11 +319,6 @@ if args.subcommand == "compile":
         )
         cmpl_opts = CompilerOptions(link_opts, True, args.debugging_symbols)
         cmpl_obj = Compilation(cmpl_opts.keep_local_syms)
-        if link_opts.run_method == LNK_RUN_STANDALONE:
-            main_fn = cmpl_obj.get_link("?FiPPczmain")
-            emit_load_i_const(cmpl_obj.memory, 1, True, 2)
-            main_fn.emit_lea(cmpl_obj.memory)
-            cmpl_obj.memory.extend([BC_CALL, BC_HLT])
         print("Generating AST and binary inline")
         while c < end:
             prev_c = c
@@ -346,6 +341,16 @@ if args.subcommand == "compile":
                 raise RuntimeError(
                     f"compile error when compiling statement between {input_file}:{lnA}:{colA} and {input_file}:{lnB}:{colB}"
                 ) from exc
+        if link_opts.run_method == LNK_RUN_STANDALONE:
+            init_obj = cmpl_obj.objects.get(INIT_GLOBALS_LINK_NAME)
+            if init_obj is not None:
+                init_obj.memory.append(BC_RET)
+                cmpl_obj.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(cmpl_obj.memory)
+                cmpl_obj.memory.extend([BC_CALL])
+            main_fn = cmpl_obj.get_link("?FiPPczmain")
+            emit_load_i_const(cmpl_obj.memory, 1, True, 2)
+            main_fn.emit_lea(cmpl_obj.memory)
+            cmpl_obj.memory.extend([BC_CALL, BC_HLT])
         print("building dependency tree")
         dep_tree = [("", sorted(cmpl_obj.linkages))]
         for k in cmpl_obj.objects:
@@ -356,7 +361,7 @@ if args.subcommand == "compile":
                 cur = link_opts.extern_deps[k]
                 dep_tree.append((k, sorted(cur.linkages)))
         dep_dct: Dict[str, List[str]] = dict(dep_tree)
-        used_deps = flatify_dep_desc(dep_dct, "?FiPPczmain")
+        used_deps = flatify_dep_desc(dep_dct, "")
         def_deps = {k for k, _ in dep_tree if k}
         unused_deps = def_deps - used_deps
         if len(unused_deps):

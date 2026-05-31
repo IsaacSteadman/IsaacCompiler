@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import struct
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, TypeVar, Union
 from .BaseType import BaseType, TypeClass
@@ -623,6 +624,11 @@ class PrimitiveType(BaseType):
                 raise TypeError(
                     "Cannot instantiate primitive types with more than one argument"
                 )
+            static_res = _compile_static_storage_decl(
+                self, cmpl_obj, init_args, context, ref, cmpl_data, temp_links
+            )
+            if static_res is not None:
+                return static_res
             if is_local:
                 assert (
                     cmpl_data is not None
@@ -652,60 +658,9 @@ class PrimitiveType(BaseType):
                 if ctx_var is not None:
                     cmpl_data.put_local(ctx_var, name, sz_var, None, True)
             else:
-                assert cmpl_data is None, "Expected cmpl_data to be None for GLOBAL"
-                assert isinstance(cmpl_obj, Compilation)
-                assert ctx_var is not None
-                assert isinstance(ctx_var, ContextVariable)
-                assert name is not None
-                cmpl_obj1 = cmpl_obj.spawn_compile_object(
-                    CompileObjectType.GLOBAL, name
+                raise AssertionError(
+                    "Named static-storage declarations should be handled before the global branch"
                 )
-                cmpl_obj1.memory.extend([0] * sz_var)
-                if len(init_args) == 1:
-                    link = cmpl_obj.get_link(name)
-                    src_pt = get_base_prim_type(init_args[0].t_anot)
-                    src_vt = get_value_type(src_pt)
-                    err0 = "Expected Expression sz == %s, but %u != %u (name = %r, linkName = '%s', expr = %r)"
-                    if src_pt is src_vt:
-                        sz = compile_expr(
-                            cmpl_obj,
-                            init_args[0],
-                            context,
-                            cmpl_data,
-                            src_vt,
-                            temp_links,
-                        )
-                        assert sz == sz_var, err0 % (
-                            "sz_var",
-                            sz,
-                            sz_var,
-                            ctx_var.name,
-                            name,
-                            init_args[0],
-                        )
-                    else:
-                        sz = compile_expr(
-                            cmpl_obj,
-                            init_args[0],
-                            context,
-                            cmpl_data,
-                            src_pt,
-                            temp_links,
-                        )
-                        assert sz == 8, err0 % (
-                            "sizeof(void*)",
-                            sz,
-                            8,
-                            ctx_var.name,
-                            name,
-                            init_args[0],
-                        )
-                        sz_cls = sz_var.bit_length() - 1
-                        assert sz_var == 1 << sz_cls
-                        cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
-                    link.emit_stor(
-                        cmpl_obj.memory, sz_var, cmpl_obj, byte_copy_cmpl_intrinsic
-                    )
             return sz_var
         elif ref.ref_type == VAR_REF_LNK_PREALLOC:
             assert isinstance(ref, VarRefLnkPrealloc)
@@ -1234,6 +1189,11 @@ class StructType(CompileContext, BaseType):
         name = None
         ctx_var = None
         is_local = True
+        static_res = _compile_static_storage_decl(
+            self, cmpl_obj, init_args, context, ref, cmpl_data, temp_links
+        )
+        if static_res is not None:
+            return static_res
         sz_var = size_of(self)
         if ref.ref_type == VAR_REF_TOS_NAMED:
             assert isinstance(ref, VarRefTosNamed)
@@ -1241,7 +1201,7 @@ class StructType(CompileContext, BaseType):
             if ctx_var is not None:
                 assert isinstance(ctx_var, ContextVariable)
                 name = ctx_var.get_link_name()
-                is_local = ctx_var.parent.is_local_scope()
+                is_local = ctx_var.uses_stack_storage()
                 if not is_local:
                     assert isinstance(cmpl_obj, Compilation)
                     cmpl_obj1 = cmpl_obj.spawn_compile_object(
@@ -1312,8 +1272,7 @@ class StructType(CompileContext, BaseType):
                     field_offset += field_sz
             else:
                 # ── Global variable (memory already zeroed in the setup stage) ─
-                assert cmpl_data is None
-                assert ctx_var is not None
+                assert ctx_var is None or isinstance(ctx_var, ContextVariable)
                 field_offset = (
                     0 if self.the_base_type is None else size_of(self.the_base_type)
                 )
@@ -1378,14 +1337,12 @@ class StructType(CompileContext, BaseType):
             if ctx_var is not None:
                 cmpl_data.put_local(ctx_var, name, sz_var, None, True)
         else:
-            assert cmpl_data is None, "Expected cmpl_data to be None for GLOBAL"
-            assert isinstance(cmpl_obj, Compilation)
             assert ctx_var is None or isinstance(ctx_var, ContextVariable)
             var_name = "<NONE>" if ctx_var is None else ctx_var.name
-            assert name is not None
             if len(init_args):
                 src_pt, src_vt, is_src_ref = get_tgt_ref_type(init_args[0].t_anot)
                 err0 = "Expected Expression sz == %s, but %u != %u (name = %r, linkName = '%s', expr = %r)"
+                link_name = "<PREALLOC>" if name is None else name
                 if is_src_ref:
                     sz = compile_expr(
                         cmpl_obj, init_args[0], context, cmpl_data, src_pt, temp_links
@@ -1395,7 +1352,7 @@ class StructType(CompileContext, BaseType):
                         sz,
                         8,
                         var_name,
-                        name,
+                        link_name,
                         init_args[0],
                     )
                     sz_cls = sz_var.bit_length() - 1
@@ -1410,7 +1367,7 @@ class StructType(CompileContext, BaseType):
                         sz,
                         sz_var,
                         var_name,
-                        name,
+                        link_name,
                         init_args[0],
                     )
                 link.emit_stor(
@@ -2172,6 +2129,7 @@ class DeclStmnt(BaseStmnt):
             assert isinstance(named_qual_type, IdentifiedQualType)
             cur_decl = None
             bf_width = None
+            ctx_var = None
             if named_qual_type.name is None:
                 if (
                     c < end_stmnt
@@ -2193,6 +2151,13 @@ class DeclStmnt(BaseStmnt):
                             size_of(named_qual_type.typ), bf_width
                         )
             elif tokens[c].str == "=":
+                ctx_var = context.new_var(
+                    named_qual_type.name,
+                    ContextVariable(
+                        named_qual_type.name, named_qual_type.typ, None, ext_spec
+                    ),
+                )
+                ctx_var.is_op_fn = named_qual_type.is_op_fn
                 c += 1
                 expr, c = get_expr(tokens, c, ",", end_stmnt, context)
                 cur_decl = SingleVarDecl(
@@ -2203,6 +2168,13 @@ class DeclStmnt(BaseStmnt):
                     INIT_ASSIGN,
                 )
             elif tokens[c].str == "(":
+                ctx_var = context.new_var(
+                    named_qual_type.name,
+                    ContextVariable(
+                        named_qual_type.name, named_qual_type.typ, None, ext_spec
+                    ),
+                )
+                ctx_var.is_op_fn = named_qual_type.is_op_fn
                 c += 1
                 lvl = 1
                 c0 = c
@@ -2233,6 +2205,13 @@ class DeclStmnt(BaseStmnt):
                 init_args = []
                 prim_type = get_base_prim_type(named_qual_type.typ)
                 start = c
+                ctx_var = context.new_var(
+                    named_qual_type.name,
+                    ContextVariable(
+                        named_qual_type.name, named_qual_type.typ, None, ext_spec
+                    ),
+                )
+                ctx_var.is_op_fn = named_qual_type.is_op_fn
                 if prim_type.type_class_id == TypeClass.QUAL:
                     assert isinstance(prim_type, QualType)
                     if prim_type.qual_id == QualType.QUAL_FN:
@@ -2304,13 +2283,16 @@ class DeclStmnt(BaseStmnt):
                 )
             if cur_decl is not None:
                 self.decl_lst.append(cur_decl)
-                inst = ContextVariable(
-                    cur_decl.var_name, cur_decl.type_name, None, ext_spec
-                )
-                if bf_width is not None:
-                    inst.bit_field_width = bf_width
-                ctx_var = context.new_var(cur_decl.var_name, inst)
-                ctx_var.is_op_fn = named_qual_type.is_op_fn
+                if ctx_var is None:
+                    inst = ContextVariable(
+                        cur_decl.var_name, cur_decl.type_name, None, ext_spec
+                    )
+                    if bf_width is not None:
+                        inst.bit_field_width = bf_width
+                    ctx_var = context.new_var(cur_decl.var_name, inst)
+                    ctx_var.is_op_fn = named_qual_type.is_op_fn
+                elif bf_width is not None:
+                    ctx_var.bit_field_width = bf_width
                 # NOTE the following must be true: SingleVarDecl(...).type_name is ContextVariable(...).typ
             if is_non_semi_colon_end:
                 break
@@ -2800,6 +2782,7 @@ class QualType(BaseType):
             )
         if len(init_args) == 0 and self.qual_id == QualType.QUAL_REF:
             raise ValueError("Cannot declare a reference without instantiating it")
+        _maybe_deduce_array_extent(self, init_args)
         sz_var = size_of(self)
         ctx_var = None
         link = None
@@ -2826,7 +2809,7 @@ class QualType(BaseType):
                     ref = VarRefTosNamed(ctx_var)
                 assert isinstance(ctx_var, ContextVariable)
                 name = ctx_var.get_link_name()
-                is_local = ctx_var.parent.is_local_scope()
+                is_local = ctx_var.uses_stack_storage()
                 if not is_local:
                     link = cmpl_obj.get_link(name)
             if self.qual_id == QualType.QUAL_FN:
@@ -2858,6 +2841,13 @@ class QualType(BaseType):
                 raise TypeError("Functions must be NAMED")
         else:
             raise ValueError("Unrecognized VarRef (ref = %s)" % repr(ref))
+        static_res = None
+        if self.qual_id != QualType.QUAL_FN:
+            static_res = _compile_static_storage_decl(
+                self, cmpl_obj, init_args, context, ref, cmpl_data, temp_links
+            )
+        if static_res is not None:
+            return static_res
         # Creation stage (in program)
         if self.qual_id in [
             QualType.QUAL_DEF,
@@ -3335,7 +3325,7 @@ class ContextVariable(ContextMember, PrettyRepr):
         self.init_expr = init_expr
         self.is_op_fn = False
         self.typ: "BaseType" = typ
-        self.mods = mods
+        self.mods = mods if isinstance(mods, VarDeclMods) else VarDeclMods(mods)
         self.bit_field_width: Optional[int] = None
 
     def pretty_repr(self, pretty_repr_ctx=None):
@@ -3376,6 +3366,23 @@ class ContextVariable(ContextMember, PrettyRepr):
                 return (
                     "@".join(lst_rtn) + "?" + self.typ.to_mangle_str(True) + self.name
                 )
+
+    def uses_stack_storage(self) -> bool:
+        return (
+            self.parent is not None
+            and self.parent.is_local_scope()
+            and self.mods != VarDeclMods.STATIC
+        )
+
+    def has_static_storage(self) -> bool:
+        return not self.uses_stack_storage()
+
+    def is_static_local(self) -> bool:
+        return (
+            self.parent is not None
+            and self.parent.is_local_scope()
+            and self.mods == VarDeclMods.STATIC
+        )
 
     def const_init(self, expr):
         self.init_expr = expr
@@ -3554,12 +3561,15 @@ from ..type.BaseType import BaseType, TypeClass
 from ..type.types import ContextVariable, VarDeclMods
 from ...StackVM.PyStackVM import (
     BCR_ABS_S8,
+    BCR_EA_R_IP,
+    BCR_SZ_8,
     BC_ADD_SP1,
     BC_CMP1,
     BC_CMP8S,
     BC_CONV,
     BC_FCMP_16,
     BC_FCMP_2,
+    BC_JMPIF,
     BC_LOAD,
     BC_NE0,
     BC_NOP,
@@ -3567,8 +3577,14 @@ from ...StackVM.PyStackVM import (
 )
 from ...code_gen.BaseCmplObj import BaseCmplObj
 from ...code_gen.BaseLink import BaseLink
-from ...code_gen.Compilation import Compilation, CompileObjectType
+from ...code_gen.Compilation import (
+    INIT_GLOBALS_LINK_NAME,
+    Compilation,
+    CompileObjectType,
+)
 from ...code_gen.IndirectLink import IndirectLink
+from ...code_gen.LinkRef import LinkRef
+from ...code_gen.Linkage import Linkage
 from ...code_gen.LocalCompileData import LocalCompileData
 from ...code_gen.LocalRef import LocalRef
 from ...code_gen.byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
@@ -3592,3 +3608,513 @@ def _emit_push_zeros(memory: bytearray, n: int):
         n -= 2
     if n == 1:
         emit_load_i_const(memory, 0, False, 0)  # 1-byte zero
+
+
+@dataclass
+class _StaticAddress:
+    symbol_name: str
+
+
+def _c_trunc_div(a: int, b: int) -> int:
+    quot = abs(a) // abs(b)
+    return -quot if (a < 0) ^ (b < 0) else quot
+
+
+def _c_trunc_mod(a: int, b: int) -> int:
+    return a - _c_trunc_div(a, b) * b
+
+
+def _get_compilation(cmpl_obj: "BaseCmplObj") -> "Compilation":
+    if isinstance(cmpl_obj, Compilation):
+        return cmpl_obj
+    parent = getattr(cmpl_obj, "parent", None)
+    if isinstance(parent, Compilation):
+        return parent
+    raise TypeError("Expected a Compilation-backed compile object")
+
+
+def _ensure_static_storage_object(
+    cmpl_obj: "BaseCmplObj", link_name: str, size: int
+) -> "CompileObject":
+    compilation = _get_compilation(cmpl_obj)
+    storage_obj = compilation.ensure_compile_object(CompileObjectType.GLOBAL, link_name)
+    if len(storage_obj.memory) < size:
+        storage_obj.memory.extend([0] * (size - len(storage_obj.memory)))
+    return storage_obj
+
+
+def _deduce_array_extent_from_init(
+    arr_type: "QualType", init_args: List[Union["BaseExpr", "CurlyStmnt"]]
+) -> Optional[int]:
+    if arr_type.ext_inf is not None or len(init_args) != 1:
+        return arr_type.ext_inf
+    expr = init_args[0]
+    if isinstance(expr, LiteralExpr) and expr.t_lit == LiteralExpr.LIT_STR:
+        return len(expr.l_val) + 1
+    if isinstance(expr, CurlyExpr) and expr.lst_expr is not None:
+        deduced = 0
+        next_index = 0
+        for elem in expr.lst_expr:
+            if (
+                isinstance(elem, DesigInitExpr)
+                and elem.kind == DesigInitExpr.KIND_INDEX
+            ):
+                next_index = elem.designator
+            deduced = max(deduced, next_index + 1)
+            next_index += 1
+        return deduced
+    return None
+
+
+def _maybe_deduce_array_extent(
+    decl_type: "BaseType", init_args: List[Union["BaseExpr", "CurlyStmnt"]]
+) -> None:
+    if isinstance(decl_type, QualType) and decl_type.qual_id == QualType.QUAL_ARR:
+        deduced = _deduce_array_extent_from_init(decl_type, init_args)
+        if deduced is not None:
+            decl_type.ext_inf = deduced
+
+
+def _unwrap_static_init_expr(expr: "BaseExpr") -> "BaseExpr":
+    from ..expr.ParenthExpr import ParenthExpr
+
+    while True:
+        if isinstance(expr, ParenthExpr) and len(expr.lst_expr) == 1:
+            expr = expr.lst_expr[0]
+            continue
+        if isinstance(expr, CastOpExpr):
+            expr = expr.expr
+            continue
+        return expr
+
+
+def _coerce_const_cast(target_type: "BaseType", value):
+    target_value_type = get_value_type(target_type)
+    if isinstance(value, _StaticAddress):
+        if isinstance(target_value_type, QualType) and target_value_type.qual_id in {
+            QualType.QUAL_PTR,
+            QualType.QUAL_REF,
+        }:
+            return value
+        if (
+            isinstance(target_value_type, PrimitiveType)
+            and size_of(target_value_type) == 8
+        ):
+            return value
+        return None
+    if isinstance(target_value_type, EnumType):
+        target_value_type = target_value_type.the_base_type
+    if isinstance(target_value_type, PrimitiveType):
+        if target_value_type.typ in FLT_TYPE_CODES:
+            return float(value)
+        if target_value_type.typ == PrimitiveTypeId.TYP_BOOL:
+            return 1 if value else 0
+        return int(value)
+    if isinstance(target_value_type, QualType) and target_value_type.qual_id in {
+        QualType.QUAL_PTR,
+        QualType.QUAL_REF,
+    }:
+        return int(value)
+    return None
+
+
+def _eval_const_expr(expr: "BaseExpr"):
+    from ..expr.BinaryOpExpr import BinaryExprSubType, BinaryOpExpr
+    from ..expr.NameRefExpr import NameRefExpr
+    from ..expr.ParenthExpr import ParenthExpr
+    from ..expr.UnaryOpExpr import UnaryExprSubType, UnaryOpExpr
+
+    if isinstance(expr, LiteralExpr):
+        if expr.t_lit == LiteralExpr.LIT_STR:
+            return None
+        if expr.t_lit == LiteralExpr.LIT_BOOL:
+            return 1 if expr.l_val else 0
+        return expr.l_val
+    if isinstance(expr, ParenthExpr):
+        if len(expr.lst_expr) != 1:
+            return None
+        return _eval_const_expr(expr.lst_expr[0])
+    if isinstance(expr, CastOpExpr):
+        inner_value = _eval_const_expr(expr.expr)
+        if inner_value is None:
+            return None
+        return _coerce_const_cast(expr.type_name, inner_value)
+    if isinstance(expr, NameRefExpr):
+        ctx_var = expr.ctx_var
+        if (
+            isinstance(ctx_var, ContextVariable)
+            and isinstance(ctx_var.parent, EnumType)
+            and ctx_var.init_expr is not None
+        ):
+            return _eval_const_expr(ctx_var.init_expr)
+        return None
+    if isinstance(expr, UnaryOpExpr):
+        if expr.type_id == UnaryExprSubType.REFERENCE and isinstance(
+            expr.a, NameRefExpr
+        ):
+            ctx_var = expr.a.ctx_var
+            if isinstance(ctx_var, ContextVariable) and ctx_var.has_static_storage():
+                return _StaticAddress(ctx_var.get_link_name())
+            return None
+        inner_value = _eval_const_expr(expr.a)
+        if inner_value is None or isinstance(inner_value, _StaticAddress):
+            return None
+        if expr.type_id == UnaryExprSubType.PLUS:
+            return +inner_value
+        if expr.type_id == UnaryExprSubType.MINUS:
+            return -inner_value
+        if expr.type_id == UnaryExprSubType.BIT_NOT:
+            return ~int(inner_value)
+        if expr.type_id == UnaryExprSubType.BOOL_NOT:
+            return 0 if inner_value else 1
+        return None
+    if isinstance(expr, BinaryOpExpr):
+        left_value = _eval_const_expr(expr.a)
+        right_value = _eval_const_expr(expr.b)
+        if (
+            left_value is None
+            or right_value is None
+            or isinstance(left_value, _StaticAddress)
+            or isinstance(right_value, _StaticAddress)
+        ):
+            return None
+        if expr.type_id == BinaryExprSubType.PLUS:
+            return left_value + right_value
+        if expr.type_id == BinaryExprSubType.MINUS:
+            return left_value - right_value
+        if expr.type_id == BinaryExprSubType.MUL:
+            return left_value * right_value
+        if expr.type_id == BinaryExprSubType.DIV:
+            value_type = get_value_type(expr.t_anot)
+            if (
+                isinstance(value_type, PrimitiveType)
+                and value_type.typ in FLT_TYPE_CODES
+            ):
+                return left_value / right_value
+            return _c_trunc_div(int(left_value), int(right_value))
+        if expr.type_id == BinaryExprSubType.MOD:
+            return _c_trunc_mod(int(left_value), int(right_value))
+        if expr.type_id == BinaryExprSubType.AND:
+            return int(left_value) & int(right_value)
+        if expr.type_id == BinaryExprSubType.OR:
+            return int(left_value) | int(right_value)
+        if expr.type_id == BinaryExprSubType.XOR:
+            return int(left_value) ^ int(right_value)
+        if expr.type_id == BinaryExprSubType.LSHIFT:
+            return int(left_value) << int(right_value)
+        if expr.type_id == BinaryExprSubType.RSHIFT:
+            return int(left_value) >> int(right_value)
+        if expr.type_id == BinaryExprSubType.LT:
+            return int(left_value < right_value)
+        if expr.type_id == BinaryExprSubType.GT:
+            return int(left_value > right_value)
+        if expr.type_id == BinaryExprSubType.LE:
+            return int(left_value <= right_value)
+        if expr.type_id == BinaryExprSubType.GE:
+            return int(left_value >= right_value)
+        if expr.type_id == BinaryExprSubType.EQ:
+            return int(left_value == right_value)
+        if expr.type_id == BinaryExprSubType.NE:
+            return int(left_value != right_value)
+        if expr.type_id == BinaryExprSubType.SS_AND:
+            return int(bool(left_value) and bool(right_value))
+        if expr.type_id == BinaryExprSubType.SS_OR:
+            return int(bool(left_value) or bool(right_value))
+    return None
+
+
+def _write_numeric_static_value(
+    storage_obj: "CompileObject",
+    offset: int,
+    target_type: "BaseType",
+    value,
+) -> bool:
+    value_type = get_value_type(target_type)
+    if isinstance(value_type, EnumType):
+        value_type = value_type.the_base_type
+    if isinstance(value_type, QualType) and value_type.qual_id in {
+        QualType.QUAL_PTR,
+        QualType.QUAL_REF,
+    }:
+        intval = int(value) & ((1 << 64) - 1)
+        storage_obj.memory[offset : offset + 8] = intval.to_bytes(
+            8, "little", signed=False
+        )
+        return True
+    if not isinstance(value_type, PrimitiveType):
+        return False
+    size = size_of(value_type)
+    if value_type.typ in FLT_TYPE_CODES:
+        if size == 4:
+            storage_obj.memory[offset : offset + 4] = struct.pack("<f", float(value))
+            return True
+        if size == 8:
+            storage_obj.memory[offset : offset + 8] = struct.pack("<d", float(value))
+            return True
+        return False
+    if value_type.typ == PrimitiveTypeId.TYP_BOOL:
+        intval = 1 if value else 0
+        storage_obj.memory[offset : offset + 1] = intval.to_bytes(
+            1, "little", signed=False
+        )
+        return True
+    bits = size * 8
+    intval = int(value)
+    mask = (1 << bits) - 1
+    intval &= mask
+    if value_type.sign:
+        sign_bit = 1 << (bits - 1)
+        if intval & sign_bit:
+            intval -= 1 << bits
+    storage_obj.memory[offset : offset + size] = intval.to_bytes(
+        size, "little", signed=value_type.sign
+    )
+    return True
+
+
+def _write_symbol_relocation(
+    storage_obj: "CompileObject", offset: int, symbol_name: str
+) -> None:
+    storage_obj.memory[offset : offset + 8] = b"\0" * 8
+    storage_obj.get_link(symbol_name).lst_tgt.append(LinkRef(offset, None))
+
+
+def _write_string_relocation(
+    storage_obj: "CompileObject", offset: int, byts: bytes
+) -> None:
+    storage_obj.memory[offset : offset + 8] = b"\0" * 8
+    storage_obj.get_string_link(byts).lst_tgt.append(LinkRef(offset, None))
+
+
+def _try_encode_static_initializer(
+    storage_obj: "CompileObject",
+    decl_type: "BaseType",
+    expr: "BaseExpr",
+    context: "CompileContext",
+    base_offset: int = 0,
+) -> bool:
+    value_type = get_value_type(decl_type)
+    if isinstance(value_type, EnumType):
+        value_type = value_type.the_base_type
+    if isinstance(value_type, PrimitiveType):
+        value = _eval_const_expr(expr)
+        if value is None or isinstance(value, _StaticAddress):
+            return False
+        return _write_numeric_static_value(storage_obj, base_offset, value_type, value)
+    if isinstance(value_type, QualType):
+        if value_type.qual_id in {
+            QualType.QUAL_CONST,
+            QualType.QUAL_DEF,
+            QualType.QUAL_REG,
+            QualType.QUAL_VOLATILE,
+        }:
+            return _try_encode_static_initializer(
+                storage_obj, value_type.tgt_type, expr, context, base_offset
+            )
+        if value_type.qual_id == QualType.QUAL_ARR:
+            _maybe_deduce_array_extent(value_type, [expr])
+            if value_type.ext_inf is None:
+                return False
+            elem_type = value_type.tgt_type
+            elem_size = size_of(elem_type)
+            arr_len = value_type.ext_inf
+            literal_expr = _unwrap_static_init_expr(expr)
+            if (
+                isinstance(literal_expr, LiteralExpr)
+                and literal_expr.t_lit == LiteralExpr.LIT_STR
+            ):
+                elems = list(literal_expr.l_val) + [0]
+                if len(elems) > arr_len:
+                    return False
+                for index, elem_val in enumerate(elems):
+                    if not _write_numeric_static_value(
+                        storage_obj,
+                        base_offset + index * elem_size,
+                        elem_type,
+                        elem_val,
+                    ):
+                        return False
+                return True
+            if not isinstance(expr, CurlyExpr) or expr.lst_expr is None:
+                return False
+            next_index = 0
+            for elem in expr.lst_expr:
+                target_index = next_index
+                subexpr = elem
+                if isinstance(elem, DesigInitExpr):
+                    if elem.kind != DesigInitExpr.KIND_INDEX:
+                        return False
+                    target_index = elem.designator
+                    subexpr = elem.expr
+                if target_index >= arr_len or subexpr is None:
+                    return False
+                if not _try_encode_static_initializer(
+                    storage_obj,
+                    elem_type,
+                    subexpr,
+                    context,
+                    base_offset + target_index * elem_size,
+                ):
+                    return False
+                next_index = target_index + 1
+            return True
+        if value_type.qual_id in {QualType.QUAL_PTR, QualType.QUAL_REF}:
+            literal_expr = _unwrap_static_init_expr(expr)
+            if (
+                isinstance(literal_expr, LiteralExpr)
+                and literal_expr.t_lit == LiteralExpr.LIT_STR
+            ):
+                elem_type = get_value_type(literal_expr.t_anot).tgt_type
+                assert isinstance(value_type.tgt_type, BaseType)
+                if not compare_no_cvr(value_type.tgt_type, elem_type):
+                    return False
+                elem_size = size_of(elem_type)
+                lit_bytes = bytearray((len(literal_expr.l_val) + 1) * elem_size)
+                for index, elem_val in enumerate(literal_expr.l_val):
+                    lit_bytes[index * elem_size : (index + 1) * elem_size] = int(
+                        elem_val
+                    ).to_bytes(elem_size, "little")
+                _write_string_relocation(storage_obj, base_offset, bytes(lit_bytes))
+                return True
+            value = _eval_const_expr(expr)
+            if isinstance(value, _StaticAddress):
+                _write_symbol_relocation(storage_obj, base_offset, value.symbol_name)
+                return True
+            if value is None:
+                return False
+            return _write_numeric_static_value(
+                storage_obj, base_offset, value_type, value
+            )
+        return False
+    if isinstance(value_type, StructType):
+        if not isinstance(expr, CurlyExpr) or expr.lst_expr is None:
+            return False
+        if value_type.the_base_type is not None:
+            return False
+        next_field_index = 0
+        for elem in expr.lst_expr:
+            target_index = next_field_index
+            subexpr = elem
+            if isinstance(elem, DesigInitExpr):
+                if elem.kind != DesigInitExpr.KIND_FIELD:
+                    return False
+                try:
+                    target_index = value_type.definition[elem.designator]
+                except KeyError:
+                    return False
+                subexpr = elem.expr
+            if target_index >= len(value_type.var_order) or subexpr is None:
+                return False
+            field_var = value_type.var_order[target_index]
+            if field_var.bit_field_width is not None:
+                return False
+            if not _try_encode_static_initializer(
+                storage_obj,
+                field_var.typ,
+                subexpr,
+                context,
+                base_offset + value_type.offset_of(field_var.name),
+            ):
+                return False
+            next_field_index = target_index + 1
+        return True
+    return False
+
+
+def _emit_global_runtime_initializer(
+    decl_type: "BaseType",
+    cmpl_obj: "BaseCmplObj",
+    init_args: List[Union["BaseExpr", "CurlyStmnt"]],
+    context: "CompileContext",
+    link_name: str,
+    temp_links,
+) -> None:
+    compilation = _get_compilation(cmpl_obj)
+    init_obj = compilation.ensure_compile_object(
+        CompileObjectType.FUNCTION, INIT_GLOBALS_LINK_NAME
+    )
+    init_cmpl_data = LocalCompileData()
+    decl_type.compile_var_init(
+        init_obj,
+        init_args,
+        context,
+        VarRefLnkPrealloc(init_obj.get_link(link_name)),
+        init_cmpl_data,
+        temp_links,
+    )
+
+
+def _emit_guarded_static_local_initializer(
+    decl_type: "BaseType",
+    cmpl_obj: "BaseCmplObj",
+    init_args: List[Union["BaseExpr", "CurlyStmnt"]],
+    context: "CompileContext",
+    cmpl_data: "LocalCompileData",
+    link_name: str,
+    temp_links,
+) -> None:
+    guard_name = link_name + "$init_guard"
+    _ensure_static_storage_object(cmpl_obj, guard_name, 1)
+    guard_link = cmpl_obj.get_link(guard_name)
+    skip_link = Linkage()
+    guard_link.emit_load(cmpl_obj.memory, 1, cmpl_obj, byte_copy_cmpl_intrinsic)
+    cmpl_obj.memory.extend([BC_NE0])
+    skip_link.emit_lea(cmpl_obj.memory)
+    cmpl_obj.memory.extend([BC_JMPIF])
+    decl_type.compile_var_init(
+        cmpl_obj,
+        init_args,
+        context,
+        VarRefLnkPrealloc(cmpl_obj.get_link(link_name)),
+        cmpl_data,
+        temp_links,
+    )
+    emit_load_i_const(cmpl_obj.memory, 1, False, 0)
+    guard_link.emit_stor(cmpl_obj.memory, 1, cmpl_obj, byte_copy_cmpl_intrinsic)
+    skip_link.src = len(cmpl_obj.memory)
+    skip_link.fill_all(cmpl_obj.memory)
+
+
+def _compile_static_storage_decl(
+    decl_type: "BaseType",
+    cmpl_obj: "BaseCmplObj",
+    init_args: List[Union["BaseExpr", "CurlyStmnt"]],
+    context: "CompileContext",
+    ref: "VarRef",
+    cmpl_data: Optional["LocalCompileData"] = None,
+    temp_links=None,
+) -> Optional[int]:
+    if ref.ref_type != VAR_REF_TOS_NAMED:
+        return None
+    assert isinstance(ref, VarRefTosNamed)
+    ctx_var = ref.ctx_var
+    if ctx_var is None:
+        return None
+    assert isinstance(ctx_var, ContextVariable)
+    if ctx_var.uses_stack_storage():
+        return None
+    _maybe_deduce_array_extent(decl_type, init_args)
+    size = size_of(decl_type)
+    if ctx_var.mods == VarDeclMods.EXTERN and not init_args:
+        return 0 if ctx_var.is_static_local() else size
+    link_name = ctx_var.get_link_name()
+    storage_obj = _ensure_static_storage_object(cmpl_obj, link_name, size)
+    if len(init_args) == 1 and not _try_encode_static_initializer(
+        storage_obj, decl_type, init_args[0], context
+    ):
+        if ctx_var.is_static_local():
+            assert cmpl_data is not None
+            _emit_guarded_static_local_initializer(
+                decl_type,
+                cmpl_obj,
+                init_args,
+                context,
+                cmpl_data,
+                link_name,
+                temp_links,
+            )
+        else:
+            _emit_global_runtime_initializer(
+                decl_type, cmpl_obj, init_args, context, link_name, temp_links
+            )
+    return 0 if ctx_var.is_static_local() else size

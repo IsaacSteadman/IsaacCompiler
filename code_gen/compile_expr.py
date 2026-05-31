@@ -238,7 +238,7 @@ def compile_expr(
         lnk_name = ctx_var.get_link_name()
         lnk = (
             cmpl_data.get_local(lnk_name)
-            if ctx_var.parent.is_local_scope()
+            if ctx_var.uses_stack_storage()
             else cmpl_obj.get_link(lnk_name)
         )
         assert isinstance(lnk, BaseLink)
@@ -516,7 +516,7 @@ def compile_expr(
             _last_cv = last_expr.ctx_var
             _last_lnk = (
                 cmpl_data.get_local(_last_cv.get_link_name())
-                if _last_cv.parent.is_local_scope()
+                if _last_cv.uses_stack_storage()
                 else cmpl_obj.get_link(_last_cv.get_link_name())
             )
             _last_lnk.emit_lea(cmpl_obj.memory)
@@ -528,7 +528,7 @@ def compile_expr(
             _ap_cv = ap_expr.ctx_var
             _ap_lnk = (
                 cmpl_data.get_local(_ap_cv.get_link_name())
-                if _ap_cv.parent.is_local_scope()
+                if _ap_cv.uses_stack_storage()
                 else cmpl_obj.get_link(_ap_cv.get_link_name())
             )
             _ap_lnk.emit_stor(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
@@ -544,7 +544,7 @@ def compile_expr(
             _ap_cv = ap_expr.ctx_var
             _ap_lnk = (
                 cmpl_data.get_local(_ap_cv.get_link_name())
-                if _ap_cv.parent.is_local_scope()
+                if _ap_cv.uses_stack_storage()
                 else cmpl_obj.get_link(_ap_cv.get_link_name())
             )
             # Load current ap value (pointer, 8 bytes)
@@ -575,7 +575,7 @@ def compile_expr(
             _dst_cv = dst_expr.ctx_var
             _dst_lnk = (
                 cmpl_data.get_local(_dst_cv.get_link_name())
-                if _dst_cv.parent.is_local_scope()
+                if _dst_cv.uses_stack_storage()
                 else cmpl_obj.get_link(_dst_cv.get_link_name())
             )
             _dst_lnk.emit_stor(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)

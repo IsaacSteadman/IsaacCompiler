@@ -1,4 +1,5 @@
 all of C (including typedefs) (including floats)
+Global and static variable initialization
 C++ references
 C++ namespaces
 C++ function-overloading
