@@ -17,6 +17,8 @@ class StmntType(Enum):
     ASM = 10
     SEMI_COLON = 11  # always at end ('expr;' expression)
     STATIC_ASSERT = 12
+    GOTO = 13
+    LABEL = 14
 
 
 STMNT_KEY_TO_ID = {
@@ -32,6 +34,7 @@ STMNT_KEY_TO_ID = {
     "<DECL_STMNT>": StmntType.DECL,
     "asm": StmntType.ASM,
     "_Static_assert": StmntType.STATIC_ASSERT,
+    "goto": StmntType.GOTO,
 }
 
 

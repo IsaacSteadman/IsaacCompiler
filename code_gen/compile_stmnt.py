@@ -205,6 +205,18 @@ def compile_stmnt(
         pass  # Do nothing for typedef statement
     elif stmnt.stmnt_type == StmntType.STATIC_ASSERT:
         pass  # Evaluated at parse time; no code to emit
+    elif stmnt.stmnt_type == StmntType.GOTO:
+        assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
+        assert isinstance(stmnt, GotoStmnt)
+        cmpl_data.get_label(stmnt.label_name).emit_lea(cmpl_obj.memory)
+        cmpl_obj.memory.extend([BC_JMP])
+    elif stmnt.stmnt_type == StmntType.LABEL:
+        assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
+        assert isinstance(stmnt, LabelStmnt)
+        lnk = cmpl_data.get_label(stmnt.label_name)
+        if lnk.src is not None:
+            raise ValueError("Duplicate label '%s'" % stmnt.label_name)
+        lnk.src = len(cmpl_obj.memory)
     else:
         raise ValueError("Unrecognized Statement Type")
     return 0
@@ -236,7 +248,9 @@ from ..parser.stmnt.AsmStmnt import AsmStmnt
 from ..parser.stmnt.BaseStmnt import BaseStmnt, StmntType
 from ..parser.stmnt.CurlyStmnt import CurlyStmnt
 from ..parser.stmnt.ForLoop import ForLoop
+from ..parser.stmnt.GotoStmnt import GotoStmnt
 from ..parser.stmnt.IfElse import IfElse
+from ..parser.stmnt.LabelStmnt import LabelStmnt
 from ..parser.stmnt.NamespaceStmnt import NamespaceStmnt
 from ..parser.stmnt.ReturnStmnt import ReturnStmnt
 from ..parser.stmnt.SemiColonStmnt import SemiColonStmnt

@@ -2506,6 +2506,15 @@ class QualType(BaseType):
             assert res_link is not None
             cmpl_data1.res_data = (res_type, res_link)
             compile_curly(cmpl_obj1, init_args[0], fn_ctx, cmpl_data1)
+            # Backpatch all goto labels now that the full function body is emitted
+            for _label_name, _lnk in cmpl_data1.local_labels.items():
+                if _lnk.src is None:
+                    if _lnk.lst_tgt:
+                        raise NameError(
+                            "Undefined label '%s' referenced by goto" % _label_name
+                        )
+                else:
+                    _lnk.fill_all(cmpl_obj1.memory)
             cmpl_obj1.memory.extend([BC_RET])
             return len(cmpl_obj1.memory)
         else:

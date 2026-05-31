@@ -15,6 +15,14 @@ def get_stmnt(
         pos = StmntType.DECL
     else:
         pos = STMNT_KEY_TO_ID.get(tokens[c].str, StmntType.SEMI_COLON)
+    # Two-token lookahead: NAME ':' → label statement (must not be '::', which is a single token)
+    if (
+        pos == StmntType.SEMI_COLON
+        and tokens[c].type_id == TokenType.NAME
+        and c + 1 < end
+        and tokens[c + 1].str == ":"
+    ):
+        pos = StmntType.LABEL
     rtn = None
     if pos == StmntType.CURLY_STMNT:
         rtn = CurlyStmnt()
@@ -58,6 +66,12 @@ def get_stmnt(
     elif pos == StmntType.STATIC_ASSERT:
         rtn = StaticAssertStmnt()
         c = rtn.build(tokens, c, end, context)
+    elif pos == StmntType.GOTO:
+        rtn = GotoStmnt()
+        c = rtn.build(tokens, c, end, context)
+    elif pos == StmntType.LABEL:
+        rtn = LabelStmnt()
+        c = rtn.build(tokens, c, end, context)
     elif pos == StmntType.SEMI_COLON:
         # NOTE: Make sure that DeclStmnt would not work here
         rtn = SemiColonStmnt()
@@ -76,7 +90,9 @@ from .BreakStmnt import BreakStmnt
 from .ContinueStmnt import ContinueStmnt
 from .CurlyStmnt import CurlyStmnt
 from .ForLoop import ForLoop
+from .GotoStmnt import GotoStmnt
 from .IfElse import IfElse
+from .LabelStmnt import LabelStmnt
 from .NamespaceStmnt import NamespaceStmnt
 from .ReturnStmnt import ReturnStmnt
 from .SemiColonStmnt import SemiColonStmnt
