@@ -425,6 +425,64 @@ def compile_expr(
                 "Expression (id = UnaryExprSubType.OP_EXPR, type_id = %u) compilation is not supported"
                 % expr.type_id
             )
+    elif expr.expr_id == ExprType.STMNT_EXPR:
+        assert isinstance(expr, StmntExpr)
+        assert isinstance(cmpl_obj, CompileObject)
+        assert cmpl_data is not None
+        stmnt = expr.stmnt
+        assert stmnt is not None and stmnt.stmnts is not None
+        result_type = get_value_type(expr.t_anot)
+        sz_result = size_of(result_type)
+
+        if sz_result == 0 or not stmnt.stmnts:
+            # Void result: compile everything and leave scope, result is nothing.
+            inner_cmpl_data = LocalCompileData(cmpl_data)
+            for cur_stmnt in stmnt.stmnts:
+                compile_stmnt(cmpl_obj, cur_stmnt, stmnt.context, inner_cmpl_data)
+            inner_cmpl_data.compile_leave_scope(cmpl_obj, stmnt.context)
+            sz = 0
+            res_type = result_type
+        else:
+            last_stmnt = stmnt.stmnts[-1]
+            assert (
+                isinstance(last_stmnt, SemiColonStmnt) and last_stmnt.expr is not None
+            ), "Last statement of a statement expression must be an expression statement"
+
+            # Pre-allocate the result slot on the stack before inner locals.
+            sz_cls_res = emit_load_i_const(cmpl_obj.memory, sz_result, False)
+            cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls_res])
+
+            # Build inner scope; its bp_off must skip over the result slot so
+            # that inner locals are allocated above it (at lower stack addresses).
+            inner_cmpl_data = LocalCompileData(cmpl_data)
+            result_lnk = LocalRef(-(inner_cmpl_data.bp_off + sz_result), sz_result)
+            inner_cmpl_data.bp_off += sz_result
+
+            # Compile intermediate statements (their results are discarded).
+            for cur_stmnt in stmnt.stmnts[:-1]:
+                compile_stmnt(cmpl_obj, cur_stmnt, stmnt.context, inner_cmpl_data)
+
+            # Compile the last expression; leaves sz_result bytes on TOS.
+            sz = compile_expr(
+                cmpl_obj,
+                last_stmnt.expr,
+                stmnt.context,
+                inner_cmpl_data,
+                result_type,
+                temp_links,
+            )
+            assert sz == sz_result
+
+            # Store the result into the pre-allocated slot, consuming TOS.
+            result_lnk.emit_stor(
+                cmpl_obj.memory, sz_result, cmpl_obj, byte_copy_cmpl_intrinsic
+            )
+
+            # Destroy inner locals; the result slot is now at TOS.
+            inner_cmpl_data.compile_leave_scope(cmpl_obj, stmnt.context)
+
+            res_type = result_type
+            sz = sz_result
     else:
         raise NotImplementedError(
             "Expression (id = %u) compilation is not supported" % expr.expr_id
@@ -463,6 +521,8 @@ from .byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
 from .compile_bin_op_expr import compile_bin_op_expr
 from .compile_conv_general import compile_conv_general
 from .compile_expr import compile_expr
+from .compile_stmnt import compile_stmnt
+from .CompileObject import CompileObject
 from .get_bc_conv_bits import get_bc_conv_bits
 from .setup_temp_links import setup_temp_links
 from .tear_down_temp_links import tear_down_temp_links
@@ -504,7 +564,9 @@ from ..parser.expr.ParenthExpr import ParenthExpr
 from ..parser.expr.SParenthExpr import SParenthExpr
 from ..parser.expr.SpecialDotExpr import SpecialDotExpr
 from ..parser.expr.SpecialPtrMemberExpr import SpecialPtrMemberExpr
+from ..parser.expr.StmntExpr import StmntExpr
 from ..parser.expr.UnaryOpExpr import UnaryExprSubType, UnaryOpExpr
+from ..parser.stmnt.SemiColonStmnt import SemiColonStmnt
 from ..parser.type.BaseType import BaseType, TypeClass
 from ..parser.type.get_user_str_from_type import get_user_str_from_type
 from ..parser.type.types import (

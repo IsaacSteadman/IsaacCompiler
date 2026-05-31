@@ -18,6 +18,7 @@ class ExprType(Enum):
     INLINE_IF = 11
     DECL_VAR = 12
     DESIG_INIT = 13  # designated initializer element: .field = expr  or  [index] = expr
+    STMNT_EXPR = 14  # GNU statement expression: ({ ... })
 
 
 class BaseExpr(PrettyRepr):

@@ -66,6 +66,13 @@ def my_get_expr_part(
         if c == end_p:
             c = end_t
             return ParenthOpPart([]), c
+        # GNU statement expression: ({ ... })
+        if tokens[c].str == "{":
+            stmnt_expr = StmntExpr()
+            c = stmnt_expr.build(tokens, c, end_p, context)
+            # c is now at ')'; advance past it
+            c = end_t
+            return ExprOpPart(stmnt_expr), c
         if comma_count == 0:
             type_name, c = proc_typed_decl(tokens, c, end_p, context)
             if c > start + 1 and type_name is not None:
@@ -115,6 +122,7 @@ def my_get_expr_part(
 from .CurlyExpr import CurlyExpr
 from .LiteralExpr import LiteralExpr
 from .NameRefExpr import NameRefExpr
+from .StmntExpr import StmntExpr
 from .get_expr import get_expr
 from ..ParsingError import ParsingError
 from ..constants import DCT_FIXES
