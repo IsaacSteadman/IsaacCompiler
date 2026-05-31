@@ -2753,7 +2753,7 @@ class QualType(BaseType):
             else:
                 raise TypeError("Cannot cast from Type %s" % repr(self))
             if self.qual_id == QualType.QUAL_PTR:
-                out_bits = 3
+                out_bits = 6  # 8-byte unsigned (pointer size); was 3 (2-byte signed) which was wrong
             else:
                 raise TypeError("Cannot cast from Type %r to %r" % (from_type, self))
             if inp_bits != out_bits:
@@ -3288,7 +3288,7 @@ def is_prim_type_id(typ: "BaseType", type_id: int) -> bool:
 def is_prim_or_ptr(typ: "BaseType") -> bool:
     if typ.type_class_id == TypeClass.PRIM:
         return True
-    elif typ != TypeClass.QUAL:
+    elif typ.type_class_id != TypeClass.QUAL:
         return False
     assert isinstance(typ, QualType)
     return typ.qual_id == QualType.QUAL_PTR

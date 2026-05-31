@@ -215,11 +215,13 @@ def mk_postfix(
         if next_op is None:
             pass
         elif next_op[0] > 0:
-            if len(op_stack) > 0:
+            lvl1 = next_op[2]
+            while len(op_stack) > 0:
                 lvl0 = op_stack[-1][2]
-                lvl1 = next_op[2]
                 if lvl1 > lvl0 or (lvl1 == lvl0 and l_t_r[lvl0]):
                     rtn.append(op_stack.pop())
+                else:
+                    break
             op_stack.append(next_op)
         else:
             rtn.append(next_op)

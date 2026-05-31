@@ -260,6 +260,16 @@ def compile_expr(
             if do_as_ref:
                 lnk.emit_lea(cmpl_obj.memory)
                 sz = 8
+            elif (
+                isinstance(prim_type_coerce, QualType)
+                and prim_type_coerce.qual_id == QualType.QUAL_PTR
+                and isinstance(val_type, QualType)
+                and val_type.qual_id == QualType.QUAL_ARR
+            ):
+                # Array-to-pointer decay: emit the address of the array (LEA).
+                lnk.emit_lea(cmpl_obj.memory)
+                sz = 8
+                res_type = prim_type_coerce
             else:
                 res_type = val_type
                 if compare_no_cvr(prim_type_coerce, val_type):

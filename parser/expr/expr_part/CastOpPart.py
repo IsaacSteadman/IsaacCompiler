@@ -28,12 +28,18 @@ class CastOpPart(BaseOpPart):
             pt, vt, is_ref = get_tgt_ref_type(operands[0].t_anot)
             res = operands[0]
             if is_ref:
-                res = CastOpExpr(vt, res)
+                # C standard §6.3.2.1: array-to-pointer decay — an array lvalue
+                # decays to a pointer to its first element, not to a raw array value.
+                if isinstance(vt, QualType) and vt.qual_id == QualType.QUAL_ARR:
+                    ptr_type = QualType(QualType.QUAL_PTR, vt.tgt_type)
+                    res = CastOpExpr(ptr_type, res)
+                else:
+                    res = CastOpExpr(vt, res)
             return CastOpExpr(self.type_name, res)
         # raise TypeError("Could not cast")
 
 
 from ..CastOpExpr import CastOpExpr
-from ...type.types import get_tgt_ref_type
+from ...type.types import get_tgt_ref_type, QualType
 from ...type.get_user_str_from_type import get_user_str_from_type
 from ..get_standard_conv_expr import get_standard_conv_expr

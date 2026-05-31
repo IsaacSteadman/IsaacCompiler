@@ -2,7 +2,7 @@ from .BaseOpPart import BaseOpPart
 
 
 class SParenthOpPart(BaseOpPart):
-    postfix_lvl = 2
+    postfix_lvl = 1
 
     def __init__(self, expr):
         super(SParenthOpPart, self).__init__()

@@ -235,6 +235,11 @@ class BinaryOpExpr(BaseExpr):
                         b = best[0]
                         a = get_implicit_conv_expr(a, tgt_vt)[0]
                         ok = True
+                elif type_id in CMP_OPS:
+                    a = get_implicit_conv_expr(a, tgt_vt)[0]
+                    b = get_implicit_conv_expr(b, tgt_vt)[0]
+                    self.t_anot = bool_t
+                    ok = True
                 if not ok and type_id == BinaryExprSubType.ASSGN:
                     self.op_fn_type = OperatorType.GENERIC
                 if not ok:

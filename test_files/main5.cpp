@@ -1,5 +1,6 @@
 
 typedef unsigned long long size_t;
+typedef unsigned char uint8_t;
 
 struct FreeRegion
 {
@@ -108,13 +109,13 @@ int release_region(IdAllocator *allocation, size_t start, size_t size)
     if (allocation->n_free_entries >= n_ent_alloc)
     {
         size_t new_n_bytes_alloc = (n_ent_alloc << 1) * sizeof_FreeRegion;
-        if (try_realloc(allocation->lst_free, ))
+        if (try_realloc(allocation->lst_free, new_n_bytes_alloc))
         {
             n_ent_alloc <<= 1;
         }
         else
         {
-            FreeRegion *new_lst_free = malloc(new_n_bytes_alloc);
+            FreeRegion *new_lst_free = (FreeRegion *)malloc(new_n_bytes_alloc);
             if (new_lst_free)
             {
                 FreeRegion *end_old = lst_free + n_ent_alloc;
@@ -122,8 +123,8 @@ int release_region(IdAllocator *allocation, size_t start, size_t size)
                 while (end_old-- > lst_free)
                 {
                     --new_data;
-                    new_data->start = old_data->start;
-                    new_data->end = old_data->end;
+                    new_data->start = end_old->start;
+                    new_data->end = end_old->end;
                 }
                 n_ent_alloc <<= 1;
                 lst_free_to_free = lst_free;
@@ -159,6 +160,7 @@ int release_region(IdAllocator *allocation, size_t start, size_t size)
 }
 
 IdAllocator MallocData;
+uint8_t heap_storage[4096];
 void *malloc(size_t size)
 {
     size_t rtn = reserve_region(&MallocData, size + 8);
@@ -168,7 +170,8 @@ void *malloc(size_t size)
 bool try_realloc(void *data, size_t size)
 {
     size_t old_size = *((size_t *)data - 1) + 8;
-    bool rtn = try_expand_region(&MallocData, (size_t)data - 8, old_size, size + 8) if (rtn)
+    bool rtn = try_expand_region(&MallocData, (size_t)data - 8, old_size, size + 8);
+    if (rtn)
     {
         *((size_t *)data - 1) = size;
     }
@@ -182,8 +185,8 @@ int free(void *data)
 int main(int argc, char **argv)
 {
     {
-        size_t start = (size_t) @(environ::heap_start);
-        size_t end = (size_t) @(environ::heap_end);
+        size_t start = (size_t)heap_storage;
+        size_t end = start + 4096;
         *(size_t *)start = sizeof_FreeRegion * 16;
         FreeRegion *lst_free = (FreeRegion *)(start + 8);
         lst_free->start = start + 8 + sizeof_FreeRegion * 16;

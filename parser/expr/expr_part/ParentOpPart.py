@@ -2,7 +2,7 @@ from .BaseOpPart import BaseOpPart
 
 
 class ParenthOpPart(BaseOpPart):
-    postfix_lvl = 2
+    postfix_lvl = 1
 
     def __init__(self, lst_expr):
         self.can_nofix = True
