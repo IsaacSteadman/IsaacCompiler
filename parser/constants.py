@@ -40,6 +40,7 @@ KEYWORDS = (
         "explicit",
         "template",
         "typename",
+        "typeof",
         "asm",
         "_Noreturn",
         "_Static_assert",

@@ -1691,6 +1691,61 @@ def get_base_type(
             elif tokens[c].str in ("_Noreturn",):
                 # C11 function specifier — no-op, silently skip.
                 c += 1
+            elif tokens[c].str == "typeof":
+                # typeof(type-name) or typeof(expression) — compile-time type query,
+                # no code generation; yields the unqualified value type of its argument.
+                c += 1  # consume 'typeof'
+                if c >= end or tokens[c].str != "(":
+                    raise ParsingError(tokens, c, "Expected '(' after 'typeof'")
+                paren_pos = c
+                c += 1  # consume '('
+                # Locate the matching ')' tracking nested groups.
+                lvl = 1
+                inner_end = c
+                while inner_end < end and lvl > 0:
+                    s = tokens[inner_end].str
+                    if s in OPEN_GROUPS:
+                        lvl += 1
+                    elif s in CLOSE_GROUPS:
+                        lvl -= 1
+                    if lvl > 0:
+                        inner_end += 1
+                if lvl != 0:
+                    raise ParsingError(tokens, paren_pos, "Unmatched '(' in typeof")
+                # inner_end points to the closing ')'.
+                # 1. Try to parse the argument as a type name (no declarator name).
+                t_typeof = None
+                try:
+                    type_decl, c2 = proc_typed_decl(tokens, c, inner_end, context)
+                    if (
+                        type_decl is not None
+                        and c2 == inner_end
+                        and type_decl.name is None
+                    ):
+                        t_typeof = type_decl.typ
+                except Exception:
+                    pass
+                if t_typeof is None:
+                    # 2. Fall back: parse as expression and take its annotated type.
+                    expr, _c2 = get_expr(tokens, c, None, inner_end, context)
+                    if expr is None:
+                        raise ParsingError(
+                            tokens, c, "Expected type-name or expression in typeof"
+                        )
+                    # Strip QUAL_REF (typeof yields a value type, not a reference).
+                    pt = get_base_prim_type(expr.t_anot)
+                    if (
+                        pt.type_class_id == TypeClass.QUAL
+                        and isinstance(pt, QualType)
+                        and pt.qual_id == QualType.QUAL_REF
+                    ):
+                        pt = get_base_prim_type(pt.tgt_type)
+                    t_typeof = pt
+                c = inner_end + 1  # advance past ')'
+                if base_type is None and not is_prim:
+                    base_type = t_typeof
+                else:
+                    return None, main_start
             else:
                 # raise ParsingError(tokens, c, "Keyword not allowed in declaration")
                 return None, main_start
