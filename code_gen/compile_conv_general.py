@@ -42,6 +42,15 @@ def compile_conv_general(
             sz = tgt_pt.compile_var_init(
                 cmpl_obj, [expr], context, VarRefTosNamed(None), cmpl_data, temp_links
             )
+            # For bit-field members: shift and mask the loaded storage-unit value
+            bfi = expr.bit_field_info
+            if bfi is not None:
+                sz_cls_bf = bfi.storage_sz.bit_length() - 1
+                if bfi.bit_shift > 0:
+                    emit_load_i_const(cmpl_obj.memory, bfi.bit_shift, False, 0)
+                    cmpl_obj.memory.append(BC_RSHIFT1 + sz_cls_bf)
+                emit_load_i_const(cmpl_obj.memory, bfi.bit_mask, False, sz_cls_bf)
+                cmpl_obj.memory.append(BC_AND1 + sz_cls_bf)
         else:  # Do argument initialization given a value
             # for now do nothing (the source instance is the target instance)
             # TODO: maybe need to change this?
@@ -105,3 +114,5 @@ from ..parser.type.types import (
     get_tgt_ref_type,
 )
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc, VarRefTosNamed
+from .stackvm_binutils.emit_load_i_const import emit_load_i_const
+from ..StackVM.PyStackVM import BC_AND1, BC_RSHIFT1

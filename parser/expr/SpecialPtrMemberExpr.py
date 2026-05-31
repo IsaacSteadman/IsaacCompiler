@@ -48,6 +48,10 @@ class SpecialPtrMemberExpr(BaseExpr):
             self.t_anot = attr_pt
         else:
             self.t_anot = QualType(QualType.QUAL_REF, attr_pt)
+        # Annotate bit-field info: (byte_offset, bit_shift, bit_mask, storage_sz)
+        self.bit_field_info = None
+        if isinstance(src_vt, StructType) and src_vt.bit_field_info:
+            self.bit_field_info = src_vt.bit_field_info.get(attr, None)
 
     def init_temps(self, main_temps):
         main_temps = super(SpecialPtrMemberExpr, self).init_temps(main_temps)

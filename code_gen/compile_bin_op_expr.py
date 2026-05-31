@@ -1,6 +1,41 @@
 from typing import List, Optional, Tuple
 
 
+def _compile_bit_field_assign(cmpl_obj, expr, context, cmpl_data, temp_links, bfi, typ):
+    """Emit a read-modify-write sequence for a simple bit-field assignment.
+
+    Stack on entry: [..., ptr(8)]  — ptr to the storage-unit byte.
+    Stack on exit:  [...] (res_none=True).
+    """
+    sz_cls_bf = bfi.storage_sz.bit_length() - 1
+    all_bits = (1 << (bfi.storage_sz * 8)) - 1
+    clear_mask = all_bits & ~(bfi.bit_mask << bfi.bit_shift)
+
+    # DUP the storage-unit pointer: [..., ptr(8), ptr_dup(8)]
+    cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | BCR_SZ_8])
+    # LOAD storage unit through the dup: [..., ptr(8), su(storage_sz)]
+    cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls_bf << 5)])
+    # AND with the clear mask to zero the target field bits
+    emit_load_i_const(cmpl_obj.memory, clear_mask, False, sz_cls_bf)
+    cmpl_obj.memory.append(BC_AND1 + sz_cls_bf)
+    # Compile the RHS new value: [..., ptr(8), su_cleared(storage_sz), new_val]
+    compile_expr(cmpl_obj, expr.b, context, cmpl_data, typ, temp_links)
+    # Mask new value to the bit-field width
+    emit_load_i_const(cmpl_obj.memory, bfi.bit_mask, False, sz_cls_bf)
+    cmpl_obj.memory.append(BC_AND1 + sz_cls_bf)
+    # Shift into position
+    if bfi.bit_shift > 0:
+        emit_load_i_const(cmpl_obj.memory, bfi.bit_shift, False, 0)
+        cmpl_obj.memory.append(BC_LSHIFT1 + sz_cls_bf)
+    # OR the cleared unit with the shifted new value
+    cmpl_obj.memory.append(BC_OR1 + sz_cls_bf)
+    # SWAP to bring ptr to TOS: [..., modified_su(storage_sz), ptr(8)]
+    cmpl_obj.memory.extend([BC_SWAP, (sz_cls_bf << 3) | BCS_SZ8_A])
+    # STOR modified storage unit through ptr: [...]
+    cmpl_obj.memory.extend([BC_STOR, BCR_ABS_S8 | (sz_cls_bf << 5)])
+    return 0, void_t
+
+
 def compile_bin_op_expr(
     cmpl_obj: "BaseCmplObj",
     expr: "BinaryOpExpr",
@@ -71,7 +106,18 @@ def compile_bin_op_expr(
         res_none = type_coerce is void_t
         if res_none:
             res_type = void_t
-        else:
+        # Bit-field assignment: intercept before result-dup and compound-load
+        bfi = expr.a.bit_field_info
+        if bfi is not None:
+            if expr.type_id != BinaryExprSubType.ASSGN:
+                raise NotImplementedError(
+                    "Compound assignment to bit field not yet supported"
+                )
+            sz, res_type = _compile_bit_field_assign(
+                cmpl_obj, expr, context, cmpl_data, temp_links, bfi, typ
+            )
+            return sz, res_type
+        if not res_none:
             cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | BCR_SZ_8])
             sz1 += 8
         if expr.type_id != BinaryExprSubType.ASSGN:

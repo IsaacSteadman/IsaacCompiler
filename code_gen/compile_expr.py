@@ -192,6 +192,12 @@ def compile_expr(
             return compile_expr(
                 cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links
             )
+        elif val_type.type_class_id == TypeClass.STRUCT:
+            assert isinstance(val_type, StructType)
+            compile_expr(cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links)
+            emit_load_i_const(cmpl_obj.memory, val_type.offset_of(expr.attr), False, 3)
+            cmpl_obj.memory.extend([BC_ADD8])
+            return 8
         raise NotImplementedError("Not Implemented")
     elif expr.expr_id == ExprType.DOT:
         assert isinstance(expr, SpecialDotExpr)

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, TypeVar, Union
 from .BaseType import BaseType, TypeClass
@@ -959,9 +960,9 @@ class ClassType(CompileContext, BaseType):
             start = c
             while c < end and lvl > 0:
                 s = tokens[c].str
-                if s in OPEN_GROUPS:
+                if s in ("{", "[", "("):
                     lvl += 1
-                elif s in CLOSE_GROUPS:
+                elif s in ("}", "]", ")"):
                     lvl -= 1
                 c += 1
             if lvl > 0:
@@ -997,6 +998,46 @@ class ClassType(CompileContext, BaseType):
 
     def is_class(self):
         return True
+
+
+@dataclass
+class BitFieldInfo:
+    """Describes the position and size of a bit-field within its storage unit."""
+
+    byte_offset: int
+    bit_shift: int
+    bit_mask: int
+    storage_sz: int
+
+
+def _align_up(x: int, align: int) -> int:
+    """Round x up to the nearest multiple of align (align must be a power of 2)."""
+    return (x + align - 1) & ~(align - 1)
+
+
+def _skip_gnu_attr(tokens, c: int, end: int):
+    """Skip a single __attribute__((...)) block.
+
+    Returns (new_c, is_packed). If tokens[c] is not '__attribute__', returns (c, False).
+    """
+    if c >= end or tokens[c].str != "__attribute__":
+        return c, False
+    c += 1
+    if c >= end or tokens[c].str != "(":
+        return c, False
+    lvl = 1
+    c += 1
+    is_packed = False
+    while c < end and lvl > 0:
+        s = tokens[c].str
+        if s == "(":
+            lvl += 1
+        elif s == ")":
+            lvl -= 1
+        if s == "packed" and lvl > 0:
+            is_packed = True
+        c += 1
+    return c, is_packed
 
 
 class StructType(CompileContext, BaseType):
@@ -1048,9 +1089,23 @@ class StructType(CompileContext, BaseType):
         self.var_order = [] if var_order is None else var_order
         self.defined = defined
         self.the_base_type = the_base_type
+        # Bit-field layout state
+        self.bit_field_info: Dict[str, BitFieldInfo] = {}
+        self._precomp_byte_offsets: Dict[str, int] = {}
+        self._bf_struct_total_sz: Optional[int] = None
+        self._bf_cur_byte_off: int = 0
+        self._bf_cur_bits_used: int = 0
+        self._bf_cur_storage_sz: int = 0
+        self.is_packed: bool = False
 
     def offset_of(self, attr: str) -> int:
-        # TODO: improve speed of OffsetOf by tracking the offsets along-side the types
+        # Bit-field members: use the pre-computed byte_offset of their storage unit.
+        if attr in self.bit_field_info:
+            return self.bit_field_info[attr].byte_offset
+        # Regular members that follow a bit-field section: use the pre-computed offset.
+        if attr in self._precomp_byte_offsets:
+            return self._precomp_byte_offsets[attr]
+        # Pure regular-member structs (no bit fields): sum sizes up to the member.
         index = self.definition[attr]
         off = 0 if self.the_base_type is None else size_of(self.the_base_type)
         for c in range(index):
@@ -1079,13 +1134,38 @@ class StructType(CompileContext, BaseType):
         other.var_order = self.var_order
         other.defined = self.defined
         other.the_base_type = self.the_base_type
+        other.bit_field_info = self.bit_field_info
+        other._precomp_byte_offsets = self._precomp_byte_offsets
+        other._bf_struct_total_sz = self._bf_struct_total_sz
+        other._bf_cur_byte_off = self._bf_cur_byte_off
+        other._bf_cur_bits_used = self._bf_cur_bits_used
+        other._bf_cur_storage_sz = self._bf_cur_storage_sz
+        other.is_packed = self.is_packed
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
     ) -> int:
+        # Handle __attribute__((...)) before the struct name
+        while (
+            c < end
+            and tokens[c].type_id == TokenType.NAME
+            and tokens[c].str == "__attribute__"
+        ):
+            c, is_pack = _skip_gnu_attr(tokens, c, end)
+            if is_pack:
+                self.is_packed = True
         base_name, c = try_get_as_name(tokens, c, end, context)
         if base_name is not None:
             self.name = "".join(map(tok_to_str, base_name))
+        # Handle __attribute__((...)) between name and body
+        while (
+            c < end
+            and tokens[c].type_id == TokenType.NAME
+            and tokens[c].str == "__attribute__"
+        ):
+            c, is_pack = _skip_gnu_attr(tokens, c, end)
+            if is_pack:
+                self.is_packed = True
         if tokens[c].str == ":":
             c += 1
             self.the_base_type, c = get_base_type(tokens, c, end, context)
@@ -1099,9 +1179,9 @@ class StructType(CompileContext, BaseType):
             start = c
             while c < end and lvl > 0:
                 s = tokens[c].str
-                if s in OPEN_GROUPS:
+                if s in ("{", "[", "("):
                     lvl += 1
-                elif s in CLOSE_GROUPS:
+                elif s in ("}", "]", ")"):
                     lvl -= 1
                 c += 1
             if lvl > 0:
@@ -1124,6 +1204,19 @@ class StructType(CompileContext, BaseType):
             c = end_t
             self.defined = True
             self.incomplete = False
+            # Finalize bit-field layout: close any open storage unit
+            if self._bf_cur_storage_sz > 0 and self._bf_struct_total_sz is not None:
+                self._bf_struct_total_sz += self._bf_cur_storage_sz
+                self._bf_cur_storage_sz = 0
+            # Handle __attribute__((...)) after the struct body
+            while (
+                c < end
+                and tokens[c].type_id == TokenType.NAME
+                and tokens[c].str == "__attribute__"
+            ):
+                c, is_pack = _skip_gnu_attr(tokens, c, end)
+                if is_pack:
+                    self.is_packed = True
         return c
 
     def compile_var_init(
@@ -1331,9 +1424,103 @@ class StructType(CompileContext, BaseType):
     def new_var(self, v: str, inst: "ContextVariable") -> "ContextVariable":
         if inst.mods == VarDeclMods.STATIC:
             return super(StructType, self).new_var(v, inst)
-        self.definition[v] = len(self.var_order)
-        self.var_order.append(inst)
+        if inst.bit_field_width is not None:
+            # ── Bit-field member ─────────────────────────────────────────────
+            if self._bf_struct_total_sz is None:
+                self._init_bf_layout()
+            width = inst.bit_field_width
+            storage_sz = size_of(inst.typ)
+            storage_bits = storage_sz * 8
+            if width == 0:
+                # Zero-width: flush to end of current storage unit
+                if self._bf_cur_storage_sz > 0:
+                    self._bf_struct_total_sz += self._bf_cur_storage_sz
+                    self._bf_cur_byte_off = self._bf_struct_total_sz
+                    self._bf_cur_bits_used = 0
+                    self._bf_cur_storage_sz = 0
+                return inst
+            if (
+                self._bf_cur_storage_sz == storage_sz
+                and self._bf_cur_bits_used + width <= storage_bits
+            ):
+                # Fits in the current storage unit
+                bit_shift = self._bf_cur_bits_used
+                byte_off = self._bf_cur_byte_off
+                self._bf_cur_bits_used += width
+            else:
+                # Start a new storage unit
+                if self._bf_cur_storage_sz > 0:
+                    self._bf_struct_total_sz += self._bf_cur_storage_sz
+                if not self.is_packed:
+                    self._bf_struct_total_sz = _align_up(
+                        self._bf_struct_total_sz, storage_sz
+                    )
+                self._bf_cur_byte_off = self._bf_struct_total_sz
+                self._bf_cur_storage_sz = storage_sz
+                bit_shift = 0
+                byte_off = self._bf_cur_byte_off
+                self._bf_cur_bits_used = width
+            bit_mask = (1 << width) - 1
+            self.bit_field_info[v] = BitFieldInfo(
+                byte_offset=byte_off,
+                bit_shift=bit_shift,
+                bit_mask=bit_mask,
+                storage_sz=storage_sz,
+            )
+            self.definition[v] = len(self.var_order)
+            self.var_order.append(inst)
+        else:
+            # ── Regular (non-bit-field) member ───────────────────────────────
+            if self._bf_struct_total_sz is not None:
+                # Flush any open bit-field storage unit first
+                if self._bf_cur_storage_sz > 0:
+                    self._bf_struct_total_sz += self._bf_cur_storage_sz
+                    self._bf_cur_byte_off = self._bf_struct_total_sz
+                    self._bf_cur_bits_used = 0
+                    self._bf_cur_storage_sz = 0
+                self._precomp_byte_offsets[v] = self._bf_struct_total_sz
+                self._bf_struct_total_sz += size_of(inst.typ)
+            self.definition[v] = len(self.var_order)
+            self.var_order.append(inst)
         return inst
+
+    def _init_bf_layout(self):
+        """Initialise bit-field layout tracking from any regular members added so far."""
+        off = 0 if self.the_base_type is None else size_of(self.the_base_type)
+        for var in self.var_order:
+            self._precomp_byte_offsets[var.name] = off
+            off += size_of(var.typ)
+        self._bf_struct_total_sz = off
+        self._bf_cur_byte_off = off
+        self._bf_cur_bits_used = 0
+        self._bf_cur_storage_sz = 0
+
+    def _consume_padding_bits(self, storage_sz: int, width: int):
+        """Handle an unnamed bit field (i.e. padding) in struct layout."""
+        if self._bf_struct_total_sz is None:
+            self._init_bf_layout()
+        storage_bits = storage_sz * 8
+        if width == 0:
+            if self._bf_cur_storage_sz > 0:
+                self._bf_struct_total_sz += self._bf_cur_storage_sz
+                self._bf_cur_byte_off = self._bf_struct_total_sz
+                self._bf_cur_bits_used = 0
+                self._bf_cur_storage_sz = 0
+        elif (
+            self._bf_cur_storage_sz == storage_sz
+            and self._bf_cur_bits_used + width <= storage_bits
+        ):
+            self._bf_cur_bits_used += width
+        else:
+            if self._bf_cur_storage_sz > 0:
+                self._bf_struct_total_sz += self._bf_cur_storage_sz
+            if not self.is_packed:
+                self._bf_struct_total_sz = _align_up(
+                    self._bf_struct_total_sz, storage_sz
+                )
+            self._bf_cur_byte_off = self._bf_struct_total_sz
+            self._bf_cur_storage_sz = storage_sz
+            self._bf_cur_bits_used = width
 
     def is_namespace(self):
         return False
@@ -1563,9 +1750,23 @@ class UnionType(CompileContext, BaseType):
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
     ) -> int:
+        # Handle __attribute__((...)) before the union name
+        while (
+            c < end
+            and tokens[c].type_id == TokenType.NAME
+            and tokens[c].str == "__attribute__"
+        ):
+            c, _is_pack = _skip_gnu_attr(tokens, c, end)
         base_name, c = try_get_as_name(tokens, c, end, context)
         if base_name is not None:
             self.name = "".join(map(tok_to_str, base_name))
+        # Handle __attribute__((...)) after the union name
+        while (
+            c < end
+            and tokens[c].type_id == TokenType.NAME
+            and tokens[c].str == "__attribute__"
+        ):
+            c, _is_pack = _skip_gnu_attr(tokens, c, end)
         if tokens[c].str == ":":
             raise ParsingError(tokens, c, "Inheritance is not allowed for unions")
         if tokens[c].str == "{":
@@ -1574,9 +1775,9 @@ class UnionType(CompileContext, BaseType):
             start = c
             while c < end and lvl > 0:
                 s = tokens[c].str
-                if s in OPEN_GROUPS:
+                if s in ("{", "[", "("):
                     lvl += 1
-                elif s in CLOSE_GROUPS:
+                elif s in ("}", "]", ")"):
                     lvl -= 1
                 c += 1
             if lvl > 0:
@@ -1595,6 +1796,13 @@ class UnionType(CompileContext, BaseType):
             c = end_t
             self.defined = True
             self.incomplete = False
+            # Handle __attribute__((...)) after the union body
+            while (
+                c < end
+                and tokens[c].type_id == TokenType.NAME
+                and tokens[c].str == "__attribute__"
+            ):
+                c, _is_pack = _skip_gnu_attr(tokens, c, end)
         return c
 
     def new_var(self, v: str, inst: "ContextVariable"):
@@ -1961,8 +2169,27 @@ class DeclStmnt(BaseStmnt):
                 raise ParsingError(tokens, c, "Expected Typename for DeclStmnt")
             assert isinstance(named_qual_type, IdentifiedQualType)
             cur_decl = None
+            bf_width = None
             if named_qual_type.name is None:
-                pass
+                if (
+                    c < end_stmnt
+                    and tokens[c].str == ":"
+                    and c + 1 < end_stmnt
+                    and tokens[c + 1].type_id
+                    in {
+                        TokenType.DEC_INT,
+                        TokenType.HEX_INT,
+                        TokenType.OCT_INT,
+                        TokenType.BIN_INT,
+                    }
+                ):
+                    c += 1  # consume ':'
+                    bf_width = int(tokens[c].str, 0)
+                    c += 1  # consume integer
+                    if isinstance(context, StructType):
+                        context._consume_padding_bits(
+                            size_of(named_qual_type.typ), bf_width
+                        )
             elif tokens[c].str == "=":
                 c += 1
                 expr, c = get_expr(tokens, c, ",", end_stmnt, context)
@@ -2059,6 +2286,13 @@ class DeclStmnt(BaseStmnt):
                     ext_spec,
                     INIT_CURLY,
                 )
+            elif tokens[c].str == ":":
+                c += 1  # consume ':'
+                bf_width = int(tokens[c].str, 0)
+                c += 1  # consume integer
+                cur_decl = SingleVarDecl(
+                    named_qual_type.typ, named_qual_type.name, [], ext_spec
+                )
             else:
                 # print "else: tokens[%u] = %r" % (c, tokens[c])
                 cur_decl = SingleVarDecl(
@@ -2066,12 +2300,12 @@ class DeclStmnt(BaseStmnt):
                 )
             if cur_decl is not None:
                 self.decl_lst.append(cur_decl)
-                ctx_var = context.new_var(
-                    cur_decl.var_name,
-                    ContextVariable(
-                        cur_decl.var_name, cur_decl.type_name, None, ext_spec
-                    ),
+                inst = ContextVariable(
+                    cur_decl.var_name, cur_decl.type_name, None, ext_spec
                 )
+                if bf_width is not None:
+                    inst.bit_field_width = bf_width
+                ctx_var = context.new_var(cur_decl.var_name, inst)
                 ctx_var.is_op_fn = named_qual_type.is_op_fn
                 # NOTE the following must be true: SingleVarDecl(...).type_name is ContextVariable(...).typ
             if is_non_semi_colon_end:
@@ -2179,6 +2413,12 @@ def proc_typed_decl(
         elif tokens[c0].str in ("restrict", "_Noreturn"):
             pass  # no-op qualifier/specifier
         else:
+            if i_type == 0:
+                # No identifier was found and the tokens at this position are not
+                # type qualifiers (e.g. ':0' for an unnamed bit-field, or '=…' for
+                # a default initialiser).  Return an unnamed type at s_start so the
+                # caller can handle the remaining tokens itself.
+                return rtn, s_start
             raise ParsingError(tokens, c0, "Unexpected token")
     # process items after the identifier by creating QualType instances
     while c < end:
@@ -2253,7 +2493,7 @@ def proc_typed_decl(
                 break
             else:
                 raise ParsingError(tokens, c, "Unsupported Breaking operator")
-        elif tokens[c].type_id == TokenType.OPERATOR and tokens[c].str == "=":
+        elif tokens[c].type_id == TokenType.OPERATOR and tokens[c].str in {"=", ":"}:
             break
         else:
             raise ParsingError(tokens, c, "Unexpected token")
@@ -2277,7 +2517,11 @@ def proc_typed_decl(
 # TODO:     Figure out that 'Pt a = {0, 12};' is a declaration
 
 
-def flip_dct(dct: Dict[TypeVar("T"), TypeVar("U")]) -> Dict[TypeVar("U"), TypeVar("T")]:
+_T = TypeVar("_T")
+_U = TypeVar("_U")
+
+
+def flip_dct(dct: Dict[_T, _U]) -> Dict[_U, _T]:
     return {dct[k]: k for k in dct}
 
 
@@ -2802,8 +3046,9 @@ def size_of(typ: "BaseType", is_arg: bool = False):
     elif isinstance(typ, EnumType):
         return size_of(typ.the_base_type)
     elif isinstance(typ, (StructType, ClassType)):
+        if isinstance(typ, StructType) and typ._bf_struct_total_sz is not None:
+            return typ._bf_struct_total_sz
         sz = 0 if typ.the_base_type is None else size_of(typ.the_base_type)
-        # TODO: add 'packed' boolean attribute to StructType and ClassType1
         for ctx_var in typ.var_order:
             sz += size_of(ctx_var.typ)
         return sz
@@ -3048,6 +3293,7 @@ class ContextVariable(ContextMember, PrettyRepr):
         self.is_op_fn = False
         self.typ: "BaseType" = typ
         self.mods = mods
+        self.bit_field_width: Optional[int] = None
 
     def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(

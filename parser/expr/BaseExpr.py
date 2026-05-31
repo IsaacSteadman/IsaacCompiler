@@ -24,6 +24,7 @@ class ExprType(Enum):
 class BaseExpr(PrettyRepr):
     t_anot: Optional["BaseType"] = None
     expr_id: ExprType = -1
+    bit_field_info: Optional["BitFieldInfo"] = None
     # temps is a list of the types of the temporaries owned by the parent Expression Object only (ie 'self')
     temps: Optional[List["BaseType"]] = None
     temps_off: int = 0
@@ -41,3 +42,4 @@ class BaseExpr(PrettyRepr):
 
 
 from ..type.BaseType import BaseType
+from ..type.types import BitFieldInfo

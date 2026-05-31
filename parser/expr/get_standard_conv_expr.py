@@ -26,7 +26,7 @@ def get_standard_conv_expr(
     ):
         assert isinstance(src_vt, PrimitiveType)
         assert isinstance(tgt_vt, PrimitiveType)
-        if src_vt.typ != tgt_vt.typ:
+        if src_vt.typ != tgt_vt.typ or src_vt.sign != tgt_vt.sign:
             if is_src_ref:
                 return CastOpExpr(src_vt, expr, CastType.IMPLICIT), 2
             rtn = CastOpExpr(tgt_vt, expr, CastType.IMPLICIT)
@@ -60,7 +60,9 @@ def get_standard_conv_expr(
                         return expr, 1
                     else:
                         return CastOpExpr(tgt_vt, expr, CastType.IMPLICIT), 2
-                elif is_prim_type_id(get_base_prim_type(tgt_vt.tgt_type), PrimitiveTypeId.TYP_VOID):
+                elif is_prim_type_id(
+                    get_base_prim_type(tgt_vt.tgt_type), PrimitiveTypeId.TYP_VOID
+                ):
                     return CastOpExpr(tgt_vt, expr, CastType.IMPLICIT), 4
                 if OVERLOAD_VERBOSE:
                     print("REASON: src_vt Pointer General")
