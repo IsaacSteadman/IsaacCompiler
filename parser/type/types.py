@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import struct
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, TypeVar, Union
@@ -871,6 +871,7 @@ class ClassType(CompileContext, BaseType):
         self.defined = defined
         self.the_base_type = the_base_type
         self.align_override: Optional[int] = None
+        self.attributes: List[Attribute] = []
 
     def offset_of(self, attr: str) -> int:
         index = self.definition[attr]
@@ -909,7 +910,10 @@ class ClassType(CompileContext, BaseType):
         other.var_order = self.var_order
         other.defined = self.defined
         other.the_base_type = self.the_base_type
-        other.align_override = self.align_override
+        if self.align_override is not None:
+            cur = 0 if other.align_override is None else other.align_override
+            other.align_override = max(cur, self.align_override)
+        other.attributes.extend(self.attributes)
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
@@ -981,15 +985,53 @@ class BitFieldInfo:
 
 
 @dataclass
+class Attribute:
+    name: str
+    args: List[str] = field(default_factory=list)
+
+
+@dataclass
+class _ParsedAttributeSpec:
+    attribute: Attribute
+    arg_tokens: List[List["Token"]] = field(default_factory=list)
+
+
+@dataclass
 class GNUAttributes:
+    attributes: List[Attribute] = field(default_factory=list)
     packed: bool = False
     align_override: Optional[int] = None
+    section_name: Optional[str] = None
+    weak: bool = False
+    noreturn: bool = False
+    always_inline: bool = False
+    noinline: bool = False
+    unused: bool = False
+    deprecated: bool = False
+    format_attr: Optional[Attribute] = None
+    constructor_attr: Optional[Attribute] = None
+    destructor_attr: Optional[Attribute] = None
 
     def merge(self, other: "GNUAttributes") -> "GNUAttributes":
+        self.attributes.extend(other.attributes)
         self.packed = self.packed or other.packed
         if other.align_override is not None:
             cur = 0 if self.align_override is None else self.align_override
             self.align_override = max(cur, other.align_override)
+        if other.section_name is not None:
+            self.section_name = other.section_name
+        self.weak = self.weak or other.weak
+        self.noreturn = self.noreturn or other.noreturn
+        self.always_inline = self.always_inline or other.always_inline
+        self.noinline = self.noinline or other.noinline
+        self.unused = self.unused or other.unused
+        self.deprecated = self.deprecated or other.deprecated
+        if other.format_attr is not None:
+            self.format_attr = other.format_attr
+        if other.constructor_attr is not None:
+            self.constructor_attr = other.constructor_attr
+        if other.destructor_attr is not None:
+            self.destructor_attr = other.destructor_attr
         return self
 
 
@@ -1078,15 +1120,82 @@ def _eval_attr_align_expr(
     return int(value)
 
 
-def _parse_single_gnu_attr(
-    tokens: List["Token"], c: int, end: int, context: "CompileContext"
-) -> Tuple[int, GNUAttributes]:
-    attrs = GNUAttributes()
+_GNU_TYPE_PREFIX_ATTRS = {"packed", "aligned"}
+
+
+def _normalize_gnu_attr_name(name: str) -> str:
+    if len(name) > 4 and name.startswith("__") and name.endswith("__"):
+        return name[2:-2]
+    return name
+
+
+def _fully_wrapped_in_parens(tokens: List["Token"]) -> bool:
+    if len(tokens) < 2 or tokens[0].str != "(" or tokens[-1].str != ")":
+        return False
+    depth = 0
+    for c, tok in enumerate(tokens):
+        if tok.str == "(":
+            depth += 1
+        elif tok.str == ")":
+            depth -= 1
+            if depth == 0:
+                return c == len(tokens) - 1
+    return False
+
+
+def _unwrap_paren_wrappers(tokens: List["Token"]) -> List["Token"]:
+    while _fully_wrapped_in_parens(tokens):
+        tokens = tokens[1:-1]
+    return tokens
+
+
+def _split_top_level_commas(tokens: List["Token"]) -> List[List["Token"]]:
+    groups = []
+    start = 0
+    lvl = 0
+    for c, tok in enumerate(tokens):
+        s = tok.str
+        if s in OPEN_GROUPS:
+            lvl += 1
+        elif s in CLOSE_GROUPS:
+            lvl -= 1
+        elif s == "," and lvl == 0:
+            groups.append(tokens[start:c])
+            start = c + 1
+    groups.append(tokens[start:])
+    return [group for group in groups if len(group) > 0]
+
+
+def _parse_attribute_segment(
+    tokens: List["Token"],
+) -> Optional[_ParsedAttributeSpec]:
+    tokens = _unwrap_paren_wrappers(tokens)
+    if len(tokens) == 0 or tokens[0].type_id != TokenType.NAME:
+        return None
+    attr_name = _normalize_gnu_attr_name(tokens[0].str)
+    args = []
+    arg_tokens = []
+    if len(tokens) > 1:
+        if (
+            tokens[1].str != "("
+            or tokens[-1].str != ")"
+            or not _fully_wrapped_in_parens(tokens[1:])
+        ):
+            return None
+        arg_tokens = _split_top_level_commas(tokens[2:-1])
+        args = ["".join(map(tok_to_str, group)) for group in arg_tokens]
+    return _ParsedAttributeSpec(Attribute(attr_name, args), arg_tokens)
+
+
+def _parse_single_gnu_attr_specs(
+    tokens: List["Token"], c: int, end: int
+) -> Tuple[int, List[_ParsedAttributeSpec]]:
+    specs = []
     if c >= end or tokens[c].str != "__attribute__":
-        return c, attrs
+        return c, specs
     c += 1
     if c >= end or tokens[c].str != "(":
-        return c, attrs
+        return c, specs
     lvl = 1
     c += 1
     attr_tokens = []
@@ -1099,33 +1208,54 @@ def _parse_single_gnu_attr(
         if lvl > 0:
             attr_tokens.append(tokens[c])
         c += 1
-    k = 0
-    attr_end = len(attr_tokens)
-    while k < attr_end:
-        tok = attr_tokens[k]
-        if tok.type_id == TokenType.NAME:
-            if tok.str == "packed":
-                attrs.packed = True
-            elif tok.str == "aligned" and k + 1 < attr_end and attr_tokens[k + 1].str == "(":
-                depth = 1
-                expr_start = k + 2
-                k += 2
-                while k < attr_end and depth > 0:
-                    if attr_tokens[k].str == "(":
-                        depth += 1
-                    elif attr_tokens[k].str == ")":
-                        depth -= 1
-                    k += 1
-                if depth == 0:
-                    align = _eval_attr_align_expr(
-                        attr_tokens, expr_start, k - 1, context
-                    )
-                    if align is not None and align > 0:
-                        cur = 0 if attrs.align_override is None else attrs.align_override
-                        attrs.align_override = max(cur, align)
-                continue
-        k += 1
-    return c, attrs
+    attr_tokens = _unwrap_paren_wrappers(attr_tokens)
+    for segment in _split_top_level_commas(attr_tokens):
+        spec = _parse_attribute_segment(segment)
+        if spec is not None:
+            specs.append(spec)
+    return c, specs
+
+
+def _dispatch_gnu_attr_spec(
+    attrs: GNUAttributes,
+    spec: _ParsedAttributeSpec,
+    context: "CompileContext",
+) -> None:
+    attr = spec.attribute
+    attrs.attributes.append(attr)
+    if attr.name == "packed":
+        attrs.packed = True
+    elif attr.name == "aligned":
+        if len(spec.arg_tokens) > 0:
+            align = _eval_attr_align_expr(
+                spec.arg_tokens[0], 0, len(spec.arg_tokens[0]), context
+            )
+            if align is not None and align > 0:
+                cur = 0 if attrs.align_override is None else attrs.align_override
+                attrs.align_override = max(cur, align)
+    elif attr.name == "section":
+        if len(attr.args) > 0:
+            attrs.section_name = attr.args[0]
+    elif attr.name == "weak":
+        attrs.weak = True
+    elif attr.name == "noreturn":
+        attrs.noreturn = True
+    elif attr.name == "always_inline":
+        attrs.always_inline = True
+    elif attr.name == "noinline":
+        attrs.noinline = True
+    elif attr.name == "unused":
+        attrs.unused = True
+    elif attr.name == "deprecated":
+        attrs.deprecated = True
+    elif attr.name == "format":
+        attrs.format_attr = attr
+    elif attr.name == "constructor":
+        attrs.constructor_attr = attr
+    elif attr.name == "destructor":
+        attrs.destructor_attr = attr
+    else:
+        attrs.attributes.pop()
 
 
 def _consume_gnu_attrs(
@@ -1137,14 +1267,39 @@ def _consume_gnu_attrs(
         and tokens[c].type_id == TokenType.NAME
         and tokens[c].str == "__attribute__"
     ):
-        c, cur = _parse_single_gnu_attr(tokens, c, end, context)
-        attrs.merge(cur)
+        c, specs = _parse_single_gnu_attr_specs(tokens, c, end)
+        for spec in specs:
+            _dispatch_gnu_attr_spec(attrs, spec, context)
     return c, attrs
+
+
+def _skip_gnu_attrs(tokens: List["Token"], c: int, end: int) -> int:
+    while (
+        c < end
+        and tokens[c].type_id == TokenType.NAME
+        and tokens[c].str == "__attribute__"
+    ):
+        c, _specs = _parse_single_gnu_attr_specs(tokens, c, end)
+    return c
+
+
+def _apply_gnu_attributes_to_decl(
+    decl: object, attrs: GNUAttributes
+) -> object:
+    if not hasattr(decl, "attributes") or getattr(decl, "attributes") is None:
+        decl.attributes = []
+    decl.attributes.extend(attrs.attributes)
+    if attrs.align_override is not None and hasattr(decl, "align_override"):
+        cur = getattr(decl, "align_override")
+        cur = 0 if cur is None else cur
+        decl.align_override = max(cur, attrs.align_override)
+    return decl
 
 
 def _apply_gnu_attributes_to_type(
     typ: "BaseType", attrs: GNUAttributes
 ) -> "BaseType":
+    _apply_gnu_attributes_to_decl(typ, attrs)
     if isinstance(typ, StructType):
         if attrs.packed:
             typ.is_packed = True
@@ -1214,6 +1369,7 @@ class StructType(CompileContext, BaseType):
         self.defined = defined
         self.the_base_type = the_base_type
         self.align_override: Optional[int] = None
+        self.attributes: List[Attribute] = []
         self.layout_entries: List[StructLayoutEntry] = []
         # Bit-field layout state
         self.bit_field_info: Dict[str, BitFieldInfo] = {}
@@ -1277,13 +1433,16 @@ class StructType(CompileContext, BaseType):
         other.var_order = self.var_order
         other.defined = self.defined
         other.the_base_type = self.the_base_type
-        other.align_override = self.align_override
+        if self.align_override is not None:
+            cur = 0 if other.align_override is None else other.align_override
+            other.align_override = max(cur, self.align_override)
         other.layout_entries = self.layout_entries
         other.bit_field_info = self.bit_field_info
         other._precomp_byte_offsets = self._precomp_byte_offsets
         other._direct_member_offsets = self._direct_member_offsets
         other._bf_struct_total_sz = self._bf_struct_total_sz
-        other.is_packed = self.is_packed
+        other.is_packed = other.is_packed or self.is_packed
+        other.attributes.extend(self.attributes)
         other._layout_cache = self._layout_cache
 
     def _invalidate_layout(self) -> None:
@@ -1785,6 +1944,7 @@ class EnumType(CompileContext, BaseType):
         if variables is not None:
             self.vars.update(variables)
         self.defined = defined
+        self.attributes: List[Attribute] = []
 
     def compile_var_init(
         self, cmpl_obj, init_args, context, ref, cmpl_data=None, temp_links=None
@@ -1812,6 +1972,7 @@ class EnumType(CompileContext, BaseType):
         other.incomplete = self.incomplete
         other.the_base_type = self.the_base_type
         other.defined = self.defined
+        other.attributes.extend(self.attributes)
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
@@ -2030,6 +2191,7 @@ class UnionType(CompileContext, BaseType):
         self.the_base_type = the_base_type
         self.is_packed: bool = False
         self.align_override: Optional[int] = None
+        self.attributes: List[Attribute] = []
 
     def offset_of(self, attr: str) -> int:
         resolved = self.resolve_member(attr)
@@ -2073,8 +2235,11 @@ class UnionType(CompileContext, BaseType):
         other.member_order = self.member_order
         other.defined = self.defined
         other.the_base_type = self.the_base_type
-        other.is_packed = self.is_packed
-        other.align_override = self.align_override
+        other.is_packed = other.is_packed or self.is_packed
+        if self.align_override is not None:
+            cur = 0 if other.align_override is None else other.align_override
+            other.align_override = max(cur, self.align_override)
+        other.attributes.extend(self.attributes)
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
@@ -2170,7 +2335,11 @@ def merge_type_context(
 
 
 def get_base_type(
-    tokens: List["Token"], c: int, end: int, context: "CompileContext"
+    tokens: List["Token"],
+    c: int,
+    end: int,
+    context: "CompileContext",
+    decl_attrs: Optional[GNUAttributes] = None,
 ) -> Tuple[Optional["BaseType"], int]:
     main_start = c
     str_name = []
@@ -2182,13 +2351,24 @@ def get_base_type(
             tokens[c].type_id == TokenType.NAME
             and tokens[c].str == "__attribute__"
         ):
-            c1, attrs = _consume_gnu_attrs(tokens, c, end, context)
+            c1, specs = _parse_single_gnu_attr_specs(tokens, c, end)
             if (
                 c1 < end
                 and tokens[c1].type_id == TokenType.NAME
                 and tokens[c1].str in META_TYPE_LST
+                and base_type is None
+                and not is_prim
             ):
-                pending_gnu_attrs.merge(attrs)
+                for spec in specs:
+                    if spec.attribute.name in _GNU_TYPE_PREFIX_ATTRS:
+                        _dispatch_gnu_attr_spec(pending_gnu_attrs, spec, context)
+                    elif decl_attrs is not None:
+                        _dispatch_gnu_attr_spec(decl_attrs, spec, context)
+                c = c1
+                continue
+            if decl_attrs is not None:
+                for spec in specs:
+                    _dispatch_gnu_attr_spec(decl_attrs, spec, context)
                 c = c1
                 continue
             if base_type is not None or is_prim or len(str_name) > 0:
@@ -2354,14 +2534,17 @@ def get_strict_stmnt(
     assert isinstance(context, (ClassType, StructType, UnionType))
     # TODO: place all members in host_scopeable (allows for scoped 'using' [namespace])
     start = c
+    decl_c = _skip_gnu_attrs(tokens, c, end)
     if (
-        tokens[c].type_id == TokenType.NAME
-        and tokens[c].str == context.name
-        and tokens[c + 1].str == "("
+        decl_c < end
+        and tokens[decl_c].type_id == TokenType.NAME
+        and tokens[decl_c].str == context.name
+        and decl_c + 1 < end
+        and tokens[decl_c + 1].str == "("
     ):
         pos = StmntType.DECL
-    elif tokens[c].type_id == TokenType.NAME and is_type_name_part(
-        tokens[c].str, context
+    elif decl_c < end and tokens[decl_c].type_id == TokenType.NAME and is_type_name_part(
+        tokens[decl_c].str, context
     ):
         pos = StmntType.DECL
     else:
@@ -2424,19 +2607,33 @@ class DeclStmnt(BaseStmnt):
                 ext_spec = 2
             # inline is a no-op hint for this compiler
             c += 1
+        ctor_attr_cursor = c
+        ctor_decl_attrs = GNUAttributes()
+        while (
+            ctor_attr_cursor < end
+            and tokens[ctor_attr_cursor].type_id == TokenType.NAME
+            and tokens[ctor_attr_cursor].str == "__attribute__"
+        ):
+            ctor_attr_cursor, attrs = _consume_gnu_attrs(
+                tokens, ctor_attr_cursor, end, context
+            )
+            ctor_decl_attrs.merge(attrs)
         if (
             isinstance(context, BaseType)
             and context.type_class_id
             in [TypeClass.STRUCT, TypeClass.CLASS, TypeClass.UNION]
-            and tokens[c].str == context.name
-            and c + 1 < len(tokens)
-            and tokens[c + 1].str == "("
+            and tokens[ctor_attr_cursor].str == context.name
+            and ctor_attr_cursor + 1 < len(tokens)
+            and tokens[ctor_attr_cursor + 1].str == "("
         ):
             base_type = void_t
             # TODO: choose a value that will signal that this is a constructor
             #   or instead, don't enter the 'while c < end_stmnt + 1' loop
-            named_qual_type, new_c = proc_typed_decl(tokens, c, end, context, base_type)
+            named_qual_type, new_c = proc_typed_decl(
+                tokens, ctor_attr_cursor, end, context, base_type
+            )
             assert isinstance(named_qual_type, IdentifiedQualType)
+            _apply_gnu_attributes_to_decl(named_qual_type, ctor_decl_attrs)
             assert isinstance(context, (StructType, ClassType, UnionType))
             typ = named_qual_type.typ
             assert isinstance(typ, BaseType)
@@ -2488,10 +2685,12 @@ class DeclStmnt(BaseStmnt):
                             [] if stmnt is None else [stmnt],
                             0,
                             INIT_CURLY,
+                            named_qual_type.attributes,
                         )
                     ]
                     return new_c
-        base_type, c = get_base_type(tokens, c, end, context)
+        base_decl_attrs = GNUAttributes()
+        base_type, c = get_base_type(tokens, c, end, context, base_decl_attrs)
         end_stmnt = c
         lvl = 0
         # TODO: remove this limitation as this would break inline struct definitions (like struct {int a; char b} var)
@@ -2513,6 +2712,7 @@ class DeclStmnt(BaseStmnt):
             if named_qual_type is None:
                 raise ParsingError(tokens, c, "Expected Typename for DeclStmnt")
             assert isinstance(named_qual_type, IdentifiedQualType)
+            _apply_gnu_attributes_to_decl(named_qual_type, base_decl_attrs)
             cur_decl = None
             bf_width = None
             ctx_var = None
@@ -2521,6 +2721,7 @@ class DeclStmnt(BaseStmnt):
                     named_qual_type.name, named_qual_type.typ, None, ext_spec
                 )
                 inst.align_override = named_qual_type.align_override
+                inst.attributes = list(named_qual_type.attributes)
                 return inst
             if named_qual_type.name is None:
                 if (
@@ -2554,6 +2755,7 @@ class DeclStmnt(BaseStmnt):
                             ext_spec,
                         )
                         inst.align_override = named_qual_type.align_override
+                        inst.attributes = list(named_qual_type.attributes)
                         context.add_anonymous_member(inst)
                     c += 1
                     break
@@ -2570,6 +2772,7 @@ class DeclStmnt(BaseStmnt):
                     [expr],
                     ext_spec,
                     INIT_ASSIGN,
+                    named_qual_type.attributes,
                 )
             elif tokens[c].str == "(":
                 ctx_var = context.new_var(named_qual_type.name, _new_decl_ctx_var())
@@ -2599,6 +2802,7 @@ class DeclStmnt(BaseStmnt):
                     init_args,
                     ext_spec,
                     INIT_PARENTH,
+                    named_qual_type.attributes,
                 )
             elif tokens[c].str == "{":
                 init_args = []
@@ -2662,24 +2866,36 @@ class DeclStmnt(BaseStmnt):
                     init_args,
                     ext_spec,
                     INIT_CURLY,
+                    named_qual_type.attributes,
                 )
             elif tokens[c].str == ":":
                 c += 1  # consume ':'
                 bf_width = int(tokens[c].str, 0)
                 c += 1  # consume integer
                 cur_decl = SingleVarDecl(
-                    named_qual_type.typ, named_qual_type.name, [], ext_spec
+                    named_qual_type.typ,
+                    named_qual_type.name,
+                    [],
+                    ext_spec,
+                    attributes=named_qual_type.attributes,
                 )
             else:
                 # print "else: tokens[%u] = %r" % (c, tokens[c])
                 cur_decl = SingleVarDecl(
-                    named_qual_type.typ, named_qual_type.name, [], ext_spec
+                    named_qual_type.typ,
+                    named_qual_type.name,
+                    [],
+                    ext_spec,
+                    attributes=named_qual_type.attributes,
                 )
             if cur_decl is not None:
                 self.decl_lst.append(cur_decl)
                 if ctx_var is None:
-                    inst = ContextVariable(cur_decl.var_name, cur_decl.type_name, None, ext_spec)
+                    inst = ContextVariable(
+                        cur_decl.var_name, cur_decl.type_name, None, ext_spec
+                    )
                     inst.align_override = named_qual_type.align_override
+                    inst.attributes = list(named_qual_type.attributes)
                     if bf_width is not None:
                         inst.bit_field_width = bf_width
                     ctx_var = context.new_var(cur_decl.var_name, inst)
@@ -2700,15 +2916,15 @@ class DeclStmnt(BaseStmnt):
 def proc_typed_decl(
     tokens: List["Token"], c: int, end: int, context: "CompileContext", base_type=None
 ):
+    decl_attrs = GNUAttributes()
     # process the 'base' type before any parentheses, '*', '&', 'const', or 'volatile'
     if base_type is None:
-        base_type, c = get_base_type(tokens, c, end, context)
+        base_type, c = get_base_type(tokens, c, end, context, decl_attrs)
         if base_type is None:
             return None, c
     rtn = base_type
     if not isinstance(rtn, IdentifiedQualType):
         rtn = IdentifiedQualType(None, rtn)
-    decl_attrs = GNUAttributes()
     s_start = c
     s_end = end
     i_type = 0  # inner type, 0: None, 1: '(' and ')', 2: name
@@ -2905,9 +3121,7 @@ def proc_typed_decl(
     elif i_type == 2:
         rtn.name = "".join(map(tok_to_str, tokens[i_start:i_end]))
         rtn.is_op_fn = is_operator
-    if decl_attrs.align_override is not None:
-        cur = 0 if rtn.align_override is None else rtn.align_override
-        rtn.align_override = max(cur, decl_attrs.align_override)
+    _apply_gnu_attributes_to_decl(rtn, decl_attrs)
     return rtn, c
 
 
@@ -3838,7 +4052,8 @@ class TypeDefStmnt(BaseStmnt):
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
     ) -> int:
         c += 1
-        base_type, c = get_base_type(tokens, c, end, context)
+        base_decl_attrs = GNUAttributes()
+        base_type, c = get_base_type(tokens, c, end, context, base_decl_attrs)
         end_stmnt = c
         # TODO: remove this limitation as this would break inline struct definitions (like struct {int a; char b} var)
         # TODO: DONE
@@ -3859,6 +4074,7 @@ class TypeDefStmnt(BaseStmnt):
             if named_qual_type is None:
                 raise ParsingError(tokens, c, "Expected Typename for DeclStmnt")
             assert isinstance(named_qual_type, IdentifiedQualType)
+            _apply_gnu_attributes_to_decl(named_qual_type, base_decl_attrs)
             if named_qual_type.name is None:
                 raise ParsingError(tokens, c, "Expected a name for typedef")
             elif tokens[c].str == "," or tokens[c].str == ";":
@@ -3901,6 +4117,7 @@ class IdentifiedQualType(PrettyRepr):
         self.typ = typ
         self.is_op_fn = False
         self.align_override: Optional[int] = None
+        self.attributes: List[Attribute] = []
 
     def add_qual_type(self, qual_id, ext_inf=None):
         self.typ = QualType(qual_id, self.typ, ext_inf)
@@ -3940,6 +4157,7 @@ class ContextVariable(ContextMember, PrettyRepr):
         self.mods = mods if isinstance(mods, VarDeclMods) else VarDeclMods(mods)
         self.bit_field_width: Optional[int] = None
         self.align_override: Optional[int] = None
+        self.attributes: List[Attribute] = []
 
     def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(

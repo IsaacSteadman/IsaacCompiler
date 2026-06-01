@@ -1,3 +1,5 @@
+from typing import List, Optional, TYPE_CHECKING
+
 from ....PrettyRepr import PrettyRepr, get_pretty_repr, get_pretty_repr_enum
 from ....ParseConstants import LST_INIT_TYPES, INIT_NONE
 
@@ -11,6 +13,7 @@ class SingleVarDecl(PrettyRepr):
         init_args,
         ext_spec,
         init_type=INIT_NONE,
+        attributes: Optional[List["Attribute"]] = None,
     ):
         """
         :param list[BaseExpr]|list[CurlyStmnt] init_args:
@@ -46,6 +49,7 @@ class SingleVarDecl(PrettyRepr):
                 expr.init_temps(None)
         self.ext_spec = ext_spec
         self.init_type = init_type
+        self.attributes = [] if attributes is None else list(attributes)
 
     # TODO: Maybe put a stub build Method?
 
@@ -63,3 +67,6 @@ from ...expr.OperatorType import OperatorType
 from ...type.BaseType import BaseType, TypeClass
 from ...expr.abstract_overload_resolver import abstract_overload_resolver
 from ...type.get_user_str_from_type import get_user_str_from_type
+
+if TYPE_CHECKING:
+    from ...type.types import Attribute
