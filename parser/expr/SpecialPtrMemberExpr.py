@@ -29,9 +29,12 @@ class SpecialPtrMemberExpr(BaseExpr):
             )
         assert isinstance(src_vt, (StructType, UnionType, ClassType))
         ctx_var = None
-        if src_vt.type_class_id == TypeClass.UNION:
-            assert isinstance(src_vt, UnionType)
-            ctx_var = src_vt.definition.get(attr, ctx_var)
+        member_res = None
+        if src_vt.type_class_id in {TypeClass.STRUCT, TypeClass.UNION}:
+            assert isinstance(src_vt, (StructType, UnionType))
+            member_res = src_vt.resolve_member(attr)
+            if member_res is not None:
+                ctx_var = member_res.member
         else:
             assert isinstance(src_vt, (StructType, ClassType))
             var_index = src_vt.definition.get(attr, -1)
@@ -49,10 +52,7 @@ class SpecialPtrMemberExpr(BaseExpr):
         else:
             self.t_anot = QualType(QualType.QUAL_REF, attr_pt)
         # Annotate bit-field info: (byte_offset, bit_shift, bit_mask, storage_sz)
-        self.bit_field_info = None
-        if isinstance(src_vt, StructType):
-            src_vt._ensure_layout()
-            self.bit_field_info = src_vt.bit_field_info.get(attr, None)
+        self.bit_field_info = None if member_res is None else member_res.bit_field_info
 
     def init_temps(self, main_temps):
         main_temps = super(SpecialPtrMemberExpr, self).init_temps(main_temps)

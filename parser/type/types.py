@@ -1007,6 +1007,31 @@ class AggregateLayout:
     offsets: Dict[str, int]
     bit_field_info: Dict[str, BitFieldInfo]
 
+
+@dataclass
+class AggregateMemberResolution:
+    member: "ContextVariable"
+    byte_offset: int
+    bit_field_info: Optional[BitFieldInfo] = None
+
+    def shifted(self, byte_offset: int) -> "AggregateMemberResolution":
+        if byte_offset == 0:
+            return self
+        bit_field_info = self.bit_field_info
+        if bit_field_info is not None:
+            bit_field_info = BitFieldInfo(
+                byte_offset=bit_field_info.byte_offset + byte_offset,
+                bit_shift=bit_field_info.bit_shift,
+                bit_mask=bit_field_info.bit_mask,
+                storage_sz=bit_field_info.storage_sz,
+            )
+        return AggregateMemberResolution(
+            self.member,
+            self.byte_offset + byte_offset,
+            bit_field_info,
+        )
+
+
 def _normalize_default_alignment(alignment: Optional[int]) -> Optional[int]:
     if alignment is None or alignment <= 1:
         return None
@@ -1193,15 +1218,42 @@ class StructType(CompileContext, BaseType):
         # Bit-field layout state
         self.bit_field_info: Dict[str, BitFieldInfo] = {}
         self._precomp_byte_offsets: Dict[str, int] = {}
+        self._direct_member_offsets: Dict["ContextVariable", int] = {}
         self._bf_struct_total_sz: Optional[int] = None
         self.is_packed: bool = False
         self._layout_cache: Optional[AggregateLayout] = None
 
     def offset_of(self, attr: str) -> int:
+        resolved = self.resolve_member(attr)
+        if resolved is None:
+            raise KeyError(attr)
+        return resolved.byte_offset
+
+    def resolve_member(self, attr: str) -> Optional[AggregateMemberResolution]:
         self._ensure_layout()
-        if attr in self.bit_field_info:
-            return self.bit_field_info[attr].byte_offset
-        return self._precomp_byte_offsets[attr]
+        var_index = self.definition.get(attr, -1)
+        if var_index != -1:
+            member = self.var_order[var_index]
+            bit_field_info = self.bit_field_info.get(attr, None)
+            if bit_field_info is not None:
+                return AggregateMemberResolution(
+                    member, bit_field_info.byte_offset, bit_field_info
+                )
+            return AggregateMemberResolution(
+                member, self._precomp_byte_offsets[attr], None
+            )
+        for entry in self.layout_entries:
+            member = entry.member
+            if member is None or member.name is not None:
+                continue
+            anon_type = get_base_prim_type(member.typ)
+            if isinstance(anon_type, (StructType, UnionType)):
+                resolved = anon_type.resolve_member(attr)
+                if resolved is not None:
+                    return resolved.shifted(
+                        self._direct_member_offsets.get(member, 0)
+                    )
+        return None
 
     def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
@@ -1229,6 +1281,7 @@ class StructType(CompileContext, BaseType):
         other.layout_entries = self.layout_entries
         other.bit_field_info = self.bit_field_info
         other._precomp_byte_offsets = self._precomp_byte_offsets
+        other._direct_member_offsets = self._direct_member_offsets
         other._bf_struct_total_sz = self._bf_struct_total_sz
         other.is_packed = self.is_packed
         other._layout_cache = self._layout_cache
@@ -1237,6 +1290,7 @@ class StructType(CompileContext, BaseType):
         self._layout_cache = None
         self.bit_field_info = {}
         self._precomp_byte_offsets = {}
+        self._direct_member_offsets = {}
         self._bf_struct_total_sz = None
 
     def _ensure_layout(self) -> AggregateLayout:
@@ -1246,6 +1300,7 @@ class StructType(CompileContext, BaseType):
             self.layout_entries = [StructLayoutEntry(member=var) for var in self.var_order]
         offsets: Dict[str, int] = {}
         bit_field_info: Dict[str, BitFieldInfo] = {}
+        direct_member_offsets: Dict["ContextVariable", int] = {}
         off = 0
         max_align = 1
         if self.the_base_type is not None:
@@ -1319,13 +1374,15 @@ class StructType(CompileContext, BaseType):
                     bit_shift = 0
                     byte_off = cur_storage_off
                     cur_bits_used = width
-                offsets[member.name] = byte_off
-                bit_field_info[member.name] = BitFieldInfo(
-                    byte_offset=byte_off,
-                    bit_shift=bit_shift,
-                    bit_mask=(1 << width) - 1,
-                    storage_sz=storage_sz,
-                )
+                direct_member_offsets[member] = byte_off
+                if member.name is not None:
+                    offsets[member.name] = byte_off
+                    bit_field_info[member.name] = BitFieldInfo(
+                        byte_offset=byte_off,
+                        bit_shift=bit_shift,
+                        bit_mask=(1 << width) - 1,
+                        storage_sz=storage_sz,
+                    )
                 continue
             if cur_storage_sz > 0:
                 off = cur_storage_off + cur_storage_sz
@@ -1335,7 +1392,9 @@ class StructType(CompileContext, BaseType):
             max_align = max(max_align, member_align)
             if not self.is_packed:
                 off = _align_up(off, member_align)
-            offsets[member.name] = off
+            direct_member_offsets[member] = off
+            if member.name is not None:
+                offsets[member.name] = off
             off += size_of(member.typ, owner=self)
         if cur_storage_sz > 0:
             off = cur_storage_off + cur_storage_sz
@@ -1348,6 +1407,7 @@ class StructType(CompileContext, BaseType):
         self._layout_cache = layout
         self.bit_field_info = bit_field_info
         self._precomp_byte_offsets = offsets
+        self._direct_member_offsets = direct_member_offsets
         self._bf_struct_total_sz = off
         return layout
 
@@ -1611,6 +1671,13 @@ class StructType(CompileContext, BaseType):
         self._invalidate_layout()
         return inst
 
+    def add_anonymous_member(
+        self, inst: "ContextVariable"
+    ) -> "ContextVariable":
+        self.layout_entries.append(StructLayoutEntry(member=inst))
+        self._invalidate_layout()
+        return inst
+
     def _init_bf_layout(self):
         """Compatibility shim for older bit-field code paths."""
         self._invalidate_layout()
@@ -1776,7 +1843,7 @@ class EnumType(CompileContext, BaseType):
 
 class UnionType(CompileContext, BaseType):
     def to_user_str(self):
-        raise NotImplementedError("Not Implemented")
+        return "union " + self.name
 
     def get_ctor_fn_types(self):
         raise NotImplementedError("Not Implemented")
@@ -1784,10 +1851,109 @@ class UnionType(CompileContext, BaseType):
     def compile_var_init(
         self, cmpl_obj, init_args, context, ref, cmpl_data=None, temp_links=None
     ):
-        raise NotImplementedError("Not Implemented")
+        if self.incomplete:
+            raise TypeError("union %s is incomplete" % self.name)
+        link = None
+        name = None
+        ctx_var = None
+        is_local = True
+        static_res = _compile_static_storage_decl(
+            self, cmpl_obj, init_args, context, ref, cmpl_data, temp_links
+        )
+        if static_res is not None:
+            return static_res
+        sz_var = size_of(self)
+        if ref.ref_type == VAR_REF_TOS_NAMED:
+            assert isinstance(ref, VarRefTosNamed)
+            ctx_var = ref.ctx_var
+            if ctx_var is not None:
+                assert isinstance(ctx_var, ContextVariable)
+                name = ctx_var.get_link_name()
+                is_local = ctx_var.uses_stack_storage()
+                if not is_local:
+                    assert isinstance(cmpl_obj, Compilation)
+                    cmpl_obj1 = cmpl_obj.spawn_compile_object(
+                        CompileObjectType.GLOBAL, name
+                    )
+                    cmpl_obj1.memory.extend([0] * sz_var)
+                    link = cmpl_obj.get_link(name)
+        elif ref.ref_type == VAR_REF_LNK_PREALLOC:
+            assert isinstance(ref, VarRefLnkPrealloc)
+            if len(init_args) == 0:
+                return sz_var
+            link = ref.lnk
+        else:
+            raise TypeError("Unrecognized VarRef: %s" % repr(ref))
+        if len(init_args) > 1:
+            raise TypeError(
+                "Cannot instantiate union types with more than one argument"
+            )
+        if link is None:
+            assert is_local
+            assert cmpl_data is not None, "Expected cmpl_data to not be None for LOCAL"
+            if len(init_args) == 0:
+                sz_cls = emit_load_i_const(cmpl_obj.memory, sz_var, False)
+                cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls])
+            else:
+                expr = init_args[0]
+                src_pt, src_vt, is_src_ref = get_tgt_ref_type(expr.t_anot)
+                assert compare_no_cvr(self, src_vt), "self = %s, src_vt = %s" % (
+                    get_user_str_from_type(self),
+                    get_user_str_from_type(src_vt),
+                )
+                sz = compile_expr(
+                    cmpl_obj, expr, context, cmpl_data, src_pt, temp_links
+                )
+                if is_src_ref:
+                    assert sz == 8
+                    sz_cls = sz_var.bit_length() - 1
+                    assert sz_var == (1 << sz_cls)
+                    cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
+                else:
+                    assert sz == sz_var
+            if ctx_var is not None:
+                cmpl_data.put_local(ctx_var, name, sz_var, None, True)
+        else:
+            assert ctx_var is None or isinstance(ctx_var, ContextVariable)
+            if len(init_args):
+                src_pt, src_vt, is_src_ref = get_tgt_ref_type(init_args[0].t_anot)
+                err0 = "Expected Expression sz == %s, but %u != %u (name = %r, linkName = '%s', expr = %r)"
+                var_name = "<NONE>" if ctx_var is None else ctx_var.name
+                link_name = "<PREALLOC>" if name is None else name
+                if is_src_ref:
+                    sz = compile_expr(
+                        cmpl_obj, init_args[0], context, cmpl_data, src_pt, temp_links
+                    )
+                    assert sz == 8, err0 % (
+                        "sizeof(void*)",
+                        sz,
+                        8,
+                        var_name,
+                        link_name,
+                        init_args[0],
+                    )
+                    sz_cls = sz_var.bit_length() - 1
+                    assert sz_var == 1 << sz_cls
+                    cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
+                else:
+                    sz = compile_expr(
+                        cmpl_obj, init_args[0], context, cmpl_data, src_vt, temp_links
+                    )
+                    assert sz == sz_var, err0 % (
+                        "sz_var",
+                        sz,
+                        sz_var,
+                        var_name,
+                        link_name,
+                        init_args[0],
+                    )
+                link.emit_stor(
+                    cmpl_obj.memory, sz_var, cmpl_obj, byte_copy_cmpl_intrinsic
+                )
+        return sz_var
 
     def compile_var_de_init(self, cmpl_obj, context, ref, cmpl_data=None):
-        raise NotImplementedError("Not Implemented")
+        return -1
 
     def compile_conv(self, cmpl_obj, expr, context, cmpl_data=None, temp_links=None):
         raise NotImplementedError("Not Implemented")
@@ -1821,16 +1987,38 @@ class UnionType(CompileContext, BaseType):
         name: Optional[str] = None,
         incomplete: bool = True,
         definition: Optional[Dict[str, "ContextVariable"]] = None,
+        member_order: Optional[List["ContextVariable"]] = None,
         defined: bool = False,
         the_base_type: Optional["BaseType"] = None,
     ):
         super(UnionType, self).__init__(name, parent)
         self.incomplete = incomplete
         self.definition = {} if definition is None else definition
+        self.member_order = [] if member_order is None else member_order
         self.defined = defined
         self.the_base_type = the_base_type
         self.is_packed: bool = False
         self.align_override: Optional[int] = None
+
+    def offset_of(self, attr: str) -> int:
+        resolved = self.resolve_member(attr)
+        if resolved is None:
+            raise KeyError(attr)
+        return resolved.byte_offset
+
+    def resolve_member(self, attr: str) -> Optional[AggregateMemberResolution]:
+        member = self.definition.get(attr, None)
+        if member is not None:
+            return AggregateMemberResolution(member, 0, None)
+        for member in self.member_order:
+            if member.name is not None:
+                continue
+            anon_type = get_base_prim_type(member.typ)
+            if isinstance(anon_type, (StructType, UnionType)):
+                resolved = anon_type.resolve_member(attr)
+                if resolved is not None:
+                    return resolved
+        return None
 
     def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
@@ -1839,6 +2027,7 @@ class UnionType(CompileContext, BaseType):
                 self.name,
                 self.incomplete,
                 self.definition,
+                self.member_order,
                 self.defined,
                 self.the_base_type,
             ),
@@ -1850,6 +2039,7 @@ class UnionType(CompileContext, BaseType):
         super(UnionType, self).merge_to(other)
         other.incomplete = self.incomplete
         other.definition = self.definition
+        other.member_order = self.member_order
         other.defined = self.defined
         other.the_base_type = self.the_base_type
         other.is_packed = self.is_packed
@@ -1904,9 +2094,16 @@ class UnionType(CompileContext, BaseType):
     def new_var(self, v: str, inst: "ContextVariable"):
         assert isinstance(inst, ContextVariable)
         if inst.mods == VarDeclMods.STATIC:
-            super(UnionType, self).new_var(v, inst)
-        else:
-            self.definition[v] = inst
+            return super(UnionType, self).new_var(v, inst)
+        self.definition[v] = inst
+        self.member_order.append(inst)
+        return inst
+
+    def add_anonymous_member(
+        self, inst: "ContextVariable"
+    ) -> "ContextVariable":
+        self.member_order.append(inst)
+        return inst
 
     def is_namespace(self):
         return False
@@ -2312,6 +2509,25 @@ class DeclStmnt(BaseStmnt):
                     c += 1  # consume integer
                     if isinstance(context, StructType):
                         context._consume_padding_bits(named_qual_type.typ, bf_width)
+                elif tokens[c].str == ";":
+                    anon_type = get_base_prim_type(named_qual_type.typ)
+                    if (
+                        isinstance(context, (StructType, UnionType))
+                        and isinstance(anon_type, (StructType, UnionType))
+                        and anon_type.name is None
+                    ):
+                        inst = ContextVariable(
+                            named_qual_type.name,
+                            named_qual_type.typ,
+                            None,
+                            ext_spec,
+                        )
+                        inst.align_override = named_qual_type.align_override
+                        context.add_anonymous_member(inst)
+                    c += 1
+                    break
+                elif tokens[c].str == ",":
+                    raise ParsingError(tokens, c, "Expected a name before ','")
             elif tokens[c].str == "=":
                 ctx_var = context.new_var(named_qual_type.name, _new_decl_ctx_var())
                 ctx_var.is_op_fn = named_qual_type.is_op_fn
@@ -3289,7 +3505,7 @@ def align_of(
                 )
             )
             align = max(align, base_align)
-        for ctx_var in typ.definition.values():
+        for ctx_var in typ.member_order:
             align = max(
                 align,
                 1
@@ -3399,8 +3615,7 @@ def size_of(
                 owner=typ,
             )
         )
-        for k in typ.definition:
-            v = typ.definition[k]
+        for v in typ.member_order:
             assert isinstance(v, ContextVariable)
             sz = max(
                 sz,

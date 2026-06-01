@@ -232,6 +232,54 @@ class GlobalStaticInitTests(unittest.TestCase):
             bytes([0x04, 0x03, 0x02, 0x01]),
         )
 
+    def test_anonymous_struct_members_flatten_into_union_namespace(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "typedef union { "
+            "    struct { unsigned int lo; unsigned int hi; }; "
+            "    unsigned long full; "
+            "} u64_pair_t; "
+            "_Static_assert(sizeof(u64_pair_t) == 8, \"union size\"); "
+            "u64_pair_t x; "
+            "int main(int argc, char **argv) { "
+            "    x.full = 0; "
+            "    x.lo = 1; "
+            "    x.hi = 0x11223344; "
+            "    return 0; "
+            "}\n",
+            remove_unused_deps=False,
+        )
+        vm = _run_program(cmpl_obj)
+        addr = _get_global_addr(global_ctx, cmpl_obj, "x")
+        self.assertEqual(
+            vm.memory[addr : addr + 8],
+            bytes([1, 0, 0, 0, 0x44, 0x33, 0x22, 0x11]),
+        )
+
+    def test_anonymous_members_include_enclosing_struct_offset(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "struct Outer { "
+            "    unsigned char tag; "
+            "    union { "
+            "        struct { unsigned int lo; unsigned int hi; }; "
+            "        unsigned long full; "
+            "    }; "
+            "}; "
+            "_Static_assert(sizeof(struct Outer) == 9, \"outer size\"); "
+            "struct Outer x; "
+            "int main(int argc, char **argv) { "
+            "    x.tag = 0xAA; "
+            "    x.hi = 0x55667788; "
+            "    return 0; "
+            "}\n",
+            remove_unused_deps=False,
+        )
+        vm = _run_program(cmpl_obj)
+        addr = _get_global_addr(global_ctx, cmpl_obj, "x")
+        self.assertEqual(
+            vm.memory[addr : addr + 9],
+            bytes([0xAA, 0, 0, 0, 0, 0x88, 0x77, 0x66, 0x55]),
+        )
+
     def test_dynamic_global_initializer_runs_before_main(self):
         global_ctx, cmpl_obj = _compile_source(
             "int seed() { return 7; } "

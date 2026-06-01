@@ -191,16 +191,17 @@ def compile_expr(
         assert isinstance(prim_type, QualType)
         assert prim_type.qual_id == QualType.QUAL_PTR, "Must be pointer"
         val_type = get_base_prim_type(prim_type.tgt_type)
-        if val_type.type_class_id == TypeClass.UNION:
-            assert isinstance(val_type, UnionType)
-            return compile_expr(
-                cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links
-            )
-        elif val_type.type_class_id == TypeClass.STRUCT:
-            assert isinstance(val_type, StructType)
+        if val_type.type_class_id in {
+            TypeClass.UNION,
+            TypeClass.STRUCT,
+            TypeClass.CLASS,
+        }:
+            assert isinstance(val_type, (UnionType, StructType, ClassType))
             compile_expr(cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links)
-            emit_load_i_const(cmpl_obj.memory, val_type.offset_of(expr.attr), False, 3)
-            cmpl_obj.memory.extend([BC_ADD8])
+            field_offset = val_type.offset_of(expr.attr)
+            if field_offset != 0:
+                emit_load_i_const(cmpl_obj.memory, field_offset, False, 3)
+                cmpl_obj.memory.extend([BC_ADD8])
             return 8
         raise NotImplementedError("Not Implemented")
     elif expr.expr_id == ExprType.DOT:
@@ -208,22 +209,17 @@ def compile_expr(
         prim_type, val_type, is_ref = get_tgt_ref_type(expr.obj.t_anot)
         if not is_ref:
             raise TypeError("Cannot use dot operator on non-reference type")
-        if val_type.type_class_id == TypeClass.UNION:
-            assert isinstance(val_type, UnionType)
-            return compile_expr(
-                cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links
-            )
-        elif val_type.type_class_id == TypeClass.STRUCT:
-            assert isinstance(val_type, StructType)
+        if val_type.type_class_id in {
+            TypeClass.UNION,
+            TypeClass.STRUCT,
+            TypeClass.CLASS,
+        }:
+            assert isinstance(val_type, (UnionType, StructType, ClassType))
             compile_expr(cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links)
-            emit_load_i_const(cmpl_obj.memory, val_type.offset_of(expr.attr), False, 3)
-            cmpl_obj.memory.extend([BC_ADD8])
-            return 8
-        elif val_type.type_class_id == TypeClass.CLASS:
-            assert isinstance(val_type, ClassType)
-            compile_expr(cmpl_obj, expr.obj, context, cmpl_data, prim_type, temp_links)
-            emit_load_i_const(cmpl_obj.memory, val_type.offset_of(expr.attr), False, 3)
-            cmpl_obj.memory.extend([BC_ADD8])
+            field_offset = val_type.offset_of(expr.attr)
+            if field_offset != 0:
+                emit_load_i_const(cmpl_obj.memory, field_offset, False, 3)
+                cmpl_obj.memory.extend([BC_ADD8])
             return 8
         # TODO: add 2 opcodes or use a memory reference (BCR_R_BP)
         #   one for this ---keep----[data you don't want][data you want] -> -keep--[data you want]
