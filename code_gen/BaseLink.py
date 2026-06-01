@@ -22,14 +22,14 @@ class BaseLink(object):
             BC_STOR, BCR_ABS_S8 | (sz_cls << 5)])
 
     def emit_load(
-            self,
-            memory: bytearray,
-            size: int,
-            byte_copy_arg: TypeVar("T"),
-            byte_copy_intrinsic: Callable[[TypeVar("T"), Union[memoryview, bytearray], Optional[int], bool, bool], Any]
+        self,
+        memory: bytearray,
+        size: int,
+        byte_copy_arg: TypeVar("T"),
+        byte_copy_intrinsic: Callable[[TypeVar("T"), Union[memoryview, bytearray], Optional[int], bool, bool], Any]
     ):
         sz_cls_0 = size.bit_length() - 1
-        if 1 << sz_cls_0 != size or sz_cls_0 > 3:
+        if 1 << sz_cls_0 != size or sz_cls_0 > 4:
             sz_cls_1 = emit_load_i_const(memory, size, False)
             memory.extend([BC_ADD_SP1 + sz_cls_1])
             self.emit_lea(memory)
@@ -41,14 +41,14 @@ class BaseLink(object):
             self.emit_load_pot(memory, sz_cls_0)
 
     def emit_stor(
-            self,
-            memory: bytearray,
-            size: int,
-            byte_copy_arg: TypeVar("T"),
-            byte_copy_intrinsic: Callable[[TypeVar("T"), Union[memoryview, bytearray], Optional[int], bool, bool], Any]
+        self,
+        memory: bytearray,
+        size: int,
+        byte_copy_arg: TypeVar("T"),
+        byte_copy_intrinsic: Callable[[TypeVar("T"), Union[memoryview, bytearray], Optional[int], bool, bool], Any]
     ):
         sz_cls_0 = size.bit_length() - 1
-        if 1 << sz_cls_0 != size or sz_cls_0 > 3:
+        if 1 << sz_cls_0 != size or sz_cls_0 > 4:
             self.emit_lea(memory)
             # using @@ByteCopyFn2
             stack_left = byte_copy_intrinsic(byte_copy_arg, memory, size, True, False)

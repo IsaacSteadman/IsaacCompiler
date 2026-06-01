@@ -2,6 +2,15 @@ from typing import Optional, List, Tuple
 from ..parser.util import try_catch_wrapper_co_expr
 
 
+def _is_int128_type(typ: "BaseType") -> bool:
+    prim_type = get_base_prim_type(typ)
+    return (
+        isinstance(prim_type, PrimitiveType)
+        and prim_type.typ in INT_TYPE_CODES
+        and prim_type.size == 16
+    )
+
+
 @try_catch_wrapper_co_expr
 def compile_expr(
     cmpl_obj: "BaseCmplObj",
@@ -30,7 +39,7 @@ def compile_expr(
             LiteralExpr.LIT_INT,
         ]:
             sz_cls = sz.bit_length() - 1
-            assert 0 <= sz_cls <= 3, "Invalid Size Class"
+            assert 0 <= sz_cls <= 4, "Invalid Size Class"
             sz1 = 1 << sz_cls
             if sz1 != sz:
                 print(
@@ -324,24 +333,36 @@ def compile_expr(
             res_type = bool_t
         elif expr.type_id == UnaryExprSubType.BIT_NOT:
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
-            sz_cls = sz.bit_length() - 1
-            assert 1 << sz_cls == sz and 0 <= sz_cls <= 3
-            cmpl_obj.memory.append(BC_NOT1 + sz_cls)
+            if sz == 16 and _is_int128_type(expr.a.t_anot):
+                cmpl_obj.memory.extend([BC_INT128, BC128_NOT128])
+            else:
+                sz_cls = sz.bit_length() - 1
+                assert 1 << sz_cls == sz and 0 <= sz_cls <= 3
+                cmpl_obj.memory.append(BC_NOT1 + sz_cls)
         elif expr.type_id == UnaryExprSubType.MINUS:
-            typ_bits = get_bc_conv_bits(expr.a.t_anot)
-            sz_cls = (typ_bits & 0x7) >> (0 if typ_bits & 0x8 else 1)
-            sub_code = (BC_FSUB_2 if typ_bits & 0x8 else BC_SUB1) + sz_cls
-            assert BC_FSUB_2 <= sub_code <= BC_FSUB_16 or BC_SUB1 <= sub_code <= BC_SUB8
-            emit_load_i_const(cmpl_obj.memory, 0, False, 0)
-            cmpl_obj.memory.extend(
-                [
-                    BC_CONV,
-                    typ_bits << 4,  # input bits are 0 for unsigned byte
-                ]
-            )
+            prim_type = get_base_prim_type(expr.a.t_anot)
+            assert isinstance(prim_type, PrimitiveType)
+            if prim_type.typ in INT_TYPE_CODES and prim_type.size == 16:
+                emit_load_i_const(cmpl_obj.memory, 0, False, 4)
+                sub_code = BC128_SUB128S if prim_type.sign else BC128_SUB128U
+            else:
+                typ_bits = get_bc_conv_bits(expr.a.t_anot)
+                sz_cls = (typ_bits & 0x7) >> (0 if typ_bits & 0x8 else 1)
+                sub_code = (BC_FSUB_2 if typ_bits & 0x8 else BC_SUB1) + sz_cls
+                assert BC_FSUB_2 <= sub_code <= BC_FSUB_16 or BC_SUB1 <= sub_code <= BC_SUB8
+                emit_load_i_const(cmpl_obj.memory, 0, False, 0)
+                cmpl_obj.memory.extend(
+                    [
+                        BC_CONV,
+                        typ_bits << 4,  # input bits are 0 for unsigned byte
+                    ]
+                )
             res_type = expr.a.t_anot
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
-            cmpl_obj.memory.append(sub_code)
+            if prim_type.typ in INT_TYPE_CODES and prim_type.size == 16:
+                cmpl_obj.memory.extend([BC_INT128, sub_code])
+            else:
+                cmpl_obj.memory.append(sub_code)
         elif expr.type_id == UnaryExprSubType.PLUS:
             res_type = expr.a.t_anot
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
@@ -364,6 +385,11 @@ def compile_expr(
                     "Expression (id = UnaryExprSubType.OP_EXPR, type_id = %u) compilation of OperatorType.FUNCTION or void *"
                     % expr.type_id
                 )
+            prim_inc_type = (
+                prim_types[expr.op_fn_data]
+                if expr.op_fn_type == OperatorType.NATIVE
+                else None
+            )
             sz_cls = sz_num.bit_length() - 1
             assert 1 << sz_cls == sz_num
             a_type = expr.a.t_anot
@@ -426,15 +452,39 @@ def compile_expr(
                         ]
                     )
             emit_load_i_const(cmpl_obj.memory, inc_by, False, sz_cls)
-            cmpl_obj.memory.extend(
-                [
-                    (BC_ADD1 if is_add else BC_SUB1) + sz_cls,
-                    BC_SWAP,
-                    swap_byte,
-                    BC_STOR,
-                    load_byte,
-                ]
-            )
+            if sz_num == 16 and isinstance(prim_inc_type, PrimitiveType):
+                cmpl_obj.memory.extend(
+                    [
+                        BC_INT128,
+                        (
+                            BC128_ADD128S
+                            if is_add and prim_inc_type.sign
+                            else (
+                                BC128_ADD128U
+                                if is_add
+                                else (
+                                    BC128_SUB128S
+                                    if prim_inc_type.sign
+                                    else BC128_SUB128U
+                                )
+                            )
+                        ),
+                        BC_SWAP,
+                        swap_byte,
+                        BC_STOR,
+                        load_byte,
+                    ]
+                )
+            else:
+                cmpl_obj.memory.extend(
+                    [
+                        (BC_ADD1 if is_add else BC_SUB1) + sz_cls,
+                        BC_SWAP,
+                        swap_byte,
+                        BC_STOR,
+                        load_byte,
+                    ]
+                )
 
         else:
             raise NotImplementedError(
@@ -625,6 +675,11 @@ from .tear_down_temp_links import tear_down_temp_links
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from .stackvm_binutils.sz_cls_align_long import sz_cls_align_long
 from ..StackVM.PyStackVM import (
+    BC128_ADD128S,
+    BC128_ADD128U,
+    BC128_NOT128,
+    BC128_SUB128S,
+    BC128_SUB128U,
     BCR_ABS_C,
     BCR_ABS_S8,
     BCR_SZ_8,
@@ -638,6 +693,7 @@ from ..StackVM.PyStackVM import (
     BC_EQ0,
     BC_FSUB_16,
     BC_FSUB_2,
+    BC_INT128,
     BC_LOAD,
     BC_MUL8,
     BC_NOT1,
@@ -670,6 +726,7 @@ from ..parser.type.types import (
     ClassType,
     CompileContext,
     ContextVariable,
+    INT_TYPE_CODES,
     IdentifiedQualType,
     PrimitiveType,
     QualType,

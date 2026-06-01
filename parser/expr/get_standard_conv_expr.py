@@ -20,6 +20,27 @@ def get_standard_conv_expr(
         return expr, 1
     elif is_src_ref and not is_tgt_ref and is_prim_or_ptr(src_vt):
         return CastOpExpr(src_vt, expr, CastType.IMPLICIT), 4
+    if is_prim_type_id(tgt_vt, PrimitiveTypeId.TYP_BOOL) and not is_tgt_ref:
+        if src_vt.type_class_id == TypeClass.QUAL:
+            assert isinstance(src_vt, QualType)
+            if src_vt.qual_id == QualType.QUAL_PTR:
+                return CastOpExpr(tgt_vt, expr, CastType.IMPLICIT), 4
+            if is_src_ref and src_vt.qual_id == QualType.QUAL_ARR:
+                return (
+                    CastOpExpr(
+                        QualType(QualType.QUAL_PTR, src_vt.tgt_type),
+                        expr,
+                        CastType.IMPLICIT,
+                    ),
+                    2,
+                )
+            if is_src_ref and src_vt.qual_id == QualType.QUAL_FN:
+                return (
+                    CastOpExpr(
+                        QualType(QualType.QUAL_PTR, src_vt), expr, CastType.IMPLICIT
+                    ),
+                    2,
+                )
     if (
         src_vt.type_class_id == TypeClass.PRIM
         and tgt_vt.type_class_id == TypeClass.PRIM

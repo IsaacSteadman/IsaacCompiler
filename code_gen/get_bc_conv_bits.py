@@ -3,15 +3,7 @@ def get_bc_conv_bits(typ: "BaseType") -> int:
     typ = get_base_prim_type(typ)
     if typ.type_class_id == TypeClass.PRIM:
         assert isinstance(typ, PrimitiveType)
-        sz_cls = typ.size.bit_length() - 1
-        if 1 << sz_cls != typ.size or sz_cls > 3:
-            raise TypeError("Bad Primitive Type Size: %u for %r" % (typ.size, typ))
-        if typ.typ in INT_TYPE_CODES:
-            out_bits = sz_cls << 1
-            out_bits |= int(typ.sign)
-        elif typ.typ in FLT_TYPE_CODES:
-            sz_cls -= 1
-            out_bits = sz_cls | 0x08
+        out_bits = get_primitive_conv_bits(typ)
     elif typ.type_class_id == TypeClass.QUAL:
         assert isinstance(typ, QualType)
         if typ.qual_id == QualType.QUAL_PTR:
@@ -28,4 +20,5 @@ from ..parser.type.types import (
     PrimitiveType,
     QualType,
     get_base_prim_type,
+    get_primitive_conv_bits,
 )

@@ -1,6 +1,32 @@
 from typing import List, Optional, Tuple
 
 
+def _get_int128_subop(expr_type, is_sign):
+    if expr_type in {BinaryExprSubType.ASSGN_MOD, BinaryExprSubType.MOD}:
+        return BC128_MOD128S if is_sign else BC128_MOD128U
+    if expr_type in {BinaryExprSubType.ASSGN_DIV, BinaryExprSubType.DIV}:
+        return BC128_DIV128S if is_sign else BC128_DIV128U
+    if expr_type in {BinaryExprSubType.ASSGN_MUL, BinaryExprSubType.MUL}:
+        return BC128_MUL128S if is_sign else BC128_MUL128U
+    if expr_type in {BinaryExprSubType.ASSGN_MINUS, BinaryExprSubType.MINUS}:
+        return BC128_SUB128S if is_sign else BC128_SUB128U
+    if expr_type in {BinaryExprSubType.ASSGN_PLUS, BinaryExprSubType.PLUS}:
+        return BC128_ADD128S if is_sign else BC128_ADD128U
+    if expr_type in {BinaryExprSubType.ASSGN_AND, BinaryExprSubType.AND}:
+        return BC128_AND128
+    if expr_type in {BinaryExprSubType.ASSGN_OR, BinaryExprSubType.OR}:
+        return BC128_OR128
+    if expr_type in {BinaryExprSubType.ASSGN_XOR, BinaryExprSubType.XOR}:
+        return BC128_XOR128
+    if expr_type in {BinaryExprSubType.ASSGN_RSHIFT, BinaryExprSubType.RSHIFT}:
+        return BC128_RSHIFT128S if is_sign else BC128_RSHIFT128U
+    if expr_type in {BinaryExprSubType.ASSGN_LSHIFT, BinaryExprSubType.LSHIFT}:
+        return BC128_LSHIFT128
+    if expr_type in CMP_OPS:
+        return BC128_CMP128S if is_sign else BC128_CMP128U
+    return None
+
+
 def _compile_bit_field_assign(cmpl_obj, expr, context, cmpl_data, temp_links, bfi, typ):
     """Emit a read-modify-write sequence for a simple bit-field assignment.
 
@@ -185,29 +211,35 @@ def compile_bin_op_expr(
             expr.b,
         )
         if expr.type_id != BinaryExprSubType.ASSGN:
-            op_code_u, op_code_s, op_code_f = {
-                BinaryExprSubType.ASSGN_MOD: (BC_MOD1, BC_MOD1S, BC_FMOD_2),
-                BinaryExprSubType.ASSGN_DIV: (BC_DIV1, BC_DIV1S, BC_FDIV_2),
-                BinaryExprSubType.ASSGN_MUL: (BC_MUL1, BC_MUL1S, BC_FMUL_2),
-                BinaryExprSubType.ASSGN_MINUS: (BC_SUB1, BC_SUB1, BC_FSUB_2),
-                BinaryExprSubType.ASSGN_PLUS: (BC_ADD1, BC_ADD1, BC_FADD_2),
-                BinaryExprSubType.ASSGN_AND: (BC_AND1, BC_AND1, BC_NOP),
-                BinaryExprSubType.ASSGN_OR: (BC_OR1, BC_OR1, BC_NOP),
-                BinaryExprSubType.ASSGN_XOR: (BC_XOR1, BC_XOR1, BC_NOP),
-                BinaryExprSubType.ASSGN_RSHIFT: (BC_RSHIFT1, BC_RSHIFT1, BC_NOP),
-                BinaryExprSubType.ASSGN_LSHIFT: (BC_LSHIFT1, BC_LSHIFT1, BC_NOP),
-            }[expr.type_id]
-            op_code = BC_NOP
-            if is_flt:
-                if op_code_f != BC_NOP:
-                    op_code = op_code_f - 1 + sz_cls
+            if sz_type == 16 and not is_flt:
+                op_code = _get_int128_subop(expr.type_id, is_sign)
+                if op_code is None:
+                    raise ValueError("Unsupported operator %s" % expr.type_id.name)
+                cmpl_obj.memory.extend([BC_INT128, op_code])
             else:
-                op_code = op_code_s if is_sign else op_code_u
-                if op_code != BC_NOP:
-                    op_code += sz_cls if op_code_s == op_code_u else (2 * sz_cls)
-            if op_code == BC_NOP:
-                raise ValueError("Unsupported operator %s" % expr.type_id.name)
-            cmpl_obj.memory.append(op_code)
+                op_code_u, op_code_s, op_code_f = {
+                    BinaryExprSubType.ASSGN_MOD: (BC_MOD1, BC_MOD1S, BC_FMOD_2),
+                    BinaryExprSubType.ASSGN_DIV: (BC_DIV1, BC_DIV1S, BC_FDIV_2),
+                    BinaryExprSubType.ASSGN_MUL: (BC_MUL1, BC_MUL1S, BC_FMUL_2),
+                    BinaryExprSubType.ASSGN_MINUS: (BC_SUB1, BC_SUB1, BC_FSUB_2),
+                    BinaryExprSubType.ASSGN_PLUS: (BC_ADD1, BC_ADD1, BC_FADD_2),
+                    BinaryExprSubType.ASSGN_AND: (BC_AND1, BC_AND1, BC_NOP),
+                    BinaryExprSubType.ASSGN_OR: (BC_OR1, BC_OR1, BC_NOP),
+                    BinaryExprSubType.ASSGN_XOR: (BC_XOR1, BC_XOR1, BC_NOP),
+                    BinaryExprSubType.ASSGN_RSHIFT: (BC_RSHIFT1, BC_RSHIFT1, BC_NOP),
+                    BinaryExprSubType.ASSGN_LSHIFT: (BC_LSHIFT1, BC_LSHIFT1, BC_NOP),
+                }[expr.type_id]
+                op_code = BC_NOP
+                if is_flt:
+                    if op_code_f != BC_NOP:
+                        op_code = op_code_f - 1 + sz_cls
+                else:
+                    op_code = op_code_s if is_sign else op_code_u
+                    if op_code != BC_NOP:
+                        op_code += sz_cls if op_code_s == op_code_u else (2 * sz_cls)
+                if op_code == BC_NOP:
+                    raise ValueError("Unsupported operator %s" % expr.type_id.name)
+                cmpl_obj.memory.append(op_code)
             sz1 -= sz_type1
         cmpl_obj.memory.extend(
             [BC_SWAP, (sz_cls << 3) | BCS_SZ8_A, BC_STOR, BCR_ABS_S8 | (sz_cls << 5)]
@@ -237,35 +269,41 @@ def compile_bin_op_expr(
             cmpl_obj.memory.extend([BC_MUL1 + 2 * sz_cls + int(is_sign)])
         assert sz == sz_type1, "sz = %u, sz_type1 = %u" % (sz, sz_type1)
         sz = sz_type
-        op_code_u, op_code_s, op_code_f = {
-            BinaryExprSubType.MOD: (BC_MOD1, BC_MOD1S, BC_FMOD_2),
-            BinaryExprSubType.DIV: (BC_DIV1, BC_DIV1S, BC_FDIV_2),
-            BinaryExprSubType.MUL: (BC_MUL1, BC_MUL1S, BC_FMUL_2),
-            BinaryExprSubType.MINUS: (BC_SUB1, BC_SUB1, BC_FSUB_2),
-            BinaryExprSubType.PLUS: (BC_ADD1, BC_ADD1, BC_FADD_2),
-            BinaryExprSubType.AND: (BC_AND1, BC_AND1, BC_NOP),
-            BinaryExprSubType.OR: (BC_OR1, BC_OR1, BC_NOP),
-            BinaryExprSubType.XOR: (BC_XOR1, BC_XOR1, BC_NOP),
-            BinaryExprSubType.LT: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BinaryExprSubType.GT: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BinaryExprSubType.LE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BinaryExprSubType.GE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BinaryExprSubType.NE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BinaryExprSubType.EQ: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
-            BinaryExprSubType.RSHIFT: (BC_RSHIFT1, BC_RSHIFT1, BC_NOP),
-            BinaryExprSubType.LSHIFT: (BC_LSHIFT1, BC_LSHIFT1, BC_NOP),
-        }[expr.type_id]
-        op_code = BC_NOP
-        if is_flt:
-            if op_code_f != BC_NOP:
-                op_code = op_code_f - 1 + sz_cls
+        if sz_type == 16 and not is_flt:
+            op_code = _get_int128_subop(expr.type_id, is_sign)
+            if op_code is None:
+                raise ValueError("Unsupported operator %s" % expr.type_id.name)
+            cmpl_obj.memory.extend([BC_INT128, op_code])
         else:
-            op_code = op_code_s if is_sign else op_code_u
-            if op_code != BC_NOP:
-                op_code += sz_cls if op_code_s == op_code_u else (2 * sz_cls)
-        if op_code == BC_NOP:
-            raise ValueError("Unsupported operator %s" % expr.type_id.name)
-        cmpl_obj.memory.append(op_code)
+            op_code_u, op_code_s, op_code_f = {
+                BinaryExprSubType.MOD: (BC_MOD1, BC_MOD1S, BC_FMOD_2),
+                BinaryExprSubType.DIV: (BC_DIV1, BC_DIV1S, BC_FDIV_2),
+                BinaryExprSubType.MUL: (BC_MUL1, BC_MUL1S, BC_FMUL_2),
+                BinaryExprSubType.MINUS: (BC_SUB1, BC_SUB1, BC_FSUB_2),
+                BinaryExprSubType.PLUS: (BC_ADD1, BC_ADD1, BC_FADD_2),
+                BinaryExprSubType.AND: (BC_AND1, BC_AND1, BC_NOP),
+                BinaryExprSubType.OR: (BC_OR1, BC_OR1, BC_NOP),
+                BinaryExprSubType.XOR: (BC_XOR1, BC_XOR1, BC_NOP),
+                BinaryExprSubType.LT: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+                BinaryExprSubType.GT: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+                BinaryExprSubType.LE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+                BinaryExprSubType.GE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+                BinaryExprSubType.NE: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+                BinaryExprSubType.EQ: (BC_CMP1, BC_CMP1S, BC_FCMP_2),
+                BinaryExprSubType.RSHIFT: (BC_RSHIFT1, BC_RSHIFT1, BC_NOP),
+                BinaryExprSubType.LSHIFT: (BC_LSHIFT1, BC_LSHIFT1, BC_NOP),
+            }[expr.type_id]
+            op_code = BC_NOP
+            if is_flt:
+                if op_code_f != BC_NOP:
+                    op_code = op_code_f - 1 + sz_cls
+            else:
+                op_code = op_code_s if is_sign else op_code_u
+                if op_code != BC_NOP:
+                    op_code += sz_cls if op_code_s == op_code_u else (2 * sz_cls)
+            if op_code == BC_NOP:
+                raise ValueError("Unsupported operator %s" % expr.type_id.name)
+            cmpl_obj.memory.append(op_code)
         cmp_op_map = {
             BinaryExprSubType.LT: BC_LT0,
             BinaryExprSubType.GT: BC_GT0,
@@ -293,6 +331,24 @@ from .compile_expr import compile_expr
 from ..PrettyRepr import format_pretty
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import (
+    BC128_ADD128S,
+    BC128_ADD128U,
+    BC128_AND128,
+    BC128_CMP128S,
+    BC128_CMP128U,
+    BC128_DIV128S,
+    BC128_DIV128U,
+    BC128_LSHIFT128,
+    BC128_MOD128S,
+    BC128_MOD128U,
+    BC128_MUL128S,
+    BC128_MUL128U,
+    BC128_OR128,
+    BC128_RSHIFT128S,
+    BC128_RSHIFT128U,
+    BC128_SUB128S,
+    BC128_SUB128U,
+    BC128_XOR128,
     BCR_ABS_S8,
     BCR_SZ_8,
     BCR_TOS,
@@ -312,6 +368,7 @@ from ..StackVM.PyStackVM import (
     BC_FSUB_2,
     BC_GE0,
     BC_GT0,
+    BC_INT128,
     BC_LE0,
     BC_LOAD,
     BC_LSHIFT1,
@@ -332,6 +389,7 @@ from ..StackVM.PyStackVM import (
 from ..parser.expr.BaseExpr import ExprType
 from ..parser.expr.BinaryOpExpr import (
     ASSIGNMENT_OPS,
+    CMP_OPS,
     BinaryExprSubType,
     BinaryOpExpr,
 )

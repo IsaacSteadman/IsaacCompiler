@@ -245,6 +245,7 @@ class LiteralExpr(BaseExpr):
                     (PrimitiveTypeId.INT_I, unsign),
                     (PrimitiveTypeId.INT_L, unsign),
                     (PrimitiveTypeId.INT_LL, unsign),
+                    (PrimitiveTypeId.INT_I128, unsign),
                 ][i_lvl:]
                 if int_base_type == TokenType.DEC_INT or unsign
                 else [
@@ -254,6 +255,8 @@ class LiteralExpr(BaseExpr):
                     (PrimitiveTypeId.INT_L, 1),
                     (PrimitiveTypeId.INT_LL, 0),
                     (PrimitiveTypeId.INT_LL, 1),
+                    (PrimitiveTypeId.INT_I128, 0),
+                    (PrimitiveTypeId.INT_I128, 1),
                 ][2 * i_lvl :]
             )
             typ = None

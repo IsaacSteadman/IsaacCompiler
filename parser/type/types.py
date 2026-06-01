@@ -304,23 +304,25 @@ class PrimitiveTypeId(Enum):
     INT_I = 0
     INT_L = 1
     INT_LL = 2
-    INT_S = 3
-    INT_C = 4
-    INT_C16 = 5
-    INT_C32 = 6
-    INT_WC = 7
-    FLT_F = 8
-    FLT_D = 9
-    FLT_LD = 10
-    TYP_BOOL = 11
-    TYP_VOID = 12
-    TYP_AUTO = 13
+    INT_I128 = 3
+    INT_S = 4
+    INT_C = 5
+    INT_C16 = 6
+    INT_C32 = 7
+    INT_WC = 8
+    FLT_F = 9
+    FLT_D = 10
+    FLT_LD = 11
+    TYP_BOOL = 12
+    TYP_VOID = 13
+    TYP_AUTO = 14
 
 
 LST_TYPE_CODES = [
     "INT_I",
     "INT_L",
     "INT_LL",
+    "INT_I128",
     "INT_S",
     "INT_C",
     "INT_C16",
@@ -337,6 +339,7 @@ INT_TYPE_CODES = [
     PrimitiveTypeId.INT_I,
     PrimitiveTypeId.INT_L,
     PrimitiveTypeId.INT_LL,
+    PrimitiveTypeId.INT_I128,
     PrimitiveTypeId.INT_S,
     PrimitiveTypeId.INT_C,
     PrimitiveTypeId.INT_C16,
@@ -351,6 +354,7 @@ SIZE_SIGN_MAP = {
     PrimitiveTypeId.INT_I: (4, True),
     PrimitiveTypeId.INT_L: (4, True),
     PrimitiveTypeId.INT_LL: (8, True),
+    PrimitiveTypeId.INT_I128: (16, True),
     PrimitiveTypeId.INT_S: (2, True),
     PrimitiveTypeId.INT_C: (1, False),
     PrimitiveTypeId.INT_C16: (2, False),
@@ -376,6 +380,8 @@ dct_pt_s_type_codes = {
     "char16_t": PrimitiveTypeId.INT_C16,
     "char32_t": PrimitiveTypeId.INT_C32,
     "wchar_t": PrimitiveTypeId.INT_WC,
+    "__int128": PrimitiveTypeId.INT_I128,
+    "_Bool": PrimitiveTypeId.TYP_BOOL,
     "bool": PrimitiveTypeId.TYP_BOOL,
 }
 
@@ -423,6 +429,7 @@ class PrimitiveType(BaseType):
         PrimitiveTypeId.INT_I: ["int"],
         PrimitiveTypeId.INT_L: ["long"],
         PrimitiveTypeId.INT_LL: ["long", "long"],
+        PrimitiveTypeId.INT_I128: ["__int128"],
         PrimitiveTypeId.INT_S: ["short"],
         PrimitiveTypeId.INT_C: ["char"],
         PrimitiveTypeId.INT_C16: ["char16_t"],
@@ -431,7 +438,7 @@ class PrimitiveType(BaseType):
         PrimitiveTypeId.FLT_F: ["float"],
         PrimitiveTypeId.FLT_D: ["double"],
         PrimitiveTypeId.FLT_LD: ["long", "double"],
-        PrimitiveTypeId.TYP_BOOL: ["bool"],
+        PrimitiveTypeId.TYP_BOOL: ["_Bool"],
         PrimitiveTypeId.TYP_VOID: ["void"],
         PrimitiveTypeId.TYP_AUTO: ["auto"],
     }
@@ -450,8 +457,8 @@ class PrimitiveType(BaseType):
         "m": (PrimitiveTypeId.INT_L, 1),
         "x": (PrimitiveTypeId.INT_LL, -1),
         "y": (PrimitiveTypeId.INT_LL, 1),
-        # "n": ["__int128"],
-        # "o": ["unsigned", "__int128"],
+        "n": (PrimitiveTypeId.INT_I128, -1),
+        "o": (PrimitiveTypeId.INT_I128, 1),
         # "e": ["short", "float"], # gcc __float80, but here is __float16
         "f": (PrimitiveTypeId.FLT_F, 0),
         "d": (PrimitiveTypeId.FLT_D, 0),
@@ -469,6 +476,8 @@ class PrimitiveType(BaseType):
         (PrimitiveTypeId.INT_L, False): "m",
         (PrimitiveTypeId.INT_LL, True): "x",
         (PrimitiveTypeId.INT_LL, False): "y",
+        (PrimitiveTypeId.INT_I128, True): "n",
+        (PrimitiveTypeId.INT_I128, False): "o",
         (PrimitiveTypeId.INT_S, True): "s",
         (PrimitiveTypeId.INT_S, False): "t",
         (PrimitiveTypeId.INT_C, True): "a",
@@ -707,33 +716,10 @@ class PrimitiveType(BaseType):
             format_pretty(from_type).replace("\n", "\n  "),
             format_pretty(self).replace("\n", "\n  "),
         )
-        sz_cls = self.size.bit_length() - 1
-        if 1 << sz_cls != self.size or sz_cls > 3:
-            raise TypeError("Bad Primitive Type Size: %u for %r" % (self.size, self))
-        if self.typ in INT_TYPE_CODES:
-            out_bits = sz_cls << 1
-            out_bits |= int(self.sign)
-        elif self.typ in FLT_TYPE_CODES:
-            sz_cls -= 1
-            out_bits = sz_cls | 0x08
-        else:
-            raise TypeError("Cannot cast to Type %s" % repr(self))
+        out_bits = get_primitive_conv_bits(self)
         if from_type.type_class_id == TypeClass.PRIM:
             assert isinstance(from_type, PrimitiveType)
-            if from_type.typ in INT_TYPE_CODES:
-                sz_cls = from_type.size.bit_length() - 1
-                if 1 << sz_cls != from_type.size or sz_cls > 3:
-                    raise TypeError(
-                        "Bad Primitive Type Size: %u for %r"
-                        % (from_type.size, from_type)
-                    )
-                inp_bits = sz_cls << 1
-                inp_bits |= int(from_type.sign)
-            elif from_type.typ in FLT_TYPE_CODES:
-                sz_cls = from_type.size.bit_length() - 2
-                inp_bits = sz_cls | 0x08
-            else:
-                raise TypeError("Cannot cast from Type %s" % repr(from_type))
+            inp_bits = get_primitive_conv_bits(from_type)
         elif from_type.type_class_id == TypeClass.QUAL:
             assert isinstance(from_type, QualType)
             if from_type.qual_id == QualType.QUAL_PTR:
@@ -756,14 +742,34 @@ class PrimitiveType(BaseType):
                     BC_NE0,
                 ]
             )
-            code = (BC_FCMP_2 if inp_bits & 0x08 else BC_CMP1) + (inp_bits & 0x7)
-            assert BC_FCMP_2 <= code <= BC_FCMP_16 or BC_CMP1 <= code <= BC_CMP8S, (
-                "GOT: %u" % code
-            )
-            cmpl_obj.memory[-2] = code
+            if inp_bits in {0x0C, 0x0D}:
+                cmpl_obj.memory[-2] = BC_INT128
+                cmpl_obj.memory[-1] = (
+                    BC128_CMP128S if inp_bits == 0x0D else BC128_CMP128U
+                )
+            else:
+                code = (BC_FCMP_2 if inp_bits & 0x08 else BC_CMP1) + (inp_bits & 0x7)
+                assert BC_FCMP_2 <= code <= BC_FCMP_16 or BC_CMP1 <= code <= BC_CMP8S, (
+                    "GOT: %u" % code
+                )
+                cmpl_obj.memory[-2] = code
         else:
             cmpl_obj.memory.extend([BC_CONV, inp_bits | (out_bits << 4)])
         return self.size
+
+
+def get_primitive_conv_bits(typ: "PrimitiveType") -> int:
+    if typ.typ in INT_TYPE_CODES:
+        if typ.size == 16:
+            return 0x0D if typ.sign else 0x0C
+        sz_cls = typ.size.bit_length() - 1
+        if 1 << sz_cls != typ.size or sz_cls > 3:
+            raise TypeError("Bad Primitive Type Size: %u for %r" % (typ.size, typ))
+        return (sz_cls << 1) | int(typ.sign)
+    if typ.typ in FLT_TYPE_CODES:
+        sz_cls = typ.size.bit_length() - 2
+        return sz_cls | 0x08
+    raise TypeError("Cannot cast to Type %s" % repr(typ))
 
 
 void_t = PrimitiveType.from_type_code(PrimitiveTypeId.TYP_VOID)
@@ -786,7 +792,9 @@ int_types = [
         ["signed", "long"],
         ["unsigned", "long", "long"],
         ["signed", "long", "long"],
-        ["bool"],
+        ["unsigned", "__int128"],
+        ["signed", "__int128"],
+        ["_Bool"],
     ]
 ]
 signed_num_types = [
@@ -800,6 +808,7 @@ signed_num_types = [
         ["signed", "wchar_t"],
         ["signed", "long"],
         ["signed", "long", "long"],
+        ["signed", "__int128"],
         ["float"],
         ["double"],
         ["long", "double"],
@@ -3343,19 +3352,7 @@ class QualType(BaseType):
         from_type = expr.t_anot
         if from_type.type_class_id == TypeClass.PRIM:
             assert isinstance(from_type, PrimitiveType)
-            if from_type.typ in INT_TYPE_CODES:
-                sz_cls = from_type.size.bit_length() - 1
-                if 1 << sz_cls != from_type.size or sz_cls > 3:
-                    raise TypeError(
-                        "Bad Primitive Type Size: %u for %r" % (from_type.size, self)
-                    )
-                inp_bits = sz_cls << 1
-                inp_bits |= int(from_type.sign)
-            elif from_type.typ in FLT_TYPE_CODES:
-                sz_cls = from_type.size.bit_length() - 2
-                inp_bits = sz_cls | 0x08
-            else:
-                raise TypeError("Cannot cast from Type %s" % repr(self))
+            inp_bits = get_primitive_conv_bits(from_type)
             if self.qual_id == QualType.QUAL_PTR:
                 out_bits = 6  # 8-byte unsigned (pointer size); was 3 (2-byte signed) which was wrong
             else:
@@ -4405,6 +4402,8 @@ from ..stmnt.CurlyStmnt import CurlyStmnt
 from ..type.BaseType import BaseType, TypeClass
 from ..type.types import ContextVariable, VarDeclMods
 from ...StackVM.PyStackVM import (
+    BC128_CMP128S,
+    BC128_CMP128U,
     BCR_ABS_S8,
     BCR_EA_R_IP,
     BCR_SZ_8,
@@ -4414,6 +4413,7 @@ from ...StackVM.PyStackVM import (
     BC_CONV,
     BC_FCMP_16,
     BC_FCMP_2,
+    BC_INT128,
     BC_JMPIF,
     BC_LOAD,
     BC_NE0,

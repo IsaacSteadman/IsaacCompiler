@@ -20,7 +20,7 @@ class Linkage(BaseLink):
             byte_copy_intrinsic: Callable[[TypeVar("T"), bytearray, Optional[int], bool, bool], Any]
     ):
         sz_cls_0 = size.bit_length() - 1
-        if 1 << sz_cls_0 != size or sz_cls_0 > 3:
+        if 1 << sz_cls_0 != size or sz_cls_0 > 4:
             sz_cls_1 = emit_load_i_const(memory, size, False)
             memory.extend([BC_ADD_SP1 + sz_cls_1])
             self.emit_lea(memory)
@@ -39,7 +39,7 @@ class Linkage(BaseLink):
             byte_copy_intrinsic: Callable[[TypeVar("T"), bytearray, Optional[int], bool, bool], Any]
     ):
         sz_cls_0 = size.bit_length() - 1
-        if 1 << sz_cls_0 != size or sz_cls_0 > 3:
+        if 1 << sz_cls_0 != size or sz_cls_0 > 4:
             self.emit_lea(memory)
             # using @@ByteCopyFn2
             stack_left = byte_copy_intrinsic(byte_copy_arg, memory, size, True, False)

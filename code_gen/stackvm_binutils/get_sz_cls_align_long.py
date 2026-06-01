@@ -1,7 +1,9 @@
 from typing import Literal
 
 
-def get_sz_cls_align_long(long: int, signed: bool, max_sz_cls: Literal[0, 1, 2, 3] = 3):
+def get_sz_cls_align_long(
+    long: int, signed: bool, max_sz_cls: Literal[0, 1, 2, 3, 4] = 4
+):
     if long < 0:
         if signed:
             long = abs(long) - 1

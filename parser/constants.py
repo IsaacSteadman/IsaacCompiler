@@ -1,5 +1,14 @@
-SINGLE_TYPES = {"float", "double", "bool", "void", "auto"}
-INT_TYPES = {"int", "long", "short", "char", "wchar_t", "char16_t", "char32_t"}
+SINGLE_TYPES = {"float", "double", "_Bool", "bool", "void", "auto"}
+INT_TYPES = {
+    "int",
+    "long",
+    "short",
+    "char",
+    "wchar_t",
+    "char16_t",
+    "char32_t",
+    "__int128",
+}
 INT_TYPES1 = INT_TYPES.difference({"int"})
 SINGLE_TYPES1 = SINGLE_TYPES.union({"int"})
 

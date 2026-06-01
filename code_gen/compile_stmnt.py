@@ -239,7 +239,7 @@ def compile_stmnt(
         default_lnk = None  # will point at the default segment's Linkage, if any
 
         # CMP opcode appropriate for the expression size.
-        cmp_opcode = (BC_CMP1, BC_CMP2, BC_CMP4, BC_CMP8)[sz_cls]
+        cmp_opcode = None if sz_cls == 4 else (BC_CMP1, BC_CMP2, BC_CMP4, BC_CMP8)[sz_cls]
 
         # --- Step 3: emit the compare chain ---
         for seg_idx, (seg_labels, _) in enumerate(stmnt.segments):
@@ -254,7 +254,10 @@ def compile_stmnt(
                     emit_load_i_const(cmpl_obj.memory, label_val, label_val < 0, sz_cls)
                     # Compare: pushes sign(switch_val - case_val) as 1 signed byte.
                     # Result is 0 iff switch_val == case_val.
-                    cmpl_obj.memory.extend([cmp_opcode, BC_EQ0])
+                    if sz_cls == 4:
+                        cmpl_obj.memory.extend([BC_INT128, BC128_CMP128U, BC_EQ0])
+                    else:
+                        cmpl_obj.memory.extend([cmp_opcode, BC_EQ0])
                     # Jump to this segment's body if equal (condition == 1).
                     seg_linkages[seg_idx].emit_lea(cmpl_obj.memory)
                     cmpl_obj.memory.extend([BC_JMPIF])
@@ -312,6 +315,7 @@ from .stackvm_binutils import assemble
 from ..PrettyRepr import format_pretty
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import (
+    BC128_CMP128U,
     BCR_EA_R_IP,
     BCR_SZ_8,
     BCR_TOS,
@@ -320,6 +324,7 @@ from ..StackVM.PyStackVM import (
     BC_CMP4,
     BC_CMP8,
     BC_EQ0,
+    BC_INT128,
     BC_JMP,
     BC_JMPIF,
     BC_LOAD,

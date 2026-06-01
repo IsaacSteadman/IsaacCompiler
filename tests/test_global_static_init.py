@@ -9,7 +9,7 @@ if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
 from IsaacCompiler.Preprocessing import preprocess
-from IsaacCompiler.StackVM.PyStackVM import BC_CALL, BC_HLT, BC_RET, VM
+from IsaacCompiler.StackVM.PyStackVM import BC_CALL, BC_HLT, BC_INT128, BC_RET, VM
 from IsaacCompiler.StackVM.runner import add_cmd_argv_vm
 from IsaacCompiler.code_gen.Compilation import Compilation, INIT_GLOBALS_LINK_NAME
 from IsaacCompiler.code_gen.CompilerOptions import CompilerOptions
@@ -115,6 +115,88 @@ class GlobalStaticInitTests(unittest.TestCase):
         )
         addr = _get_global_addr(global_ctx, cmpl_obj, "x")
         self.assertEqual(cmpl_obj.memory[addr : addr + 4], bytes([23, 0, 0, 0]))
+
+    def test__bool_globals_use_one_byte_and_normalize_non_zero_values(self):
+        global_ctx, cmpl_obj = _compile_source(
+            '_Static_assert(sizeof(_Bool) == 1, "_Bool size"); '
+            "_Bool zero = 0; "
+            "_Bool two = 2; "
+            "_Bool neg = -7; "
+            "int main(int argc, char **argv) { return 0; }\n",
+            remove_unused_deps=False,
+        )
+        zero_addr = _get_global_addr(global_ctx, cmpl_obj, "zero")
+        two_addr = _get_global_addr(global_ctx, cmpl_obj, "two")
+        neg_addr = _get_global_addr(global_ctx, cmpl_obj, "neg")
+        self.assertEqual(cmpl_obj.memory[zero_addr : zero_addr + 1], bytes([0]))
+        self.assertEqual(cmpl_obj.memory[two_addr : two_addr + 1], bytes([1]))
+        self.assertEqual(cmpl_obj.memory[neg_addr : neg_addr + 1], bytes([1]))
+
+    def test_stdbool_header_macros_and_pointer_to_bool_conversion_work(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "#include <stdbool.h>\n"
+            '_Static_assert(sizeof(bool) == 1, "bool size"); '
+            "bool g_true = true; "
+            "bool g_false = false; "
+            "int result = 0; "
+            "int main(int argc, char **argv) { "
+            "    bool from_int = 2; "
+            "    bool from_zero = false; "
+            "    bool from_ptr = &result; "
+            "    result = g_true + g_false + from_int + from_zero + from_ptr; "
+            "    return 0; "
+            "}\n",
+            remove_unused_deps=False,
+        )
+        true_addr = _get_global_addr(global_ctx, cmpl_obj, "g_true")
+        false_addr = _get_global_addr(global_ctx, cmpl_obj, "g_false")
+        self.assertEqual(cmpl_obj.memory[true_addr : true_addr + 1], bytes([1]))
+        self.assertEqual(cmpl_obj.memory[false_addr : false_addr + 1], bytes([0]))
+
+        vm = _run_program(cmpl_obj)
+        result_addr = _get_global_addr(global_ctx, cmpl_obj, "result")
+        self.assertEqual(
+            int.from_bytes(vm.memory[result_addr : result_addr + 4], "little", signed=True),
+            3,
+        )
+
+    def test_int128_globals_have_16_byte_storage_and_expected_bytes(self):
+        global_ctx, cmpl_obj = _compile_source(
+            '_Static_assert(sizeof(__int128) == 16, "__int128 size"); '
+            '_Static_assert(sizeof(unsigned __int128) == 16, "uint128 size"); '
+            "unsigned __int128 low = (unsigned __int128)0x1122334455667788ULL; "
+            "__int128 neg = -1; "
+            "int main(int argc, char **argv) { return 0; }\n",
+            remove_unused_deps=False,
+        )
+        low_addr = _get_global_addr(global_ctx, cmpl_obj, "low")
+        neg_addr = _get_global_addr(global_ctx, cmpl_obj, "neg")
+        self.assertEqual(
+            cmpl_obj.memory[low_addr : low_addr + 16],
+            bytes.fromhex("8877665544332211") + bytes(8),
+        )
+        self.assertEqual(cmpl_obj.memory[neg_addr : neg_addr + 16], bytes([0xFF]) * 16)
+
+    def test_local_uint128_shift_and_add_round_trip_through_stack_storage(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "unsigned __int128 g = 0; "
+            "int main(int argc, char **argv) { "
+            "    unsigned __int128 x = (unsigned __int128)1; "
+            "    x = x << 64; "
+            "    x = x + (unsigned __int128)3; "
+            "    g = x; "
+            "    return 0; "
+            "}\n",
+            remove_unused_deps=False,
+        )
+        self.assertIn(BC_INT128, cmpl_obj.memory)
+
+        vm = _run_program(cmpl_obj)
+        addr = _get_global_addr(global_ctx, cmpl_obj, "g")
+        self.assertEqual(
+            vm.memory[addr : addr + 16],
+            (3).to_bytes(8, "little") + (1).to_bytes(8, "little"),
+        )
 
     def test_string_initializers_are_serialized(self):
         global_ctx, cmpl_obj = _compile_source(
