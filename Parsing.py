@@ -6210,12 +6210,40 @@ def my_get_expr_part(tokens, c, end, context):
         expr, c = get_expr(tokens, c, ":", end, context)
         c += 1
         return InlineIfOpPart(expr), c
+    elif s == "__builtin_expect" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_expect_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif tokens[c].type_id == TokenClass.NAME:
         rtn = NameRefExpr()
         c = rtn.build(tokens, c, end, context)
         return ExprOpPart(rtn), c
     else:
         raise ParsingError(tokens, c, "Unrecognized Token Type")
+
+
+def _find_call_paren_end(tokens, c, end):
+    lvl = 1
+    while c < end:
+        if tokens[c].str in OPEN_GROUPS:
+            lvl += 1
+        elif tokens[c].str in CLOSE_GROUPS:
+            lvl -= 1
+            if lvl == 0:
+                return c
+        c += 1
+    raise ParsingError(tokens, end - 1, "Expected ')' to terminate builtin call")
+
+
+def _build_builtin_expect_expr(tokens, c, end, context):
+    paren_end = _find_call_paren_end(tokens, c, end)
+    expr, c = get_expr(tokens, c, ",", paren_end, context)
+    if expr is None or c >= paren_end or tokens[c].str != ",":
+        raise ParsingError(tokens, c, "__builtin_expect expects two arguments")
+    c += 1
+    hint_expr, c = get_expr(tokens, c, ",", paren_end, context)
+    if hint_expr is None or c != paren_end:
+        raise ParsingError(tokens, c, "__builtin_expect expects exactly two arguments")
+    return expr, paren_end + 1
 
 
 def mk_postfix(tokens, c, end, context, get_expr_part, delim=None, l_t_r=None):

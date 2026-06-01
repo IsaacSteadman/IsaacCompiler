@@ -120,6 +120,9 @@ def my_get_expr_part(
         expr, c = get_expr(tokens, c, ":", end, context)
         c += 1
         return InlineIfOpPart(expr), c
+    elif s == "__builtin_expect" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_expect_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif (
         s in {"va_start", "va_arg", "va_end", "va_copy"}
         and c + 1 < end
@@ -127,15 +130,7 @@ def my_get_expr_part(
     ):
         intrinsic_name = s
         c += 2  # consume name + '('
-        lvl = 1
-        paren_end = c
-        while paren_end < end and lvl > 0:
-            if tokens[paren_end].str in OPEN_GROUPS:
-                lvl += 1
-            elif tokens[paren_end].str in CLOSE_GROUPS:
-                lvl -= 1
-            if lvl > 0:
-                paren_end += 1
+        paren_end = _find_call_paren_end(tokens, c, end)
         # paren_end is at ')'
         rtn_expr = _build_va_intrinsic(intrinsic_name, tokens, c, paren_end, context)
         c = paren_end + 1
@@ -205,6 +200,31 @@ def _consume_abstract_decl_suffixes(tokens, c, end, context, typ):
         c += 1
         typ = QualType(QualType.QUAL_ARR, typ, ext_inf)
     return typ, c
+
+
+def _find_call_paren_end(tokens, c, end):
+    lvl = 1
+    while c < end:
+        if tokens[c].str in OPEN_GROUPS:
+            lvl += 1
+        elif tokens[c].str in CLOSE_GROUPS:
+            lvl -= 1
+            if lvl == 0:
+                return c
+        c += 1
+    raise ParsingError(tokens, end - 1, "Expected ')' to terminate builtin call")
+
+
+def _build_builtin_expect_expr(tokens, c, end, context):
+    paren_end = _find_call_paren_end(tokens, c, end)
+    expr, c = get_expr(tokens, c, ",", paren_end, context)
+    if expr is None or c >= paren_end or tokens[c].str != ",":
+        raise ParsingError(tokens, c, "__builtin_expect expects two arguments")
+    c += 1
+    hint_expr, c = get_expr(tokens, c, ",", paren_end, context)
+    if hint_expr is None or c != paren_end:
+        raise ParsingError(tokens, c, "__builtin_expect expects exactly two arguments")
+    return expr, paren_end + 1
 
 
 def _build_va_intrinsic(name, tokens, c, end, context):
