@@ -209,6 +209,53 @@ def _eval_tokens(
             pass
         raise ValueError("sizeof argument is not a type")
 
+    # --- __builtin_offsetof(type, member) ---
+    if (
+        tokens[start].str == "__builtin_offsetof"
+        and start + 1 < end
+        and tokens[start + 1].str == "("
+    ):
+        depth = 0
+        j = start + 1
+        while j < end:
+            if tokens[j].str in ("(", "[", "{"):
+                depth += 1
+            elif tokens[j].str in (")", "]", "}"):
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if j == end - 1:
+            comma_pos = None
+            depth = 0
+            for k in range(start + 2, j):
+                if tokens[k].str in ("(", "[", "{"):
+                    depth += 1
+                elif tokens[k].str in (")", "]", "}"):
+                    depth -= 1
+                elif tokens[k].str == "," and depth == 0:
+                    comma_pos = k
+                    break
+            if comma_pos is None:
+                raise ValueError("__builtin_offsetof expects two arguments")
+            type_decl, type_c = proc_typed_decl(tokens, start + 2, comma_pos, context)
+            if type_decl is None or type_c != comma_pos:
+                raise ValueError("__builtin_offsetof first argument must be a type")
+            if comma_pos + 1 >= j or tokens[comma_pos + 1].type_id != TokenType.NAME:
+                raise ValueError(
+                    "__builtin_offsetof second argument must be a member name"
+                )
+            if comma_pos + 2 != j:
+                raise ValueError(
+                    "__builtin_offsetof currently expects a single member name"
+                )
+            agg_type = get_value_type(type_decl.typ)
+            if not isinstance(agg_type, (ClassType, StructType, UnionType)):
+                raise ValueError(
+                    "__builtin_offsetof first argument must name a struct, union, or class type"
+                )
+            return agg_type.offset_of(tokens[comma_pos + 1].str)
+
     # --- Outer parentheses: ( expr ) ---
     if tokens[start].str == "(":
         # Check if the entire range is wrapped in matching parens.
@@ -326,6 +373,14 @@ def _eval_tokens(
 # ---------------------------------------------------------------------------
 
 from ..ParsingError import ParsingError
-from ..type.types import proc_typed_decl, size_of, CompileContext
+from ..type.types import (
+    ClassType,
+    CompileContext,
+    StructType,
+    UnionType,
+    get_value_type,
+    proc_typed_decl,
+    size_of,
+)
 from ...lexer.lexer import Token, TokenType
 from ..expr.LiteralExpr import LiteralExpr

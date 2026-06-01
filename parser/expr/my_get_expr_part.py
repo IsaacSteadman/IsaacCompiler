@@ -123,6 +123,9 @@ def my_get_expr_part(
     elif s == "__builtin_expect" and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_expect_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
+    elif s == "__builtin_offsetof" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_offsetof_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif (
         s in {"va_start", "va_arg", "va_end", "va_copy"}
         and c + 1 < end
@@ -162,10 +165,15 @@ from .expr_part.SParenthOpPart import SParenthOpPart
 from .expr_part.SimpleOpPart import SimpleOpPart
 from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
 from ..type.types import (
+    ClassType,
     CompileContext,
     IdentifiedQualType,
     QualType,
+    StructType,
+    UnionType,
+    get_value_type,
     proc_typed_decl,
+    size_l_t,
     void_t,
 )
 from ...lexer.lexer import BreakSymClass, OperatorClass, Token, TokenType
@@ -224,6 +232,65 @@ def _build_builtin_expect_expr(tokens, c, end, context):
     hint_expr, c = get_expr(tokens, c, ",", paren_end, context)
     if hint_expr is None or c != paren_end:
         raise ParsingError(tokens, c, "__builtin_expect expects exactly two arguments")
+    return expr, paren_end + 1
+
+
+def _find_top_level_call_comma(tokens, c, end):
+    lvl = 1
+    while c < end:
+        if tokens[c].str in OPEN_GROUPS:
+            lvl += 1
+        elif tokens[c].str in CLOSE_GROUPS:
+            lvl -= 1
+        elif tokens[c].str == "," and lvl == 1:
+            return c
+        c += 1
+    return None
+
+
+def _build_builtin_offsetof_expr(tokens, c, end, context):
+    paren_end = _find_call_paren_end(tokens, c, end)
+    comma_pos = _find_top_level_call_comma(tokens, c, paren_end)
+    if comma_pos is None:
+        raise ParsingError(tokens, c, "__builtin_offsetof expects two arguments")
+    type_decl, type_c = proc_typed_decl(tokens, c, comma_pos, context)
+    if type_decl is not None and type_c > c:
+        type_decl.typ, type_c = _consume_abstract_decl_suffixes(
+            tokens, type_c, comma_pos, context, type_decl.typ
+        )
+    if type_decl is None or type_c != comma_pos:
+        raise ParsingError(tokens, c, "__builtin_offsetof first argument must be a type")
+    member_c = comma_pos + 1
+    if member_c >= paren_end or tokens[member_c].type_id != TokenType.NAME:
+        raise ParsingError(
+            tokens, member_c, "__builtin_offsetof second argument must be a member name"
+        )
+    member_name = tokens[member_c].str
+    member_c += 1
+    if member_c != paren_end:
+        raise ParsingError(
+            tokens,
+            member_c,
+            "__builtin_offsetof currently expects a single member name",
+        )
+    agg_type = get_value_type(type_decl.typ)
+    if not isinstance(agg_type, (ClassType, StructType, UnionType)):
+        raise ParsingError(
+            tokens,
+            c,
+            "__builtin_offsetof first argument must name a struct, union, or class type",
+        )
+    try:
+        offset = agg_type.offset_of(member_name)
+    except KeyError:
+        raise ParsingError(
+            tokens,
+            comma_pos + 1,
+            "Type '%s' has no member '%s'" % (agg_type.to_user_str(), member_name),
+        )
+    expr = LiteralExpr(LiteralExpr.LIT_INT, str(offset))
+    expr.l_val = offset
+    expr.t_anot = size_l_t
     return expr, paren_end + 1
 
 
