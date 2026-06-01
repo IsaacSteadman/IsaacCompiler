@@ -26,9 +26,11 @@ def compile_expr(
     owns_temps = temp_links is None
     if owns_temps:
         temp_links = setup_temp_links(cmpl_obj, expr, context, cmpl_data)
-    sz = 0 if expr.t_anot is None else size_of(expr.t_anot)
+    sz = 0
     res_type = expr.t_anot
     assert isinstance(res_type, BaseType)
+    if expr.expr_id != ExprType.COMPOUND_LITERAL:
+        sz = 0 if expr.t_anot is None else size_of(expr.t_anot)
     if expr.expr_id == ExprType.LITERAL:
         assert isinstance(expr, LiteralExpr)
         assert expr.t_anot is not None
@@ -282,6 +284,51 @@ def compile_expr(
                     # TODO: change this so that the BaseType subclasses are responsible for construction
                     # TODO:   from a pointer already on the stack
                     lnk.emit_load(
+                        cmpl_obj.memory, sz, cmpl_obj, byte_copy_cmpl_intrinsic
+                    )
+                else:
+                    raise TypeError(
+                        "Expected type_coerce to be reference or value type: type_coerce = %r, val_type = %r"
+                        % (type_coerce, val_type)
+                    )
+    elif expr.expr_id == ExprType.COMPOUND_LITERAL:
+        assert isinstance(expr, CompoundLiteralExpr)
+        temp_type, temp_link = temp_links[expr.temps_off]
+        temp_type.compile_var_init(
+            cmpl_obj,
+            [expr.init_expr],
+            context,
+            VarRefLnkPrealloc(temp_link),
+            cmpl_data,
+            temp_links,
+        )
+        if type_coerce is None or type_coerce is void_t:
+            temp_link.emit_lea(cmpl_obj.memory)
+            sz = 8
+        else:
+            prim_type_coerce = get_base_prim_type(type_coerce)
+            val_type = get_base_prim_type(temp_type)
+            do_as_ref = False
+            if prim_type_coerce.type_class_id == TypeClass.QUAL:
+                assert isinstance(prim_type_coerce, QualType)
+                do_as_ref = prim_type_coerce.qual_id == QualType.QUAL_REF
+            if do_as_ref:
+                temp_link.emit_lea(cmpl_obj.memory)
+                sz = 8
+            elif (
+                isinstance(prim_type_coerce, QualType)
+                and prim_type_coerce.qual_id == QualType.QUAL_PTR
+                and isinstance(val_type, QualType)
+                and val_type.qual_id == QualType.QUAL_ARR
+            ):
+                temp_link.emit_lea(cmpl_obj.memory)
+                sz = 8
+                res_type = prim_type_coerce
+            else:
+                res_type = val_type
+                if compare_no_cvr(prim_type_coerce, val_type):
+                    sz = size_of(val_type)
+                    temp_link.emit_load(
                         cmpl_obj.memory, sz, cmpl_obj, byte_copy_cmpl_intrinsic
                     )
                 else:
@@ -708,6 +755,7 @@ from ..StackVM.PyStackVM import (
 from ..parser.expr.BaseExpr import BaseExpr, ExprType
 from ..parser.expr.BinaryOpExpr import BinaryOpExpr
 from ..parser.expr.CastOpExpr import CastOpExpr, CastType
+from ..parser.expr.CompoundLiteralExpr import CompoundLiteralExpr
 from ..parser.expr.FnCallExpr import FnCallExpr
 from ..parser.expr.LiteralExpr import LiteralExpr
 from ..parser.expr.NameRefExpr import NameRefExpr
@@ -721,6 +769,7 @@ from ..parser.expr.UnaryOpExpr import UnaryExprSubType, UnaryOpExpr
 from ..parser.expr.VaIntrinsicExpr import VaIntrinsicExpr
 from ..parser.stmnt.SemiColonStmnt import SemiColonStmnt
 from ..parser.type.BaseType import BaseType, TypeClass
+from ..parser.type.helpers.VarRef import VarRefLnkPrealloc
 from ..parser.type.get_user_str_from_type import get_user_str_from_type
 from ..parser.type.types import (
     ClassType,

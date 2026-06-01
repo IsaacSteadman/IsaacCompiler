@@ -74,14 +74,23 @@ def my_get_expr_part(
             c = end_t
             return ExprOpPart(stmnt_expr), c
         if comma_count == 0:
-            type_name, c = proc_typed_decl(tokens, c, end_p, context)
-            if c > start + 1 and type_name is not None:
+            type_name, type_c = proc_typed_decl(tokens, c, end_p, context)
+            if type_c > start + 1 and type_name is not None:
+                type_name.typ, type_c = _consume_abstract_decl_suffixes(
+                    tokens, type_c, end_p, context, type_name.typ
+                )
+            if type_name is not None and type_c == end_p:
                 assert isinstance(type_name, IdentifiedQualType)
                 if type_name.name is not None:
                     print(
                         "WARN: (c = %u) Unexpected name in C-Style Cast Operator: '%s'"
-                        % (c, type_name.name)
+                        % (type_c, type_name.name)
                     )
+                if end_t < end and tokens[end_t].str == "{":
+                    expr = CurlyExpr()
+                    c = expr.build(tokens, end_t, end, context)
+                    _deduce_compound_literal_array_extent(type_name.typ, expr)
+                    return ExprOpPart(CompoundLiteralExpr(type_name.typ, expr)), c
                 c = end_t
                 return CastOpPart(type_name.typ), c
         lst_expr = [None] * (comma_count + 1)
@@ -139,7 +148,9 @@ def my_get_expr_part(
         raise ParsingError(tokens, c, "Unrecognized Token Type")
 
 
+from .CompoundLiteralExpr import CompoundLiteralExpr
 from .CurlyExpr import CurlyExpr
+from .DesigInitExpr import DesigInitExpr
 from .LiteralExpr import LiteralExpr
 from .NameRefExpr import NameRefExpr
 from .StmntExpr import StmntExpr
@@ -155,8 +166,45 @@ from .expr_part.ParentOpPart import ParenthOpPart
 from .expr_part.SParenthOpPart import SParenthOpPart
 from .expr_part.SimpleOpPart import SimpleOpPart
 from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
-from ..type.types import IdentifiedQualType, proc_typed_decl, CompileContext, void_t
+from ..type.types import (
+    CompileContext,
+    IdentifiedQualType,
+    QualType,
+    proc_typed_decl,
+    void_t,
+)
 from ...lexer.lexer import BreakSymClass, OperatorClass, Token, TokenType
+
+
+def _deduce_compound_literal_array_extent(typ, expr):
+    if not isinstance(typ, QualType) or typ.qual_id != QualType.QUAL_ARR:
+        return
+    if typ.ext_inf is not None or expr.lst_expr is None:
+        return
+    deduced = 0
+    next_index = 0
+    for elem in expr.lst_expr:
+        if isinstance(elem, DesigInitExpr) and elem.kind == DesigInitExpr.KIND_INDEX:
+            next_index = elem.designator
+        deduced = max(deduced, next_index + 1)
+        next_index += 1
+    typ.ext_inf = deduced
+
+
+def _consume_abstract_decl_suffixes(tokens, c, end, context, typ):
+    while c < end and tokens[c].type_id == TokenType.BRK_OP and tokens[c].str == "[":
+        c += 1
+        ext_inf = None
+        if tokens[c].str != "]":
+            expr, c = get_expr(tokens, c, "]", end, context)
+            if not isinstance(expr, LiteralExpr) or expr.t_lit != LiteralExpr.LIT_INT:
+                raise ParsingError(tokens, c, "Expected literal integer for bounds of array")
+            ext_inf = expr.l_val
+        if tokens[c].str != "]":
+            raise ParsingError(tokens, c, "Expected closing ']' in abstract declarator")
+        c += 1
+        typ = QualType(QualType.QUAL_ARR, typ, ext_inf)
+    return typ, c
 
 
 def _build_va_intrinsic(name, tokens, c, end, context):

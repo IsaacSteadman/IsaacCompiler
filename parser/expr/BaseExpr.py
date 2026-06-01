@@ -20,6 +20,7 @@ class ExprType(Enum):
     DESIG_INIT = 13  # designated initializer element: .field = expr  or  [index] = expr
     STMNT_EXPR = 14  # GNU statement expression: ({ ... })
     VA_INTRINSIC = 15  # va_start / va_arg / va_end / va_copy compiler intrinsics
+    COMPOUND_LITERAL = 16  # C compound literal: (type){ ... }
 
 
 class BaseExpr(PrettyRepr):

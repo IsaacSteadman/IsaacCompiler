@@ -1693,102 +1693,52 @@ class StructType(CompileContext, BaseType):
             link = ref.lnk
         else:
             raise TypeError("Unrecognized VarRef: %s" % repr(ref))
-        # ── Designated-initialiser path:  struct foo f = { .a = 1, .b = 2 } ─────
+        # ── Curly initialiser path:  struct foo f = { ... } ──────────────────────
         if (
             len(init_args) == 1
             and isinstance(init_args[0], CurlyExpr)
             and init_args[0].lst_expr is not None
-            and len(init_args[0].lst_expr) > 0
-            and all(
-                isinstance(e, DesigInitExpr) and e.kind == DesigInitExpr.KIND_FIELD
-                for e in init_args[0].lst_expr
-            )
         ):
             curly = init_args[0]
-            desig_map = {e.designator: e for e in curly.lst_expr}
             if link is None:
-                # ── Local variable ───────────────────────────────────────────
                 assert is_local
                 assert cmpl_data is not None
                 assert ctx_var is not None
-                # 1. Allocate space on the stack (BC_ADD_SP does NOT zero memory)
                 sz_cls = emit_load_i_const(cmpl_obj.memory, sz_var, False)
                 cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls])
-                # 2. Register the variable so later code can reference it
                 lnk = cmpl_data.put_local(ctx_var, name, sz_var, None, True)
-                # 3. For every field: store designated value or push zeros
-                for fvar in self.var_order:
-                    if _is_flexible_array_type(fvar.typ):
-                        if fvar.name in desig_map:
-                            raise TypeError(
-                                "Flexible array member '%s' cannot be initialized"
-                                % fvar.name
-                            )
-                        continue
-                    field_sz = size_of(fvar.typ, owner=self)
-                    field_lnk = lnk.get_offset_link(self.offset_of(fvar.name))
-                    if fvar.name in desig_map:
-                        desig = desig_map[fvar.name]
-                        expr_vt = get_value_type(desig.expr.t_anot)
-                        sz_e = compile_expr(
-                            cmpl_obj,
-                            desig.expr,
-                            context,
-                            cmpl_data,
-                            expr_vt,
-                            temp_links,
-                        )
-                        assert (
-                            sz_e == field_sz
-                        ), "Designated field '%s' size mismatch: expr=%d field=%d" % (
-                            fvar.name,
-                            sz_e,
-                            field_sz,
-                        )
-                    else:
-                        _emit_push_zeros(cmpl_obj.memory, field_sz)
-                    field_lnk.emit_stor(
-                        cmpl_obj.memory, field_sz, cmpl_obj, byte_copy_cmpl_intrinsic
-                    )
             else:
-                # ── Global variable (memory already zeroed in the setup stage) ─
-                assert ctx_var is None or isinstance(ctx_var, ContextVariable)
-                for fvar in self.var_order:
-                    if _is_flexible_array_type(fvar.typ):
-                        if fvar.name in desig_map:
-                            raise TypeError(
-                                "Flexible array member '%s' cannot be initialized"
-                                % fvar.name
-                            )
-                        continue
-                    field_sz = size_of(fvar.typ, owner=self)
-                    if fvar.name in desig_map:
-                        desig = desig_map[fvar.name]
-                        expr_vt = get_value_type(desig.expr.t_anot)
-                        sz_e = compile_expr(
-                            cmpl_obj,
-                            desig.expr,
-                            context,
-                            cmpl_data,
-                            expr_vt,
-                            temp_links,
-                        )
-                        assert (
-                            sz_e == field_sz
-                        ), "Designated field '%s' size mismatch: expr=%d field=%d" % (
-                            fvar.name,
-                            sz_e,
-                            field_sz,
-                        )
-                        field_lnk = link.get_offset_link(self.offset_of(fvar.name))
-                        field_lnk.emit_stor(
-                            cmpl_obj.memory,
-                            field_sz,
-                            cmpl_obj,
-                            byte_copy_cmpl_intrinsic,
-                        )
+                lnk = link
+            _zero_init_link(cmpl_obj, lnk, sz_var)
+            next_field_index = 0
+            for elem in curly.lst_expr:
+                target_index = next_field_index
+                subexpr = elem
+                if isinstance(elem, DesigInitExpr):
+                    if elem.kind != DesigInitExpr.KIND_FIELD:
+                        raise TypeError("Cannot use array designators in a struct initializer")
+                    target_index = self.definition[elem.designator]
+                    subexpr = elem.expr
+                if target_index >= len(self.var_order) or subexpr is None:
+                    raise TypeError("Too many elements in struct initializer")
+                field_var = self.var_order[target_index]
+                if _is_flexible_array_type(field_var.typ):
+                    raise TypeError(
+                        "Flexible array member '%s' cannot be initialized"
+                        % field_var.name
+                    )
+                field_lnk = lnk.get_offset_link(self.offset_of(field_var.name))
+                field_var.typ.compile_var_init(
+                    cmpl_obj,
+                    [subexpr],
+                    context,
+                    VarRefLnkPrealloc(field_lnk),
+                    cmpl_data,
+                    temp_links,
+                )
+                next_field_index = target_index + 1
             return sz_var
-        # ── End designated-initialiser path ──────────────────────────────────────
+        # ── End curly-initialiser path ───────────────────────────────────────────
         if len(init_args) > 1:
             raise TypeError(
                 "Cannot instantiate struct types with more than one argument"
@@ -3477,81 +3427,49 @@ class QualType(BaseType):
                 cmpl_obj, init_args, context, ref, cmpl_data, temp_links
             )
         elif self.qual_id in [QualType.QUAL_PTR, QualType.QUAL_REF, QualType.QUAL_ARR]:
-            # ── Array designated initialiser:  int arr[N] = { [i] = val, ... } ──
             if (
                 self.qual_id == QualType.QUAL_ARR
                 and len(init_args) == 1
                 and isinstance(init_args[0], CurlyExpr)
                 and init_args[0].lst_expr is not None
-                and len(init_args[0].lst_expr) > 0
-                and all(
-                    isinstance(e, DesigInitExpr) and e.kind == DesigInitExpr.KIND_INDEX
-                    for e in init_args[0].lst_expr
-                )
             ):
                 curly = init_args[0]
-                arr_len = self.ext_inf  # number of elements (int)
+                arr_len = self.ext_inf
+                if arr_len is None:
+                    raise TypeError("Array extent could not be deduced from initializer")
                 elem_sz = size_of(self.tgt_type)
-                desig_map = {e.designator: e for e in curly.lst_expr}
-                if is_local:
+                if link is None:
+                    assert is_local
                     sz_cls = emit_load_i_const(cmpl_obj.memory, sz_var, False)
                     cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls])
                     assert ctx_var is not None
                     assert cmpl_data is not None
                     lnk = cmpl_data.put_local(ctx_var, name, sz_var, None, True)
-                    for idx in range(arr_len):
-                        elem_lnk = lnk.get_offset_link(idx * elem_sz)
-                        if idx in desig_map:
-                            desig = desig_map[idx]
-                            expr_vt = get_value_type(desig.expr.t_anot)
-                            sz_e = compile_expr(
-                                cmpl_obj,
-                                desig.expr,
-                                context,
-                                cmpl_data,
-                                expr_vt,
-                                temp_links,
-                            )
-                            assert (
-                                sz_e == elem_sz
-                            ), "Array elem[%d] size mismatch: expr=%d elem=%d" % (
-                                idx,
-                                sz_e,
-                                elem_sz,
-                            )
-                        else:
-                            _emit_push_zeros(cmpl_obj.memory, elem_sz)
-                        elem_lnk.emit_stor(
-                            cmpl_obj.memory, elem_sz, cmpl_obj, byte_copy_cmpl_intrinsic
-                        )
                 else:
-                    # Global: zero data segment, then emit stores for designated elements
-                    if ref.ref_type == VAR_REF_TOS_NAMED:
-                        assert cmpl_obj1 is not None
-                        cmpl_obj1.memory.extend([0] * sz_var)
-                    for idx, desig in desig_map.items():
-                        expr_vt = get_value_type(desig.expr.t_anot)
-                        sz_e = compile_expr(
-                            cmpl_obj,
-                            desig.expr,
-                            context,
-                            cmpl_data,
-                            expr_vt,
-                            temp_links,
-                        )
-                        assert (
-                            sz_e == elem_sz
-                        ), "Array elem[%d] size mismatch: expr=%d elem=%d" % (
-                            idx,
-                            sz_e,
-                            elem_sz,
-                        )
-                        elem_lnk = link.get_offset_link(idx * elem_sz)
-                        elem_lnk.emit_stor(
-                            cmpl_obj.memory, elem_sz, cmpl_obj, byte_copy_cmpl_intrinsic
-                        )
+                    lnk = link
+                _zero_init_link(cmpl_obj, lnk, sz_var)
+                next_index = 0
+                for elem in curly.lst_expr:
+                    target_index = next_index
+                    subexpr = elem
+                    if isinstance(elem, DesigInitExpr):
+                        if elem.kind != DesigInitExpr.KIND_INDEX:
+                            raise TypeError("Cannot use field designators in an array initializer")
+                        target_index = elem.designator
+                        subexpr = elem.expr
+                    if target_index >= arr_len or subexpr is None:
+                        raise TypeError("Too many elements in array initializer")
+                    elem_lnk = lnk.get_offset_link(target_index * elem_sz)
+                    self.tgt_type.compile_var_init(
+                        cmpl_obj,
+                        [subexpr],
+                        context,
+                        VarRefLnkPrealloc(elem_lnk),
+                        cmpl_data,
+                        temp_links,
+                    )
+                    next_index = target_index + 1
                 return sz_var
-            # ── End array designated-initialiser ─────────────────────────────────
             if len(init_args) == 1:
                 expr = init_args[0]
                 # assert CompareNoCVR(self, expr.t_anot), "self = %s, expr.t_anot = %s" % (
@@ -4453,6 +4371,11 @@ def _emit_push_zeros(memory: bytearray, n: int):
         n -= 2
     if n == 1:
         emit_load_i_const(memory, 0, False, 0)  # 1-byte zero
+
+
+def _zero_init_link(cmpl_obj: "BaseCmplObj", link: "BaseLink", size: int) -> None:
+    _emit_push_zeros(cmpl_obj.memory, size)
+    link.emit_stor(cmpl_obj.memory, size, cmpl_obj, byte_copy_cmpl_intrinsic)
 
 
 @dataclass
