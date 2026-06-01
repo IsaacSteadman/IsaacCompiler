@@ -9,8 +9,25 @@ def get_stmnt(
     start = c
     position = tokens[c].line, tokens[c].col
     _DECL_SPECIFIERS = {"extern", "static", "inline", "_Noreturn"}
-    if tokens[c].type_id == TokenType.NAME and (
-        is_type_name_part(tokens[c].str, context) or tokens[c].str in _DECL_SPECIFIERS
+    decl_c = c
+    while (
+        decl_c < end
+        and tokens[decl_c].type_id == TokenType.NAME
+        and tokens[decl_c].str == "__attribute__"
+    ):
+        if decl_c + 1 >= end or tokens[decl_c + 1].str != "(":
+            break
+        lvl = 1
+        decl_c += 2
+        while decl_c < end and lvl > 0:
+            if tokens[decl_c].str == "(":
+                lvl += 1
+            elif tokens[decl_c].str == ")":
+                lvl -= 1
+            decl_c += 1
+    if tokens[decl_c].type_id == TokenType.NAME and (
+        is_type_name_part(tokens[decl_c].str, context)
+        or tokens[decl_c].str in _DECL_SPECIFIERS
     ):
         pos = StmntType.DECL
     else:

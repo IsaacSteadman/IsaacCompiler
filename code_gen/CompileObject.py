@@ -9,6 +9,7 @@ class CompileObject(BaseCmplObj):
         self.name = name
         self.parent = None
         self.local_links = {}
+        self.alignment = 1
 
     def get_local_link(self, name):
         """
@@ -25,4 +26,3 @@ class CompileObject(BaseCmplObj):
         """
         self.parent = parent
         return self
-

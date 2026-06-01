@@ -10,6 +10,10 @@ class CompileObjectType(Enum):
     FUNCTION = 1  # definition of a function
 
 
+def _align_up(x: int, align: int) -> int:
+    return (x + align - 1) & ~(align - 1)
+
+
 class Compilation(BaseCmplObj):
     def __init__(self, keep_local_syms: bool):
         super(Compilation, self).__init__()
@@ -83,6 +87,10 @@ class Compilation(BaseCmplObj):
                     raise NameError(
                         "Redefinition of name = '%s' is not allowed" % cur.name
                     )
+                if cur.typ == CompileObjectType.GLOBAL and cur.alignment > 1:
+                    mem_off = _align_up(len(self.memory), cur.alignment)
+                    if mem_off > len(self.memory):
+                        self.memory.extend([0] * (mem_off - len(self.memory)))
                 mem_off = len(self.memory)
                 self.memory.extend(cur.memory)
                 obj_lnk.src = mem_off

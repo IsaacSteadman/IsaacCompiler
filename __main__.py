@@ -17,7 +17,12 @@ from .code_gen.stackvm_binutils.disassemble import disassemble
 from .code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
 from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
-from .parser.type.types import CompileContext, QualType, PrimitiveType, TypeDefCtxMember
+from .parser.type.types import (
+    CompileContext,
+    QualType,
+    PrimitiveType,
+    TypeDefCtxMember,
+)
 from .code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import lib_utils_abi
 
 
@@ -72,6 +77,15 @@ incl_sym_options = {
     "include_symbols",
     "is",
 }
+
+
+def _parse_alignment_arg(value: str) -> int:
+    align = int(value, 0)
+    if align < 1:
+        raise argparse.ArgumentTypeError("alignment must be a positive integer")
+    if align & (align - 1):
+        raise argparse.ArgumentTypeError("alignment must be a power of two")
+    return align
 
 
 # ---------------------------------------------------------------------------
@@ -140,8 +154,19 @@ compile_parser.add_argument(
     "-a",
     "--data-seg-align",
     metavar="data_seg_align",
+    type=int,
     choices=[4096, 8192, 16384, 32768],
     default=4096,
+    help="align the start of the data segment to a page-sized boundary",
+)
+compile_parser.add_argument(
+    "--default-alignment",
+    metavar="alignment",
+    type=_parse_alignment_arg,
+    default=None,
+    dest="default_alignment",
+    help="use ALIGNMENT as the maximum natural alignment for ordinary objects "
+    "and struct/union members; if omitted, keep the current no-alignment behavior",
 )
 compile_parser.add_argument(
     "-o",
@@ -296,7 +321,7 @@ if args.subcommand == "compile":
     _source = cpp_preprocess(_source, _include_dirs)
     tokens = get_list_tokens(_source)
 
-    global_ctx = CompileContext("", None)
+    global_ctx = CompileContext("", None, args.default_alignment)
     # Register built-in type alias: typedef unsigned char *va_list
     _va_list_base = PrimitiveType.from_str_name(["unsigned", "char"])
     _va_list_t = QualType(QualType.QUAL_PTR, _va_list_base)
@@ -316,6 +341,7 @@ if args.subcommand == "compile":
             args.data_seg_align,
             lib_utils_abi.objects,
             LNK_RUN_STANDALONE if link_style == "standalone" else 0,
+            args.default_alignment,
         )
         cmpl_opts = CompilerOptions(link_opts, True, args.debugging_symbols)
         cmpl_obj = Compilation(cmpl_opts.keep_local_syms)

@@ -61,12 +61,16 @@ class CompileContext(ContextMember, PrettyRepr):
         self,
         name: str,
         parent: Optional["CompileContext"] = None,
+        default_alignment: Optional[int] = None,
         scopes: Optional[List["LocalScope"]] = None,
         types: Optional[Dict[str, "BaseType"]] = None,
         namespaces: Optional[Dict[str, "CompileContext"]] = None,
         vars: Optional[Dict[str, "ContextVariable"]] = None,
     ):
         super(CompileContext, self).__init__(name, parent)
+        if default_alignment is None and parent is not None:
+            default_alignment = parent.default_alignment
+        self.default_alignment: Optional[int] = default_alignment
         self.scopes: List["LocalScope"] = [] if scopes is None else scopes
         self.types: Dict[str, "BaseType"] = {} if types is None else types
         self.namespaces: Dict[str, "CompileContext"] = (
@@ -100,6 +104,7 @@ class CompileContext(ContextMember, PrettyRepr):
         for c in range(pre_len, len(other.scopes)):
             scope = other.scopes[c]
             scope.set_parent(other, c)
+        other.default_alignment = self.default_alignment
 
     def has_type(self, t: str) -> bool:
         return t in self.types or (self.parent is not None and self.parent.has_type(t))
@@ -285,6 +290,7 @@ class CompileContext(ContextMember, PrettyRepr):
             (
                 self.name,
                 self.parent,
+                self.default_alignment,
                 self.scopes,
                 self.types,
                 self.namespaces,
@@ -864,13 +870,21 @@ class ClassType(CompileContext, BaseType):
         self.var_order = [] if var_order is None else var_order
         self.defined = defined
         self.the_base_type = the_base_type
+        self.align_override: Optional[int] = None
 
     def offset_of(self, attr: str) -> int:
-        # TODO: improve speed of OffsetOf by tracking the offsets along-side the types
         index = self.definition[attr]
-        off = 0 if self.the_base_type is None else size_of(self.the_base_type)
+        off = (
+            0
+            if self.the_base_type is None
+            else size_of(self.the_base_type, owner=self)
+        )
         for c in range(index):
-            off += size_of(self.var_order[c].typ)
+            align = align_of(self.var_order[c].typ, owner=self)
+            off = _align_up(off, align)
+            off += size_of(self.var_order[c].typ, owner=self)
+        if index < len(self.var_order):
+            off = _align_up(off, align_of(self.var_order[index].typ, owner=self))
         return off
 
     def pretty_repr(self, pretty_repr_ctx=None):
@@ -895,6 +909,7 @@ class ClassType(CompileContext, BaseType):
         other.var_order = self.var_order
         other.defined = self.defined
         other.the_base_type = self.the_base_type
+        other.align_override = self.align_override
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
@@ -965,34 +980,163 @@ class BitFieldInfo:
     storage_sz: int
 
 
+@dataclass
+class GNUAttributes:
+    packed: bool = False
+    align_override: Optional[int] = None
+
+    def merge(self, other: "GNUAttributes") -> "GNUAttributes":
+        self.packed = self.packed or other.packed
+        if other.align_override is not None:
+            cur = 0 if self.align_override is None else self.align_override
+            self.align_override = max(cur, other.align_override)
+        return self
+
+
+@dataclass
+class StructLayoutEntry:
+    member: Optional["ContextVariable"] = None
+    bit_field_type: Optional["BaseType"] = None
+    bit_field_width: Optional[int] = None
+
+
+@dataclass
+class AggregateLayout:
+    size: int
+    alignment: int
+    offsets: Dict[str, int]
+    bit_field_info: Dict[str, BitFieldInfo]
+
+def _normalize_default_alignment(alignment: Optional[int]) -> Optional[int]:
+    if alignment is None or alignment <= 1:
+        return None
+    if alignment & (alignment - 1):
+        raise ValueError("default alignment must be a power of two")
+    return alignment
+
+
+def _default_align_for_size(size: int, default_alignment: Optional[int]) -> int:
+    default_alignment = _normalize_default_alignment(default_alignment)
+    if size <= 1 or default_alignment is None:
+        return 1
+    return min(size, default_alignment)
+
+
+def _get_context_default_alignment(
+    owner: Optional[Union["ContextMember", "CompileContext"]]
+) -> Optional[int]:
+    cur = owner
+    while cur is not None:
+        if isinstance(cur, CompileContext):
+            return _normalize_default_alignment(cur.default_alignment)
+        if isinstance(cur, ContextMember):
+            cur = cur.parent
+        else:
+            break
+    return None
+
+
 def _align_up(x: int, align: int) -> int:
     """Round x up to the nearest multiple of align (align must be a power of 2)."""
     return (x + align - 1) & ~(align - 1)
 
 
-def _skip_gnu_attr(tokens, c: int, end: int):
-    """Skip a single __attribute__((...)) block.
+def _eval_attr_align_expr(
+    tokens: List["Token"], c: int, end: int, context: "CompileContext"
+) -> Optional[int]:
+    expr, c_expr = get_expr(tokens, c, None, end, context)
+    if expr is None or c_expr != end:
+        return None
+    value = _eval_const_expr(expr)
+    if isinstance(value, _StaticAddress) or value is None:
+        return None
+    return int(value)
 
-    Returns (new_c, is_packed). If tokens[c] is not '__attribute__', returns (c, False).
-    """
+
+def _parse_single_gnu_attr(
+    tokens: List["Token"], c: int, end: int, context: "CompileContext"
+) -> Tuple[int, GNUAttributes]:
+    attrs = GNUAttributes()
     if c >= end or tokens[c].str != "__attribute__":
-        return c, False
+        return c, attrs
     c += 1
     if c >= end or tokens[c].str != "(":
-        return c, False
+        return c, attrs
     lvl = 1
     c += 1
-    is_packed = False
+    attr_tokens = []
     while c < end and lvl > 0:
         s = tokens[c].str
         if s == "(":
             lvl += 1
         elif s == ")":
             lvl -= 1
-        if s == "packed" and lvl > 0:
-            is_packed = True
+        if lvl > 0:
+            attr_tokens.append(tokens[c])
         c += 1
-    return c, is_packed
+    k = 0
+    attr_end = len(attr_tokens)
+    while k < attr_end:
+        tok = attr_tokens[k]
+        if tok.type_id == TokenType.NAME:
+            if tok.str == "packed":
+                attrs.packed = True
+            elif tok.str == "aligned" and k + 1 < attr_end and attr_tokens[k + 1].str == "(":
+                depth = 1
+                expr_start = k + 2
+                k += 2
+                while k < attr_end and depth > 0:
+                    if attr_tokens[k].str == "(":
+                        depth += 1
+                    elif attr_tokens[k].str == ")":
+                        depth -= 1
+                    k += 1
+                if depth == 0:
+                    align = _eval_attr_align_expr(
+                        attr_tokens, expr_start, k - 1, context
+                    )
+                    if align is not None and align > 0:
+                        cur = 0 if attrs.align_override is None else attrs.align_override
+                        attrs.align_override = max(cur, align)
+                continue
+        k += 1
+    return c, attrs
+
+
+def _consume_gnu_attrs(
+    tokens: List["Token"], c: int, end: int, context: "CompileContext"
+) -> Tuple[int, GNUAttributes]:
+    attrs = GNUAttributes()
+    while (
+        c < end
+        and tokens[c].type_id == TokenType.NAME
+        and tokens[c].str == "__attribute__"
+    ):
+        c, cur = _parse_single_gnu_attr(tokens, c, end, context)
+        attrs.merge(cur)
+    return c, attrs
+
+
+def _apply_gnu_attributes_to_type(
+    typ: "BaseType", attrs: GNUAttributes
+) -> "BaseType":
+    if isinstance(typ, StructType):
+        if attrs.packed:
+            typ.is_packed = True
+        if attrs.align_override is not None:
+            cur = 0 if typ.align_override is None else typ.align_override
+            typ.align_override = max(cur, attrs.align_override)
+        typ._invalidate_layout()
+    elif isinstance(typ, UnionType):
+        if attrs.packed:
+            typ.is_packed = True
+        if attrs.align_override is not None:
+            cur = 0 if typ.align_override is None else typ.align_override
+            typ.align_override = max(cur, attrs.align_override)
+    elif isinstance(typ, ClassType) and attrs.align_override is not None:
+        cur = 0 if typ.align_override is None else typ.align_override
+        typ.align_override = max(cur, attrs.align_override)
+    return typ
 
 
 class StructType(CompileContext, BaseType):
@@ -1044,28 +1188,20 @@ class StructType(CompileContext, BaseType):
         self.var_order = [] if var_order is None else var_order
         self.defined = defined
         self.the_base_type = the_base_type
+        self.align_override: Optional[int] = None
+        self.layout_entries: List[StructLayoutEntry] = []
         # Bit-field layout state
         self.bit_field_info: Dict[str, BitFieldInfo] = {}
         self._precomp_byte_offsets: Dict[str, int] = {}
         self._bf_struct_total_sz: Optional[int] = None
-        self._bf_cur_byte_off: int = 0
-        self._bf_cur_bits_used: int = 0
-        self._bf_cur_storage_sz: int = 0
         self.is_packed: bool = False
+        self._layout_cache: Optional[AggregateLayout] = None
 
     def offset_of(self, attr: str) -> int:
-        # Bit-field members: use the pre-computed byte_offset of their storage unit.
+        self._ensure_layout()
         if attr in self.bit_field_info:
             return self.bit_field_info[attr].byte_offset
-        # Regular members that follow a bit-field section: use the pre-computed offset.
-        if attr in self._precomp_byte_offsets:
-            return self._precomp_byte_offsets[attr]
-        # Pure regular-member structs (no bit fields): sum sizes up to the member.
-        index = self.definition[attr]
-        off = 0 if self.the_base_type is None else size_of(self.the_base_type)
-        for c in range(index):
-            off += size_of(self.var_order[c].typ)
-        return off
+        return self._precomp_byte_offsets[attr]
 
     def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
@@ -1089,38 +1225,144 @@ class StructType(CompileContext, BaseType):
         other.var_order = self.var_order
         other.defined = self.defined
         other.the_base_type = self.the_base_type
+        other.align_override = self.align_override
+        other.layout_entries = self.layout_entries
         other.bit_field_info = self.bit_field_info
         other._precomp_byte_offsets = self._precomp_byte_offsets
         other._bf_struct_total_sz = self._bf_struct_total_sz
-        other._bf_cur_byte_off = self._bf_cur_byte_off
-        other._bf_cur_bits_used = self._bf_cur_bits_used
-        other._bf_cur_storage_sz = self._bf_cur_storage_sz
         other.is_packed = self.is_packed
+        other._layout_cache = self._layout_cache
+
+    def _invalidate_layout(self) -> None:
+        self._layout_cache = None
+        self.bit_field_info = {}
+        self._precomp_byte_offsets = {}
+        self._bf_struct_total_sz = None
+
+    def _ensure_layout(self) -> AggregateLayout:
+        if self._layout_cache is not None:
+            return self._layout_cache
+        if not self.layout_entries and self.var_order:
+            self.layout_entries = [StructLayoutEntry(member=var) for var in self.var_order]
+        offsets: Dict[str, int] = {}
+        bit_field_info: Dict[str, BitFieldInfo] = {}
+        off = 0
+        max_align = 1
+        if self.the_base_type is not None:
+            base_align = 1 if self.is_packed else align_of(self.the_base_type, owner=self)
+            max_align = max(max_align, base_align)
+            off = size_of(self.the_base_type, owner=self)
+        cur_storage_sz = 0
+        cur_storage_off = 0
+        cur_bits_used = 0
+        for entry in self.layout_entries:
+            member = entry.member
+            if member is None:
+                assert entry.bit_field_type is not None
+                assert entry.bit_field_width is not None
+                storage_sz = size_of(entry.bit_field_type, owner=self)
+                storage_align = (
+                    1 if self.is_packed else align_of(entry.bit_field_type, owner=self)
+                )
+                max_align = max(max_align, storage_align)
+                storage_bits = storage_sz * 8
+                if entry.bit_field_width == 0:
+                    if cur_storage_sz > 0:
+                        off = cur_storage_off + cur_storage_sz
+                        cur_storage_sz = 0
+                        cur_bits_used = 0
+                    if not self.is_packed:
+                        off = _align_up(off, storage_align)
+                    continue
+                if (
+                    cur_storage_sz == storage_sz
+                    and cur_bits_used + entry.bit_field_width <= storage_bits
+                ):
+                    cur_bits_used += entry.bit_field_width
+                    continue
+                if cur_storage_sz > 0:
+                    off = cur_storage_off + cur_storage_sz
+                if not self.is_packed:
+                    off = _align_up(off, storage_align)
+                cur_storage_off = off
+                cur_storage_sz = storage_sz
+                cur_bits_used = entry.bit_field_width
+                continue
+            if member.bit_field_width is not None:
+                storage_sz = size_of(member.typ, owner=self)
+                storage_align = 1 if self.is_packed else align_of(member.typ, owner=self)
+                max_align = max(max_align, storage_align)
+                storage_bits = storage_sz * 8
+                width = member.bit_field_width
+                if width == 0:
+                    if cur_storage_sz > 0:
+                        off = cur_storage_off + cur_storage_sz
+                        cur_storage_sz = 0
+                        cur_bits_used = 0
+                    if not self.is_packed:
+                        off = _align_up(off, storage_align)
+                    continue
+                if (
+                    cur_storage_sz == storage_sz
+                    and cur_bits_used + width <= storage_bits
+                ):
+                    bit_shift = cur_bits_used
+                    byte_off = cur_storage_off
+                    cur_bits_used += width
+                else:
+                    if cur_storage_sz > 0:
+                        off = cur_storage_off + cur_storage_sz
+                    if not self.is_packed:
+                        off = _align_up(off, storage_align)
+                    cur_storage_off = off
+                    cur_storage_sz = storage_sz
+                    bit_shift = 0
+                    byte_off = cur_storage_off
+                    cur_bits_used = width
+                offsets[member.name] = byte_off
+                bit_field_info[member.name] = BitFieldInfo(
+                    byte_offset=byte_off,
+                    bit_shift=bit_shift,
+                    bit_mask=(1 << width) - 1,
+                    storage_sz=storage_sz,
+                )
+                continue
+            if cur_storage_sz > 0:
+                off = cur_storage_off + cur_storage_sz
+                cur_storage_sz = 0
+                cur_bits_used = 0
+            member_align = 1 if self.is_packed else align_of(member.typ, owner=self)
+            max_align = max(max_align, member_align)
+            if not self.is_packed:
+                off = _align_up(off, member_align)
+            offsets[member.name] = off
+            off += size_of(member.typ, owner=self)
+        if cur_storage_sz > 0:
+            off = cur_storage_off + cur_storage_sz
+        struct_align = 1 if self.is_packed else max_align
+        if self.align_override is not None:
+            struct_align = max(struct_align, self.align_override)
+        if not self.is_packed or self.align_override is not None:
+            off = _align_up(off, struct_align)
+        layout = AggregateLayout(off, struct_align, offsets, bit_field_info)
+        self._layout_cache = layout
+        self.bit_field_info = bit_field_info
+        self._precomp_byte_offsets = offsets
+        self._bf_struct_total_sz = off
+        return layout
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
     ) -> int:
         # Handle __attribute__((...)) before the struct name
-        while (
-            c < end
-            and tokens[c].type_id == TokenType.NAME
-            and tokens[c].str == "__attribute__"
-        ):
-            c, is_pack = _skip_gnu_attr(tokens, c, end)
-            if is_pack:
-                self.is_packed = True
+        c, attrs = _consume_gnu_attrs(tokens, c, end, context)
+        _apply_gnu_attributes_to_type(self, attrs)
         base_name, c = try_get_as_name(tokens, c, end, context)
         if base_name is not None:
             self.name = "".join(map(tok_to_str, base_name))
         # Handle __attribute__((...)) between name and body
-        while (
-            c < end
-            and tokens[c].type_id == TokenType.NAME
-            and tokens[c].str == "__attribute__"
-        ):
-            c, is_pack = _skip_gnu_attr(tokens, c, end)
-            if is_pack:
-                self.is_packed = True
+        c, attrs = _consume_gnu_attrs(tokens, c, end, context)
+        _apply_gnu_attributes_to_type(self, attrs)
         if tokens[c].str == ":":
             c += 1
             self.the_base_type, c = get_base_type(tokens, c, end, context)
@@ -1159,19 +1401,9 @@ class StructType(CompileContext, BaseType):
             c = end_t
             self.defined = True
             self.incomplete = False
-            # Finalize bit-field layout: close any open storage unit
-            if self._bf_cur_storage_sz > 0 and self._bf_struct_total_sz is not None:
-                self._bf_struct_total_sz += self._bf_cur_storage_sz
-                self._bf_cur_storage_sz = 0
             # Handle __attribute__((...)) after the struct body
-            while (
-                c < end
-                and tokens[c].type_id == TokenType.NAME
-                and tokens[c].str == "__attribute__"
-            ):
-                c, is_pack = _skip_gnu_attr(tokens, c, end)
-                if is_pack:
-                    self.is_packed = True
+            c, attrs = _consume_gnu_attrs(tokens, c, end, context)
+            _apply_gnu_attributes_to_type(self, attrs)
         return c
 
     def compile_var_init(
@@ -1240,12 +1472,9 @@ class StructType(CompileContext, BaseType):
                 # 2. Register the variable so later code can reference it
                 lnk = cmpl_data.put_local(ctx_var, name, sz_var, None, True)
                 # 3. For every field: store designated value or push zeros
-                field_offset = (
-                    0 if self.the_base_type is None else size_of(self.the_base_type)
-                )
                 for fvar in self.var_order:
                     field_sz = size_of(fvar.typ)
-                    field_lnk = lnk.get_offset_link(field_offset)
+                    field_lnk = lnk.get_offset_link(self.offset_of(fvar.name))
                     if fvar.name in desig_map:
                         desig = desig_map[fvar.name]
                         expr_vt = get_value_type(desig.expr.t_anot)
@@ -1269,13 +1498,9 @@ class StructType(CompileContext, BaseType):
                     field_lnk.emit_stor(
                         cmpl_obj.memory, field_sz, cmpl_obj, byte_copy_cmpl_intrinsic
                     )
-                    field_offset += field_sz
             else:
                 # ── Global variable (memory already zeroed in the setup stage) ─
                 assert ctx_var is None or isinstance(ctx_var, ContextVariable)
-                field_offset = (
-                    0 if self.the_base_type is None else size_of(self.the_base_type)
-                )
                 for fvar in self.var_order:
                     field_sz = size_of(fvar.typ)
                     if fvar.name in desig_map:
@@ -1296,14 +1521,13 @@ class StructType(CompileContext, BaseType):
                             sz_e,
                             field_sz,
                         )
-                        field_lnk = link.get_offset_link(field_offset)
+                        field_lnk = link.get_offset_link(self.offset_of(fvar.name))
                         field_lnk.emit_stor(
                             cmpl_obj.memory,
                             field_sz,
                             cmpl_obj,
                             byte_copy_cmpl_intrinsic,
                         )
-                    field_offset += field_sz
             return sz_var
         # ── End designated-initialiser path ──────────────────────────────────────
         if len(init_args) > 1:
@@ -1381,103 +1605,26 @@ class StructType(CompileContext, BaseType):
     def new_var(self, v: str, inst: "ContextVariable") -> "ContextVariable":
         if inst.mods == VarDeclMods.STATIC:
             return super(StructType, self).new_var(v, inst)
-        if inst.bit_field_width is not None:
-            # ── Bit-field member ─────────────────────────────────────────────
-            if self._bf_struct_total_sz is None:
-                self._init_bf_layout()
-            width = inst.bit_field_width
-            storage_sz = size_of(inst.typ)
-            storage_bits = storage_sz * 8
-            if width == 0:
-                # Zero-width: flush to end of current storage unit
-                if self._bf_cur_storage_sz > 0:
-                    self._bf_struct_total_sz += self._bf_cur_storage_sz
-                    self._bf_cur_byte_off = self._bf_struct_total_sz
-                    self._bf_cur_bits_used = 0
-                    self._bf_cur_storage_sz = 0
-                return inst
-            if (
-                self._bf_cur_storage_sz == storage_sz
-                and self._bf_cur_bits_used + width <= storage_bits
-            ):
-                # Fits in the current storage unit
-                bit_shift = self._bf_cur_bits_used
-                byte_off = self._bf_cur_byte_off
-                self._bf_cur_bits_used += width
-            else:
-                # Start a new storage unit
-                if self._bf_cur_storage_sz > 0:
-                    self._bf_struct_total_sz += self._bf_cur_storage_sz
-                if not self.is_packed:
-                    self._bf_struct_total_sz = _align_up(
-                        self._bf_struct_total_sz, storage_sz
-                    )
-                self._bf_cur_byte_off = self._bf_struct_total_sz
-                self._bf_cur_storage_sz = storage_sz
-                bit_shift = 0
-                byte_off = self._bf_cur_byte_off
-                self._bf_cur_bits_used = width
-            bit_mask = (1 << width) - 1
-            self.bit_field_info[v] = BitFieldInfo(
-                byte_offset=byte_off,
-                bit_shift=bit_shift,
-                bit_mask=bit_mask,
-                storage_sz=storage_sz,
-            )
-            self.definition[v] = len(self.var_order)
-            self.var_order.append(inst)
-        else:
-            # ── Regular (non-bit-field) member ───────────────────────────────
-            if self._bf_struct_total_sz is not None:
-                # Flush any open bit-field storage unit first
-                if self._bf_cur_storage_sz > 0:
-                    self._bf_struct_total_sz += self._bf_cur_storage_sz
-                    self._bf_cur_byte_off = self._bf_struct_total_sz
-                    self._bf_cur_bits_used = 0
-                    self._bf_cur_storage_sz = 0
-                self._precomp_byte_offsets[v] = self._bf_struct_total_sz
-                self._bf_struct_total_sz += size_of(inst.typ)
-            self.definition[v] = len(self.var_order)
-            self.var_order.append(inst)
+        self.definition[v] = len(self.var_order)
+        self.var_order.append(inst)
+        self.layout_entries.append(StructLayoutEntry(member=inst))
+        self._invalidate_layout()
         return inst
 
     def _init_bf_layout(self):
-        """Initialise bit-field layout tracking from any regular members added so far."""
-        off = 0 if self.the_base_type is None else size_of(self.the_base_type)
-        for var in self.var_order:
-            self._precomp_byte_offsets[var.name] = off
-            off += size_of(var.typ)
-        self._bf_struct_total_sz = off
-        self._bf_cur_byte_off = off
-        self._bf_cur_bits_used = 0
-        self._bf_cur_storage_sz = 0
+        """Compatibility shim for older bit-field code paths."""
+        self._invalidate_layout()
 
-    def _consume_padding_bits(self, storage_sz: int, width: int):
+    def _consume_padding_bits(self, storage_type: "BaseType", width: int):
         """Handle an unnamed bit field (i.e. padding) in struct layout."""
-        if self._bf_struct_total_sz is None:
-            self._init_bf_layout()
-        storage_bits = storage_sz * 8
-        if width == 0:
-            if self._bf_cur_storage_sz > 0:
-                self._bf_struct_total_sz += self._bf_cur_storage_sz
-                self._bf_cur_byte_off = self._bf_struct_total_sz
-                self._bf_cur_bits_used = 0
-                self._bf_cur_storage_sz = 0
-        elif (
-            self._bf_cur_storage_sz == storage_sz
-            and self._bf_cur_bits_used + width <= storage_bits
-        ):
-            self._bf_cur_bits_used += width
-        else:
-            if self._bf_cur_storage_sz > 0:
-                self._bf_struct_total_sz += self._bf_cur_storage_sz
-            if not self.is_packed:
-                self._bf_struct_total_sz = _align_up(
-                    self._bf_struct_total_sz, storage_sz
-                )
-            self._bf_cur_byte_off = self._bf_struct_total_sz
-            self._bf_cur_storage_sz = storage_sz
-            self._bf_cur_bits_used = width
+        self.layout_entries.append(
+            StructLayoutEntry(
+                member=None,
+                bit_field_type=storage_type,
+                bit_field_width=width,
+            )
+        )
+        self._invalidate_layout()
 
     def is_namespace(self):
         return False
@@ -1682,6 +1829,8 @@ class UnionType(CompileContext, BaseType):
         self.definition = {} if definition is None else definition
         self.defined = defined
         self.the_base_type = the_base_type
+        self.is_packed: bool = False
+        self.align_override: Optional[int] = None
 
     def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
@@ -1703,27 +1852,21 @@ class UnionType(CompileContext, BaseType):
         other.definition = self.definition
         other.defined = self.defined
         other.the_base_type = self.the_base_type
+        other.is_packed = self.is_packed
+        other.align_override = self.align_override
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
     ) -> int:
         # Handle __attribute__((...)) before the union name
-        while (
-            c < end
-            and tokens[c].type_id == TokenType.NAME
-            and tokens[c].str == "__attribute__"
-        ):
-            c, _is_pack = _skip_gnu_attr(tokens, c, end)
+        c, attrs = _consume_gnu_attrs(tokens, c, end, context)
+        _apply_gnu_attributes_to_type(self, attrs)
         base_name, c = try_get_as_name(tokens, c, end, context)
         if base_name is not None:
             self.name = "".join(map(tok_to_str, base_name))
         # Handle __attribute__((...)) after the union name
-        while (
-            c < end
-            and tokens[c].type_id == TokenType.NAME
-            and tokens[c].str == "__attribute__"
-        ):
-            c, _is_pack = _skip_gnu_attr(tokens, c, end)
+        c, attrs = _consume_gnu_attrs(tokens, c, end, context)
+        _apply_gnu_attributes_to_type(self, attrs)
         if tokens[c].str == ":":
             raise ParsingError(tokens, c, "Inheritance is not allowed for unions")
         if tokens[c].str == "{":
@@ -1754,12 +1897,8 @@ class UnionType(CompileContext, BaseType):
             self.defined = True
             self.incomplete = False
             # Handle __attribute__((...)) after the union body
-            while (
-                c < end
-                and tokens[c].type_id == TokenType.NAME
-                and tokens[c].str == "__attribute__"
-            ):
-                c, _is_pack = _skip_gnu_attr(tokens, c, end)
+            c, attrs = _consume_gnu_attrs(tokens, c, end, context)
+            _apply_gnu_attributes_to_type(self, attrs)
         return c
 
     def new_var(self, v: str, inst: "ContextVariable"):
@@ -1809,7 +1948,24 @@ def get_base_type(
     str_name = []
     base_type = None
     is_prim = False
+    pending_gnu_attrs = GNUAttributes()
     while c < end:
+        if (
+            tokens[c].type_id == TokenType.NAME
+            and tokens[c].str == "__attribute__"
+        ):
+            c1, attrs = _consume_gnu_attrs(tokens, c, end, context)
+            if (
+                c1 < end
+                and tokens[c1].type_id == TokenType.NAME
+                and tokens[c1].str in META_TYPE_LST
+            ):
+                pending_gnu_attrs.merge(attrs)
+                c = c1
+                continue
+            if base_type is not None or is_prim or len(str_name) > 0:
+                break
+            return None, main_start
         if tokens[c].type_id == TokenType.NAME and tokens[c].str in KEYWORDS:
             meta_type_type = -1
             try:
@@ -1820,6 +1976,8 @@ def get_base_type(
                 c += 1
                 cls = MetaTypeCtors[meta_type_type](context)
                 c = cls.build(tokens, c, end, context)
+                _apply_gnu_attributes_to_type(cls, pending_gnu_attrs)
+                pending_gnu_attrs = GNUAttributes()
                 cls = merge_type_context(cls, context)
                 assert cls is not None, "ISSUE with MergeType_Context"
                 if base_type is None and not is_prim:
@@ -2130,6 +2288,12 @@ class DeclStmnt(BaseStmnt):
             cur_decl = None
             bf_width = None
             ctx_var = None
+            def _new_decl_ctx_var() -> "ContextVariable":
+                inst = ContextVariable(
+                    named_qual_type.name, named_qual_type.typ, None, ext_spec
+                )
+                inst.align_override = named_qual_type.align_override
+                return inst
             if named_qual_type.name is None:
                 if (
                     c < end_stmnt
@@ -2147,16 +2311,9 @@ class DeclStmnt(BaseStmnt):
                     bf_width = int(tokens[c].str, 0)
                     c += 1  # consume integer
                     if isinstance(context, StructType):
-                        context._consume_padding_bits(
-                            size_of(named_qual_type.typ), bf_width
-                        )
+                        context._consume_padding_bits(named_qual_type.typ, bf_width)
             elif tokens[c].str == "=":
-                ctx_var = context.new_var(
-                    named_qual_type.name,
-                    ContextVariable(
-                        named_qual_type.name, named_qual_type.typ, None, ext_spec
-                    ),
-                )
+                ctx_var = context.new_var(named_qual_type.name, _new_decl_ctx_var())
                 ctx_var.is_op_fn = named_qual_type.is_op_fn
                 c += 1
                 expr, c = get_expr(tokens, c, ",", end_stmnt, context)
@@ -2168,12 +2325,7 @@ class DeclStmnt(BaseStmnt):
                     INIT_ASSIGN,
                 )
             elif tokens[c].str == "(":
-                ctx_var = context.new_var(
-                    named_qual_type.name,
-                    ContextVariable(
-                        named_qual_type.name, named_qual_type.typ, None, ext_spec
-                    ),
-                )
+                ctx_var = context.new_var(named_qual_type.name, _new_decl_ctx_var())
                 ctx_var.is_op_fn = named_qual_type.is_op_fn
                 c += 1
                 lvl = 1
@@ -2205,12 +2357,7 @@ class DeclStmnt(BaseStmnt):
                 init_args = []
                 prim_type = get_base_prim_type(named_qual_type.typ)
                 start = c
-                ctx_var = context.new_var(
-                    named_qual_type.name,
-                    ContextVariable(
-                        named_qual_type.name, named_qual_type.typ, None, ext_spec
-                    ),
-                )
+                ctx_var = context.new_var(named_qual_type.name, _new_decl_ctx_var())
                 ctx_var.is_op_fn = named_qual_type.is_op_fn
                 if prim_type.type_class_id == TypeClass.QUAL:
                     assert isinstance(prim_type, QualType)
@@ -2284,9 +2431,8 @@ class DeclStmnt(BaseStmnt):
             if cur_decl is not None:
                 self.decl_lst.append(cur_decl)
                 if ctx_var is None:
-                    inst = ContextVariable(
-                        cur_decl.var_name, cur_decl.type_name, None, ext_spec
-                    )
+                    inst = ContextVariable(cur_decl.var_name, cur_decl.type_name, None, ext_spec)
+                    inst.align_override = named_qual_type.align_override
                     if bf_width is not None:
                         inst.bit_field_width = bf_width
                     ctx_var = context.new_var(cur_decl.var_name, inst)
@@ -2315,6 +2461,7 @@ def proc_typed_decl(
     rtn = base_type
     if not isinstance(rtn, IdentifiedQualType):
         rtn = IdentifiedQualType(None, rtn)
+    decl_attrs = GNUAttributes()
     s_start = c
     s_end = end
     i_type = 0  # inner type, 0: None, 1: '(' and ')', 2: name
@@ -2323,6 +2470,13 @@ def proc_typed_decl(
     is_operator = False
     # collect tokens before the 'identifier' and place them in the pseudo-stack
     while c < end:
+        if tokens[c].type_id == TokenType.NAME and tokens[c].str == "__attribute__":
+            attr_start = c
+            c, attrs = _consume_gnu_attrs(tokens, c, end, context)
+            decl_attrs.merge(attrs)
+            if attr_start == s_start:
+                s_start = c
+            continue
         if tokens[c].type_id == TokenType.BRK_OP:
             if tokens[c].str == "(":
                 s_end = c
@@ -2408,6 +2562,10 @@ def proc_typed_decl(
             raise ParsingError(tokens, c0, "Unexpected token")
     # process items after the identifier by creating QualType instances
     while c < end:
+        if tokens[c].type_id == TokenType.NAME and tokens[c].str == "__attribute__":
+            c, attrs = _consume_gnu_attrs(tokens, c, end, context)
+            decl_attrs.merge(attrs)
+            continue
         if tokens[c].type_id == TokenType.BRK_OP:
             if tokens[c].str == "(":
                 cancel = False
@@ -2500,6 +2658,9 @@ def proc_typed_decl(
     elif i_type == 2:
         rtn.name = "".join(map(tok_to_str, tokens[i_start:i_end]))
         rtn.is_op_fn = is_operator
+    if decl_attrs.align_override is not None:
+        cur = 0 if rtn.align_override is None else rtn.align_override
+        rtn.align_override = max(cur, decl_attrs.align_override)
     return rtn, c
 
 
@@ -3041,12 +3202,136 @@ class QualType(BaseType):
         return -1
 
 
-def size_of(typ: "BaseType", is_arg: bool = False):
+def align_of(
+    typ: "BaseType",
+    is_arg: bool = False,
+    default_alignment: Optional[int] = None,
+    owner: Optional[Union["ContextMember", "CompileContext"]] = None,
+) -> int:
+    if owner is None and isinstance(typ, ContextMember):
+        owner = typ
+    resolved_default_alignment = _normalize_default_alignment(
+        default_alignment
+        if default_alignment is not None
+        else _get_context_default_alignment(owner)
+    )
+    if isinstance(typ, QualType):
+        if typ.qual_id == QualType.QUAL_ARR:
+            if is_arg or typ.ext_inf is None:
+                return _default_align_for_size(8, resolved_default_alignment)
+            return align_of(
+                typ.tgt_type,
+                default_alignment=resolved_default_alignment,
+                owner=owner,
+            )
+        elif typ.qual_id in {QualType.QUAL_FN, QualType.QUAL_PTR, QualType.QUAL_REF}:
+            return _default_align_for_size(8, resolved_default_alignment)
+        elif typ.qual_id in {
+            QualType.QUAL_CONST,
+            QualType.QUAL_DEF,
+            QualType.QUAL_REG,
+            QualType.QUAL_VOLATILE,
+        }:
+            return align_of(
+                typ.tgt_type,
+                default_alignment=resolved_default_alignment,
+                owner=owner,
+            )
+        else:
+            raise ValueError("Unrecognized QualType.qual_id = %u" % typ.qual_id)
+    elif isinstance(typ, IdentifiedQualType):
+        return align_of(
+            typ.typ, default_alignment=resolved_default_alignment, owner=owner
+        )
+    elif isinstance(typ, PrimitiveType):
+        return _default_align_for_size(typ.size, resolved_default_alignment)
+    elif isinstance(typ, EnumType):
+        return align_of(
+            typ.the_base_type,
+            default_alignment=resolved_default_alignment,
+            owner=typ,
+        )
+    elif isinstance(typ, StructType):
+        return typ._ensure_layout().alignment
+    elif isinstance(typ, ClassType):
+        align = 1
+        if typ.the_base_type is not None:
+            align = max(
+                align,
+                align_of(
+                    typ.the_base_type,
+                    default_alignment=resolved_default_alignment,
+                    owner=typ,
+                ),
+            )
+        for ctx_var in typ.var_order:
+            align = max(
+                align,
+                align_of(
+                    ctx_var.typ,
+                    default_alignment=resolved_default_alignment,
+                    owner=typ,
+                ),
+            )
+        if typ.align_override is not None:
+            align = max(align, typ.align_override)
+        return align
+    elif isinstance(typ, UnionType):
+        align = 1 if typ.is_packed else 1
+        if typ.the_base_type is not None:
+            base_align = (
+                1
+                if typ.is_packed
+                else align_of(
+                    typ.the_base_type,
+                    default_alignment=resolved_default_alignment,
+                    owner=typ,
+                )
+            )
+            align = max(align, base_align)
+        for ctx_var in typ.definition.values():
+            align = max(
+                align,
+                1
+                if typ.is_packed
+                else align_of(
+                    ctx_var.typ,
+                    default_alignment=resolved_default_alignment,
+                    owner=typ,
+                ),
+            )
+        if typ.align_override is not None:
+            align = max(align, typ.align_override)
+        return align
+    else:
+        raise TypeError("Unrecognized type: %s" % typ.__class__.__name__)
+
+
+def size_of(
+    typ: "BaseType",
+    is_arg: bool = False,
+    default_alignment: Optional[int] = None,
+    owner: Optional[Union["ContextMember", "CompileContext"]] = None,
+):
+    if owner is None and isinstance(typ, ContextMember):
+        owner = typ
+    resolved_default_alignment = _normalize_default_alignment(
+        default_alignment
+        if default_alignment is not None
+        else _get_context_default_alignment(owner)
+    )
     if isinstance(typ, QualType):
         if typ.qual_id == QualType.QUAL_ARR:
             if is_arg or typ.ext_inf is None:
                 return 8
-            return size_of(typ.tgt_type) * typ.ext_inf
+            return (
+                size_of(
+                    typ.tgt_type,
+                    default_alignment=resolved_default_alignment,
+                    owner=owner,
+                )
+                * typ.ext_inf
+            )
         elif typ.qual_id in {QualType.QUAL_FN, QualType.QUAL_PTR, QualType.QUAL_REF}:
             return 8
         elif typ.qual_id in {
@@ -3055,30 +3340,76 @@ def size_of(typ: "BaseType", is_arg: bool = False):
             QualType.QUAL_REG,
             QualType.QUAL_VOLATILE,
         }:
-            return size_of(typ.tgt_type)
+            return size_of(
+                typ.tgt_type,
+                default_alignment=resolved_default_alignment,
+                owner=owner,
+            )
         else:
             raise ValueError("Unrecognized QualType.qual_id = %u" % typ.qual_id)
     elif isinstance(typ, IdentifiedQualType):
-        return size_of(typ.typ)
+        return size_of(
+            typ.typ, default_alignment=resolved_default_alignment, owner=owner
+        )
     elif isinstance(typ, PrimitiveType):
         return typ.size
     elif isinstance(typ, EnumType):
-        return size_of(typ.the_base_type)
-    elif isinstance(typ, (StructType, ClassType)):
-        if isinstance(typ, StructType) and typ._bf_struct_total_sz is not None:
-            return typ._bf_struct_total_sz
-        sz = 0 if typ.the_base_type is None else size_of(typ.the_base_type)
+        return size_of(
+            typ.the_base_type,
+            default_alignment=resolved_default_alignment,
+            owner=typ,
+        )
+    elif isinstance(typ, StructType):
+        return typ._ensure_layout().size
+    elif isinstance(typ, ClassType):
+        sz = (
+            0
+            if typ.the_base_type is None
+            else size_of(
+                typ.the_base_type,
+                default_alignment=resolved_default_alignment,
+                owner=typ,
+            )
+        )
         for ctx_var in typ.var_order:
-            sz += size_of(ctx_var.typ)
-        return sz
+            sz = _align_up(
+                sz,
+                align_of(
+                    ctx_var.typ,
+                    default_alignment=resolved_default_alignment,
+                    owner=typ,
+                ),
+            )
+            sz += size_of(
+                ctx_var.typ,
+                default_alignment=resolved_default_alignment,
+                owner=typ,
+            )
+        return _align_up(
+            sz, align_of(typ, default_alignment=resolved_default_alignment, owner=typ)
+        )
     elif isinstance(typ, UnionType):
         # TODO: remove BaseType from UnionType
-        sz = 0
+        sz = (
+            0
+            if typ.the_base_type is None
+            else size_of(
+                typ.the_base_type,
+                default_alignment=resolved_default_alignment,
+                owner=typ,
+            )
+        )
         for k in typ.definition:
             v = typ.definition[k]
             assert isinstance(v, ContextVariable)
-            sz = max(sz, size_of(v.typ))
-        return sz
+            sz = max(
+                sz,
+                size_of(v.typ, default_alignment=resolved_default_alignment, owner=typ),
+            )
+        align = align_of(typ, default_alignment=resolved_default_alignment, owner=typ)
+        if typ.is_packed and typ.align_override is None:
+            return sz
+        return _align_up(sz, align)
     else:
         raise TypeError("Unrecognized type: %s" % typ.__class__.__name__)
     # TODO: add Typedef support
@@ -3289,6 +3620,7 @@ class IdentifiedQualType(PrettyRepr):
         self.name = name
         self.typ = typ
         self.is_op_fn = False
+        self.align_override: Optional[int] = None
 
     def add_qual_type(self, qual_id, ext_inf=None):
         self.typ = QualType(qual_id, self.typ, ext_inf)
@@ -3298,7 +3630,7 @@ class IdentifiedQualType(PrettyRepr):
 
     def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
-            (self.name, self.typ), pretty_repr_ctx
+            (self.name, self.typ, self.align_override), pretty_repr_ctx
         )
 
     def to_user_str(self):
@@ -3327,10 +3659,18 @@ class ContextVariable(ContextMember, PrettyRepr):
         self.typ: "BaseType" = typ
         self.mods = mods if isinstance(mods, VarDeclMods) else VarDeclMods(mods)
         self.bit_field_width: Optional[int] = None
+        self.align_override: Optional[int] = None
 
     def pretty_repr(self, pretty_repr_ctx=None):
         return [self.__class__.__name__] + get_pretty_repr(
-            (self.name, self.typ, self.init_expr, self.mods), pretty_repr_ctx
+            (
+                self.name,
+                self.typ,
+                self.init_expr,
+                self.mods,
+                self.align_override,
+            ),
+            pretty_repr_ctx,
         )
 
     def get_link_name(self):
@@ -3393,6 +3733,12 @@ class ContextVariable(ContextMember, PrettyRepr):
             self.typ = QualType(QualType.QUAL_CONST, self.typ)
         return self
 
+    def effective_alignment(self) -> int:
+        align = align_of(self.typ, owner=self.parent)
+        if self.align_override is not None:
+            align = max(align, self.align_override)
+        return align
+
 
 class MultiType(BaseType):
     type_class_id = TypeClass.MULTI
@@ -3439,6 +3785,7 @@ class LocalScope(CompileContext):
     def set_parent(self, parent: "CompileContext", index: Optional[int] = None):
         if self.parent is not parent:
             self.parent = parent
+            self.default_alignment = parent.default_alignment
             lvl = 0
             self.host_scopeable = parent
             if parent.is_local_scope():
@@ -3634,10 +3981,11 @@ def _get_compilation(cmpl_obj: "BaseCmplObj") -> "Compilation":
 
 
 def _ensure_static_storage_object(
-    cmpl_obj: "BaseCmplObj", link_name: str, size: int
+    cmpl_obj: "BaseCmplObj", link_name: str, size: int, alignment: int = 1
 ) -> "CompileObject":
     compilation = _get_compilation(cmpl_obj)
     storage_obj = compilation.ensure_compile_object(CompileObjectType.GLOBAL, link_name)
+    storage_obj.alignment = max(storage_obj.alignment, alignment)
     if len(storage_obj.memory) < size:
         storage_obj.memory.extend([0] * (size - len(storage_obj.memory)))
     return storage_obj
@@ -4098,7 +4446,9 @@ def _compile_static_storage_decl(
     if ctx_var.mods == VarDeclMods.EXTERN and not init_args:
         return 0 if ctx_var.is_static_local() else size
     link_name = ctx_var.get_link_name()
-    storage_obj = _ensure_static_storage_object(cmpl_obj, link_name, size)
+    storage_obj = _ensure_static_storage_object(
+        cmpl_obj, link_name, size, ctx_var.effective_alignment()
+    )
     if len(init_args) == 1 and not _try_encode_static_initializer(
         storage_obj, decl_type, init_args[0], context
     ):

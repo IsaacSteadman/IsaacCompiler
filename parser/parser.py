@@ -160,7 +160,7 @@ def compile_lang1(tokens: List["Token"], cmpl_opts: "CompilerOptions"):
     link_opts = cmpl_opts.link_opts
     extern_deps = link_opts.extern_deps
     end = len(tokens)
-    global_ctx = CompileContext("", None)
+    global_ctx = CompileContext("", None, link_opts.default_alignment)
     c = 0
     lst_stmnt = []
     cmpl_obj = Compilation(cmpl_opts.keep_local_syms)

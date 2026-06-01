@@ -410,6 +410,7 @@ class Preprocessor:
     _SUPPORTED_ATTRIBUTES: FrozenSet[str] = frozenset(
         {
             "packed",
+            "aligned",
             "noreturn",
             "unused",
             "always_inline",

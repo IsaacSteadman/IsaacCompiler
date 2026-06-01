@@ -6,7 +6,13 @@ LNK_RUN_STANDALONE = 1
 
 
 class LinkerOptions(object):
-    __slots__ = ["remove_unused_deps", "data_seg_align", "extern_deps", "run_method"]
+    __slots__ = [
+        "remove_unused_deps",
+        "data_seg_align",
+        "extern_deps",
+        "run_method",
+        "default_alignment",
+    ]
 
     def __init__(
         self,
@@ -14,8 +20,10 @@ class LinkerOptions(object):
         data_seg_align: int = 1,
         extern_deps: Optional[Dict[str, BaseCmplObj]] = None,
         run_method: int = LNK_RUN_STANDALONE,
+        default_alignment: Optional[int] = None,
     ):
         self.remove_unused_deps = remove_unused_deps
         self.data_seg_align = data_seg_align
         self.extern_deps = extern_deps
         self.run_method = run_method
+        self.default_alignment = default_alignment

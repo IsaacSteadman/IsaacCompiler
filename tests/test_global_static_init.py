@@ -40,16 +40,20 @@ def _flatify_dep_desc(dep_dct, start_key):
     return result
 
 
-def _compile_source(source, remove_unused_deps=True):
+def _compile_source(source, remove_unused_deps=True, default_alignment=None):
     source = preprocess(source, [os.path.join(REPO_ROOT, "StackVM", "include")])
     tokens = get_list_tokens(source)
-    global_ctx = CompileContext("", None)
+    global_ctx = CompileContext("", None, default_alignment)
     va_base = PrimitiveType.from_str_name(["unsigned", "char"])
     va_type = QualType(QualType.QUAL_PTR, va_base)
     global_ctx.new_type("va_list", TypeDefCtxMember("va_list", global_ctx, va_type))
 
     link_opts = LinkerOptions(
-        remove_unused_deps, 4096, lib_utils_abi.objects, LNK_RUN_STANDALONE
+        remove_unused_deps,
+        4096,
+        lib_utils_abi.objects,
+        LNK_RUN_STANDALONE,
+        default_alignment,
     )
     cmpl_opts = CompilerOptions(link_opts, True, False)
     cmpl_obj = Compilation(cmpl_opts.keep_local_syms)
@@ -146,6 +150,87 @@ class GlobalStaticInitTests(unittest.TestCase):
         )
         self.assertEqual(next_ptr, head_addr)
         self.assertEqual(prev_ptr, head_addr)
+
+    def test_packed_structs_skip_internal_and_tail_padding(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "struct NaturalLayout { "
+            "    unsigned char a; unsigned int b; "
+            "}; "
+            "_Static_assert(sizeof(struct NaturalLayout) == 8, \"natural padded size\"); "
+            "struct __attribute__((packed)) KeywordPacked { "
+            "    unsigned char a; unsigned int b; "
+            "}; "
+            "_Static_assert(sizeof(struct KeywordPacked) == 5, \"keyword packed size\"); "
+            "__attribute__((packed)) struct LeadingPacked { "
+            "    unsigned char a; unsigned int b; unsigned char c; "
+            "} p = { 1, 0x11223344, 2 }; "
+            "_Static_assert(sizeof(struct LeadingPacked) == 6, \"leading packed size\"); "
+            "int main(int argc, char **argv) { return 0; }\n",
+            remove_unused_deps=False,
+            default_alignment=8,
+        )
+        addr = _get_global_addr(global_ctx, cmpl_obj, "p")
+        self.assertEqual(
+            cmpl_obj.memory[addr : addr + 6],
+            bytes([1, 0x44, 0x33, 0x22, 0x11, 2]),
+        )
+
+    def test_no_default_alignment_keeps_regular_struct_fields_adjacent(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "struct Flat { unsigned char a; unsigned int b; unsigned char c; }; "
+            "_Static_assert(sizeof(struct Flat) == 6, \"no default padding\"); "
+            "struct Flat g = { 1, 0x11223344, 2 }; "
+            "int main(int argc, char **argv) { return 0; }\n",
+            remove_unused_deps=False,
+        )
+        addr = _get_global_addr(global_ctx, cmpl_obj, "g")
+        self.assertEqual(
+            cmpl_obj.memory[addr : addr + 6],
+            bytes([1, 0x44, 0x33, 0x22, 0x11, 2]),
+        )
+
+    def test_aligned_structs_affect_embedding_and_tail_padding(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "struct Inner { unsigned char c; } __attribute__((aligned(8))); "
+            "_Static_assert(sizeof(struct Inner) == 8, \"inner aligned size\"); "
+            "struct Outer { unsigned char lead; struct Inner inner; unsigned char tail; }; "
+            "_Static_assert(sizeof(struct Outer) == 24, \"outer aligned size\"); "
+            "struct Outer g; "
+            "int main(int argc, char **argv) { "
+            "    g.lead = 0xAA; "
+            "    g.inner.c = 0xBB; "
+            "    g.tail = 0xCC; "
+            "    return 0; "
+            "}\n",
+            remove_unused_deps=False,
+        )
+        vm = _run_program(cmpl_obj)
+        addr = _get_global_addr(global_ctx, cmpl_obj, "g")
+        self.assertEqual(
+            vm.memory[addr : addr + 24],
+            bytes([0xAA])
+            + bytes(7)
+            + bytes([0xBB])
+            + bytes(7)
+            + bytes([0xCC])
+            + bytes(7),
+        )
+
+    def test_aligned_global_is_placed_on_requested_boundary(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "unsigned char before = 1; "
+            "unsigned long __attribute__((aligned(8))) some_var = 0x01020304; "
+            "int main(int argc, char **argv) { return 0; }\n",
+            remove_unused_deps=False,
+        )
+        before_addr = _get_global_addr(global_ctx, cmpl_obj, "before")
+        some_var_addr = _get_global_addr(global_ctx, cmpl_obj, "some_var")
+        self.assertEqual(some_var_addr % 8, 0)
+        self.assertGreaterEqual(some_var_addr - before_addr, 8)
+        self.assertEqual(
+            cmpl_obj.memory[some_var_addr : some_var_addr + 4],
+            bytes([0x04, 0x03, 0x02, 0x01]),
+        )
 
     def test_dynamic_global_initializer_runs_before_main(self):
         global_ctx, cmpl_obj = _compile_source(
