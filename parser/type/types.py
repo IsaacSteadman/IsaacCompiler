@@ -1293,9 +1293,25 @@ class StructType(CompileContext, BaseType):
         self._direct_member_offsets = {}
         self._bf_struct_total_sz = None
 
+    def _validate_flexible_array_members(self) -> None:
+        seen_flexible_member = False
+        for idx, entry in enumerate(self.layout_entries):
+            if seen_flexible_member:
+                raise ValueError(
+                    "Flexible array member must be the last member of the struct"
+                )
+            member = entry.member
+            if member is not None and _is_flexible_array_type(member.typ):
+                seen_flexible_member = True
+                if idx != len(self.layout_entries) - 1:
+                    raise ValueError(
+                        "Flexible array member must be the last member of the struct"
+                    )
+
     def _ensure_layout(self) -> AggregateLayout:
         if self._layout_cache is not None:
             return self._layout_cache
+        self._validate_flexible_array_members()
         if not self.layout_entries and self.var_order:
             self.layout_entries = [StructLayoutEntry(member=var) for var in self.var_order]
         offsets: Dict[str, int] = {}
@@ -1464,6 +1480,7 @@ class StructType(CompileContext, BaseType):
             # Handle __attribute__((...)) after the struct body
             c, attrs = _consume_gnu_attrs(tokens, c, end, context)
             _apply_gnu_attributes_to_type(self, attrs)
+            self._validate_flexible_array_members()
         return c
 
     def compile_var_init(
@@ -1533,7 +1550,14 @@ class StructType(CompileContext, BaseType):
                 lnk = cmpl_data.put_local(ctx_var, name, sz_var, None, True)
                 # 3. For every field: store designated value or push zeros
                 for fvar in self.var_order:
-                    field_sz = size_of(fvar.typ)
+                    if _is_flexible_array_type(fvar.typ):
+                        if fvar.name in desig_map:
+                            raise TypeError(
+                                "Flexible array member '%s' cannot be initialized"
+                                % fvar.name
+                            )
+                        continue
+                    field_sz = size_of(fvar.typ, owner=self)
                     field_lnk = lnk.get_offset_link(self.offset_of(fvar.name))
                     if fvar.name in desig_map:
                         desig = desig_map[fvar.name]
@@ -1562,7 +1586,14 @@ class StructType(CompileContext, BaseType):
                 # ── Global variable (memory already zeroed in the setup stage) ─
                 assert ctx_var is None or isinstance(ctx_var, ContextVariable)
                 for fvar in self.var_order:
-                    field_sz = size_of(fvar.typ)
+                    if _is_flexible_array_type(fvar.typ):
+                        if fvar.name in desig_map:
+                            raise TypeError(
+                                "Flexible array member '%s' cannot be initialized"
+                                % fvar.name
+                            )
+                        continue
+                    field_sz = size_of(fvar.typ, owner=self)
                     if fvar.name in desig_map:
                         desig = desig_map[fvar.name]
                         expr_vt = get_value_type(desig.expr.t_anot)
@@ -3138,9 +3169,8 @@ class QualType(BaseType):
                         cmpl_obj, expr, context, cmpl_data, from_vt, temp_links
                     )
                 elif from_vt.qual_id == QualType.QUAL_ARR:
-                    # TODO: maybe type_coerce = from_type (the reference)
                     return compile_expr(
-                        cmpl_obj, expr, context, cmpl_data, self, temp_links
+                        cmpl_obj, expr, context, cmpl_data, None, temp_links
                     )
                 elif from_type.qual_id == QualType.QUAL_REF and is_fn_type(from_vt):
                     # assert CompareNoCVR(from_type.tgt_type, self.tgt_type)
@@ -3418,6 +3448,33 @@ class QualType(BaseType):
         return -1
 
 
+def _strip_cv_qualifiers(typ: "BaseType") -> "BaseType":
+    while isinstance(typ, QualType) and typ.qual_id in {
+        QualType.QUAL_CONST,
+        QualType.QUAL_DEF,
+        QualType.QUAL_REG,
+        QualType.QUAL_VOLATILE,
+    }:
+        typ = typ.tgt_type
+    return typ
+
+
+def _is_flexible_array_type(typ: "BaseType") -> bool:
+    typ = _strip_cv_qualifiers(typ)
+    return (
+        isinstance(typ, QualType)
+        and typ.qual_id == QualType.QUAL_ARR
+        and typ.ext_inf is None
+    )
+
+
+def _get_flexible_array_elem_type(typ: "BaseType") -> "BaseType":
+    typ = _strip_cv_qualifiers(typ)
+    assert isinstance(typ, QualType)
+    assert typ.qual_id == QualType.QUAL_ARR
+    return typ.tgt_type
+
+
 def align_of(
     typ: "BaseType",
     is_arg: bool = False,
@@ -3433,6 +3490,12 @@ def align_of(
     )
     if isinstance(typ, QualType):
         if typ.qual_id == QualType.QUAL_ARR:
+            if typ.ext_inf is None and isinstance(owner, StructType):
+                return align_of(
+                    _get_flexible_array_elem_type(typ),
+                    default_alignment=resolved_default_alignment,
+                    owner=owner,
+                )
             if is_arg or typ.ext_inf is None:
                 return _default_align_for_size(8, resolved_default_alignment)
             return align_of(
@@ -3538,6 +3601,8 @@ def size_of(
     )
     if isinstance(typ, QualType):
         if typ.qual_id == QualType.QUAL_ARR:
+            if typ.ext_inf is None and isinstance(owner, StructType):
+                return 0
             if is_arg or typ.ext_inf is None:
                 return 8
             return (
@@ -4569,6 +4634,8 @@ def _try_encode_static_initializer(
             if target_index >= len(value_type.var_order) or subexpr is None:
                 return False
             field_var = value_type.var_order[target_index]
+            if _is_flexible_array_type(field_var.typ):
+                return False
             if field_var.bit_field_width is not None:
                 return False
             if not _try_encode_static_initializer(

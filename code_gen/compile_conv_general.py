@@ -71,9 +71,7 @@ def compile_conv_general(
                 assert isinstance(tgt_vt, QualType)
                 if tgt_vt.qual_id == QualType.QUAL_PTR:
                     if src_vt.qual_id == QualType.QUAL_ARR:
-                        if src_vt.ext_inf is not None and compare_no_cvr(
-                            src_vt.tgt_type, tgt_vt.tgt_type
-                        ):
+                        if compare_no_cvr(src_vt.tgt_type, tgt_vt.tgt_type):
                             sz = compile_expr(
                                 cmpl_obj, expr, context, cmpl_data, None, temp_links
                             )

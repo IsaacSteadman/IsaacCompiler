@@ -23,7 +23,9 @@ from IsaacCompiler.parser.type.types import (
     CompileContext,
     PrimitiveType,
     QualType,
+    StructType,
     TypeDefCtxMember,
+    size_of,
 )
 
 
@@ -279,6 +281,70 @@ class GlobalStaticInitTests(unittest.TestCase):
             vm.memory[addr : addr + 9],
             bytes([0xAA, 0, 0, 0, 0, 0x88, 0x77, 0x66, 0x55]),
         )
+
+    def test_flexible_array_member_uses_tail_offset_and_zero_size(self):
+        global_ctx, _cmpl_obj = _compile_source(
+            "struct packet { unsigned int length; unsigned char data[]; }; "
+            "_Static_assert(sizeof(struct packet) == 4, \"packet size\"); "
+            "int main(int argc, char **argv) { return 0; }\n",
+            remove_unused_deps=False,
+            default_alignment=8,
+        )
+        packet_type = global_ctx.type_name("packet")
+        self.assertIsInstance(packet_type, StructType)
+        assert isinstance(packet_type, StructType)
+        self.assertEqual(size_of(packet_type), 4)
+        self.assertEqual(packet_type.offset_of("data"), 4)
+        self.assertEqual(packet_type.offset_of("data"), size_of(packet_type))
+
+    def test_flexible_array_member_honors_padding_before_tail(self):
+        global_ctx, _cmpl_obj = _compile_source(
+            "struct padded_tail { unsigned char tag; unsigned int data[]; }; "
+            "_Static_assert(sizeof(struct padded_tail) == 4, \"padded size\"); "
+            "int main(int argc, char **argv) { return 0; }\n",
+            remove_unused_deps=False,
+            default_alignment=8,
+        )
+        padded_type = global_ctx.type_name("padded_tail")
+        self.assertIsInstance(padded_type, StructType)
+        assert isinstance(padded_type, StructType)
+        self.assertEqual(size_of(padded_type), 4)
+        self.assertEqual(padded_type.offset_of("data"), 4)
+
+    def test_flexible_array_member_access_behaves_like_normal_array_member(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "struct packet { unsigned int length; unsigned char data[]; }; "
+            "struct packet_box { struct packet packet; unsigned char extra[3]; }; "
+            "struct packet_box g; "
+            "int main(int argc, char **argv) { "
+            "    struct packet *p = &g.packet; "
+            "    unsigned char *d = p->data; "
+            "    p->length = 3; "
+            "    p->data[0] = 0x11; "
+            "    d[1] = 0x22; "
+            "    p->data[2] = 0x33; "
+            "    return 0; "
+            "}\n",
+            remove_unused_deps=False,
+            default_alignment=8,
+        )
+        vm = _run_program(cmpl_obj)
+        addr = _get_global_addr(global_ctx, cmpl_obj, "g")
+        self.assertEqual(
+            vm.memory[addr : addr + 7],
+            bytes([3, 0, 0, 0, 0x11, 0x22, 0x33]),
+        )
+
+    def test_flexible_array_member_must_be_last_struct_member(self):
+        with self.assertRaisesRegex(
+            ValueError, "Flexible array member must be the last member of the struct"
+        ):
+            _compile_source(
+                "struct broken { unsigned char data[]; unsigned int tail; }; "
+                "int main(int argc, char **argv) { return 0; }\n",
+                remove_unused_deps=False,
+                default_alignment=8,
+            )
 
     def test_dynamic_global_initializer_runs_before_main(self):
         global_ctx, cmpl_obj = _compile_source(
