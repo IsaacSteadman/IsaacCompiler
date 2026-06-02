@@ -153,6 +153,82 @@ def _try_eval_const(
         return None
 
 
+def _find_call_paren_end(tokens: List["Token"], c: int, end: int) -> int:
+    lvl = 1
+    while c < end:
+        if tokens[c].str in ("(", "[", "{"):
+            lvl += 1
+        elif tokens[c].str in (")", "]", "}"):
+            lvl -= 1
+            if lvl == 0:
+                return c
+        c += 1
+    raise ValueError("expected ')' to terminate builtin call")
+
+
+def _find_top_level_call_comma(tokens: List["Token"], c: int, end: int) -> Optional[int]:
+    lvl = 1
+    while c < end:
+        if tokens[c].str in ("(", "[", "{"):
+            lvl += 1
+        elif tokens[c].str in (")", "]", "}"):
+            lvl -= 1
+        elif tokens[c].str == "," and lvl == 1:
+            return c
+        c += 1
+    return None
+
+
+def _consume_abstract_decl_suffixes(
+    tokens: List["Token"],
+    c: int,
+    end: int,
+    context: "CompileContext",
+    typ,
+):
+    while c < end and tokens[c].str == "[":
+        c += 1
+        ext_inf = None
+        if c >= end:
+            raise ValueError("expected closing ']' in abstract declarator")
+        if tokens[c].str != "]":
+            depth = 1
+            bound_start = c
+            while c < end:
+                if tokens[c].str in ("(", "[", "{"):
+                    depth += 1
+                elif tokens[c].str in (")", "]", "}"):
+                    depth -= 1
+                    if depth == 0:
+                        break
+                c += 1
+            if c >= end or tokens[c].str != "]":
+                raise ValueError("expected closing ']' in abstract declarator")
+            ext_inf = int(_eval_tokens(tokens, bound_start, c, context))
+        if tokens[c].str != "]":
+            raise ValueError("expected closing ']' in abstract declarator")
+        c += 1
+        typ = QualType(QualType.QUAL_ARR, typ, ext_inf)
+    return typ, c
+
+
+def _parse_types_compatible_arg(
+    tokens: List["Token"], start: int, end: int, context: "CompileContext"
+):
+    type_decl, type_c = proc_typed_decl(tokens, start, end, context)
+    if type_decl is not None and type_c > start:
+        type_decl.typ, type_c = _consume_abstract_decl_suffixes(
+            tokens, type_c, end, context, type_decl.typ
+        )
+    if (
+        type_decl is None
+        or type_c != end
+        or getattr(type_decl, "name", None) is not None
+    ):
+        raise ValueError("argument must be a type")
+    return type_decl.typ
+
+
 def _eval_tokens(
     tokens: List["Token"],
     start: int,
@@ -255,6 +331,21 @@ def _eval_tokens(
                     "__builtin_offsetof first argument must name a struct, union, or class type"
                 )
             return agg_type.offset_of(tokens[comma_pos + 1].str)
+
+    # --- __builtin_types_compatible_p(type1, type2) ---
+    if (
+        tokens[start].str == "__builtin_types_compatible_p"
+        and start + 1 < end
+        and tokens[start + 1].str == "("
+    ):
+        paren_end = _find_call_paren_end(tokens, start + 2, end)
+        if paren_end == end - 1:
+            comma_pos = _find_top_level_call_comma(tokens, start + 2, paren_end)
+            if comma_pos is None:
+                raise ValueError("__builtin_types_compatible_p expects two arguments")
+            lhs_type = _parse_types_compatible_arg(tokens, start + 2, comma_pos, context)
+            rhs_type = _parse_types_compatible_arg(tokens, comma_pos + 1, paren_end, context)
+            return 1 if compare_no_cvr(lhs_type, rhs_type) else 0
 
     # --- Outer parentheses: ( expr ) ---
     if tokens[start].str == "(":
@@ -376,8 +467,10 @@ from ..ParsingError import ParsingError
 from ..type.types import (
     ClassType,
     CompileContext,
+    QualType,
     StructType,
     UnionType,
+    compare_no_cvr,
     get_value_type,
     proc_typed_decl,
     size_of,

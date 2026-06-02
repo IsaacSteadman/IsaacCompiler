@@ -123,6 +123,13 @@ def my_get_expr_part(
     elif s == "__builtin_expect" and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_expect_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
+    elif (
+        s == "__builtin_types_compatible_p"
+        and c + 1 < end
+        and tokens[c + 1].str == "("
+    ):
+        expr, c = _build_builtin_types_compatible_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif s == "__builtin_offsetof" and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_offsetof_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
@@ -167,16 +174,21 @@ from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
 from ..type.types import (
     ClassType,
     CompileContext,
+    PrimitiveType,
     IdentifiedQualType,
     QualType,
     StructType,
     UnionType,
+    compare_no_cvr,
     get_value_type,
     proc_typed_decl,
     size_l_t,
     void_t,
 )
 from ...lexer.lexer import BreakSymClass, OperatorClass, Token, TokenType
+
+
+_builtin_result_int_t = PrimitiveType.from_str_name(["signed", "int"])
 
 
 def _deduce_compound_literal_array_extent(typ, expr):
@@ -210,6 +222,26 @@ def _consume_abstract_decl_suffixes(tokens, c, end, context, typ):
     return typ, c
 
 
+def _parse_builtin_type_arg(tokens, c, end, context, arg_name):
+    type_decl, type_c = proc_typed_decl(tokens, c, end, context)
+    if type_decl is not None and type_c > c:
+        type_decl.typ, type_c = _consume_abstract_decl_suffixes(
+            tokens, type_c, end, context, type_decl.typ
+        )
+    if (
+        type_decl is None
+        or type_c != end
+        or not isinstance(type_decl, IdentifiedQualType)
+        or type_decl.name is not None
+    ):
+        raise ParsingError(
+            tokens,
+            c,
+            "__builtin_types_compatible_p %s must be a type" % arg_name,
+        )
+    return type_decl.typ
+
+
 def _find_call_paren_end(tokens, c, end):
     lvl = 1
     while c < end:
@@ -232,6 +264,22 @@ def _build_builtin_expect_expr(tokens, c, end, context):
     hint_expr, c = get_expr(tokens, c, ",", paren_end, context)
     if hint_expr is None or c != paren_end:
         raise ParsingError(tokens, c, "__builtin_expect expects exactly two arguments")
+    return expr, paren_end + 1
+
+
+def _build_builtin_types_compatible_expr(tokens, c, end, context):
+    paren_end = _find_call_paren_end(tokens, c, end)
+    comma_pos = _find_top_level_call_comma(tokens, c, paren_end)
+    if comma_pos is None:
+        raise ParsingError(tokens, c, "__builtin_types_compatible_p expects two arguments")
+    lhs_type = _parse_builtin_type_arg(tokens, c, comma_pos, context, "first argument")
+    rhs_type = _parse_builtin_type_arg(
+        tokens, comma_pos + 1, paren_end, context, "second argument"
+    )
+    value = 1 if compare_no_cvr(lhs_type, rhs_type) else 0
+    expr = LiteralExpr(LiteralExpr.LIT_INT, str(value))
+    expr.l_val = value
+    expr.t_anot = _builtin_result_int_t
     return expr, paren_end + 1
 
 
