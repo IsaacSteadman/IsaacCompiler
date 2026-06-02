@@ -93,6 +93,9 @@ class Compilation(BaseCmplObj):
                         self.memory.extend([0] * (mem_off - len(self.memory)))
                 mem_off = len(self.memory)
                 self.memory.extend(cur.memory)
+                self.memory_accesses.extend(
+                    access.shifted(mem_off) for access in cur.memory_accesses
+                )
                 obj_lnk.src = mem_off
                 for k1 in cur.string_pool:
                     cur1 = cur.string_pool[k1]

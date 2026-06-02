@@ -23,9 +23,19 @@ class OffsetLinkage(BaseLink):
         size: int,
         byte_copy_arg: T,
         byte_copy_intrinsic: Callable[[T, Optional[int], bool, bool], Any],
+        volatile_access: bool = False,
     ):
+        cmpl_obj = byte_copy_arg if hasattr(byte_copy_arg, "memory_accesses") else None
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 3:
+            if cmpl_obj is not None:
+                record_memory_access(
+                    cmpl_obj,
+                    "load",
+                    size,
+                    volatile_access,
+                    lowered_as_copy=True,
+                )
             sz_cls_1 = emit_load_i_const(memory, size, False)
             memory.extend([BC_ADD_SP1 + sz_cls_1])
             self.emit_lea(memory)
@@ -34,7 +44,7 @@ class OffsetLinkage(BaseLink):
             sz_cls_1 = emit_load_i_const(memory, stack_left, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_load_pot(memory, sz_cls_0)
+            self.emit_load_pot(memory, sz_cls_0, cmpl_obj, volatile_access)
 
     def emit_stor(
         self,
@@ -44,19 +54,30 @@ class OffsetLinkage(BaseLink):
         byte_copy_intrinsic: Callable[
             [T, Union[memoryview, bytearray], Optional[int], bool, bool], Any
         ],
+        volatile_access: bool = False,
     ):
+        cmpl_obj = byte_copy_arg if hasattr(byte_copy_arg, "memory_accesses") else None
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 3:
+            if cmpl_obj is not None:
+                record_memory_access(
+                    cmpl_obj,
+                    "stor",
+                    size,
+                    volatile_access,
+                    lowered_as_copy=True,
+                )
             self.emit_lea(memory)
             # using @@ByteCopyFn2
             stack_left = byte_copy_intrinsic(byte_copy_arg, memory, size, True, False)
             sz_cls_1 = emit_load_i_const(memory, stack_left + size, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_stor_pot(memory, sz_cls_0)
+            self.emit_stor_pot(memory, sz_cls_0, cmpl_obj, volatile_access)
 
 
 from ..StackVM.PyStackVM import BC_ADD_SP1, BC_LOAD, BC_RST_SP1, BCR_EA_R_IP, BCR_SZ_8
+from .memory_access import record_memory_access
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from .Linkage import Linkage
 from .LinkRef import LinkRef

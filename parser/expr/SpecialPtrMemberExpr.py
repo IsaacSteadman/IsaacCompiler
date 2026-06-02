@@ -8,6 +8,7 @@ class SpecialPtrMemberExpr(BaseExpr):
     def __init__(self, obj: BaseExpr, attr: str):
         self.obj = obj
         self.attr = attr
+        self.do_deref = False
         if self.obj.t_anot is None:
             return
         src_ptr_pt, src_ptr_vt, is_src_ptr_ref = get_tgt_ref_type(self.obj.t_anot)
@@ -45,12 +46,18 @@ class SpecialPtrMemberExpr(BaseExpr):
                 "Instance of union/class/struct '%s' has no member '%s'"
                 % (src_vt.name, attr)
             )
-        attr_pt, attr_vt, is_attr_ref = get_tgt_ref_type(ctx_var.typ)
+        member_type = ctx_var.typ
+        if is_volatile_type(src_ptr_vt.tgt_type):
+            member_type = add_volatile_qualifier(member_type)
+        is_attr_ref = (
+            isinstance(member_type, QualType)
+            and member_type.qual_id == QualType.QUAL_REF
+        )
         if is_attr_ref:
             self.do_deref = True
-            self.t_anot = attr_pt
+            self.t_anot = member_type
         else:
-            self.t_anot = QualType(QualType.QUAL_REF, attr_pt)
+            self.t_anot = QualType(QualType.QUAL_REF, member_type)
         # Annotate bit-field info: (byte_offset, bit_shift, bit_mask, storage_sz)
         self.bit_field_info = None if member_res is None else member_res.bit_field_info
 
@@ -73,8 +80,10 @@ from .CastOpExpr import CastOpExpr
 from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import TypeClass
 from ..type.types import (
+    add_volatile_qualifier,
     ClassType,
     CompileContext,
+    is_volatile_type,
     QualType,
     StructType,
     UnionType,

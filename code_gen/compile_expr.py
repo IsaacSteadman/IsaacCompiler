@@ -326,7 +326,11 @@ def compile_expr(
                     # TODO: change this so that the BaseType subclasses are responsible for construction
                     # TODO:   from a pointer already on the stack
                     lnk.emit_load(
-                        cmpl_obj.memory, sz, cmpl_obj, byte_copy_cmpl_intrinsic
+                        cmpl_obj.memory,
+                        sz,
+                        cmpl_obj,
+                        byte_copy_cmpl_intrinsic,
+                        volatile_access=is_volatile_storage_type(ctx_var.typ),
                     )
                 else:
                     raise TypeError(
@@ -371,7 +375,11 @@ def compile_expr(
                 if compare_no_cvr(prim_type_coerce, val_type):
                     sz = size_of(val_type)
                     temp_link.emit_load(
-                        cmpl_obj.memory, sz, cmpl_obj, byte_copy_cmpl_intrinsic
+                        cmpl_obj.memory,
+                        sz,
+                        cmpl_obj,
+                        byte_copy_cmpl_intrinsic,
+                        volatile_access=is_volatile_storage_type(temp_type),
                     )
                 else:
                     raise TypeError(
@@ -487,7 +495,7 @@ def compile_expr(
             assert isinstance(a_type, QualType)
             assert a_type.qual_id == QualType.QUAL_REF
             swap_byte = (sz_cls << 3) | BCS_SZ8_A
-            load_byte = BCR_ABS_S8 | (sz_cls << 5)
+            is_volatile_access = is_volatile_storage_type(a_type, through_ref=True)
             is_add = expr.type_id in [
                 UnaryExprSubType.PRE_INC,
                 UnaryExprSubType.POST_INC,
@@ -507,10 +515,9 @@ def compile_expr(
                     [
                         BC_LOAD,
                         BCR_TOS | BCR_SZ_8,
-                        BC_LOAD,
-                        load_byte,
                     ]
                 )
+                emit_tracked_abs_s8_load(cmpl_obj, sz_num, is_volatile_access)
             else:
                 if type_coerce is void_t:
                     res_type = void_t
@@ -519,10 +526,9 @@ def compile_expr(
                         [
                             BC_LOAD,
                             BCR_TOS | BCR_SZ_8,
-                            BC_LOAD,
-                            load_byte,
                         ]
                     )
+                    emit_tracked_abs_s8_load(cmpl_obj, sz_num, is_volatile_access)
                 else:
                     res_type = get_value_type(a_type)
                     sz = size_of(res_type)
@@ -530,16 +536,11 @@ def compile_expr(
                         [
                             BC_LOAD,
                             BCR_TOS | BCR_SZ_8,
-                            BC_LOAD,
-                            load_byte,
-                            BC_SWAP,
-                            swap_byte,
-                            BC_LOAD,
-                            BCR_TOS | BCR_SZ_8,
-                            BC_LOAD,
-                            load_byte,
                         ]
                     )
+                    emit_tracked_abs_s8_load(cmpl_obj, sz_num, is_volatile_access)
+                    cmpl_obj.memory.extend([BC_SWAP, swap_byte, BC_LOAD, BCR_TOS | BCR_SZ_8])
+                    emit_tracked_abs_s8_load(cmpl_obj, sz_num, is_volatile_access)
             emit_load_i_const(cmpl_obj.memory, inc_by, False, sz_cls)
             if sz_num == 16 and isinstance(prim_inc_type, PrimitiveType):
                 cmpl_obj.memory.extend(
@@ -560,20 +561,18 @@ def compile_expr(
                         ),
                         BC_SWAP,
                         swap_byte,
-                        BC_STOR,
-                        load_byte,
                     ]
                 )
+                emit_tracked_abs_s8_stor(cmpl_obj, sz_num, is_volatile_access)
             else:
                 cmpl_obj.memory.extend(
                     [
                         (BC_ADD1 if is_add else BC_SUB1) + sz_cls,
                         BC_SWAP,
                         swap_byte,
-                        BC_STOR,
-                        load_byte,
                     ]
                 )
+                emit_tracked_abs_s8_stor(cmpl_obj, sz_num, is_volatile_access)
 
         else:
             raise NotImplementedError(
@@ -692,7 +691,7 @@ def compile_expr(
             # Store new ap back (pops ap_new; leaves ap_old on TOS)
             _ap_lnk.emit_stor(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
             # Dereference ap_old: load sz_T bytes from the address
-            cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls_T << 5)])
+            emit_tracked_abs_s8_load(cmpl_obj, sz_T)
             sz = sz_T
             res_type = T
         elif expr.intrinsic_id == VaIntrinsicExpr.INTRINSIC_VA_END:
@@ -758,6 +757,7 @@ from .compile_conv_general import compile_conv_general
 from .compile_expr import compile_expr
 from .compile_stmnt import compile_stmnt
 from .CompileObject import CompileObject
+from .memory_access import emit_tracked_abs_s8_load, emit_tracked_abs_s8_stor
 from .get_bc_conv_bits import get_bc_conv_bits
 from .setup_temp_links import setup_temp_links
 from .tear_down_temp_links import tear_down_temp_links
@@ -829,6 +829,7 @@ from ..parser.type.types import (
     get_base_prim_type,
     get_tgt_ref_type,
     get_value_type,
+    is_volatile_storage_type,
     prim_types,
     size_of,
     void_t,

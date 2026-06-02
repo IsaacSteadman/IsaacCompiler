@@ -4,6 +4,7 @@ from typing import Dict, Optional
 class BaseCmplObj(object):
     def __init__(self):
         self.memory = bytearray()
+        self.memory_accesses = []
         self.linkages: Dict[str, Linkage] = {}
         self.string_pool: Dict[bytes, Linkage] = {}
         self.data_segment_start: Optional[int] = None

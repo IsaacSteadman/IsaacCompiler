@@ -115,7 +115,9 @@ class UnaryOpExpr(BaseExpr):
                     "Cannot get the pointer to a non-reference type %s"
                     % get_user_str_from_type(a.t_anot)
                 )
-            self.t_anot = QualType(QualType.QUAL_PTR, src_vt)
+            ref_type = src_pt
+            assert isinstance(ref_type, QualType)
+            self.t_anot = QualType(QualType.QUAL_PTR, ref_type.tgt_type)
         elif type_id == UnaryExprSubType.STAR:
             src_pt, src_vt, is_src_ref = get_tgt_ref_type(a.t_anot)
             tgt_type = None

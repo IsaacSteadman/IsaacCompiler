@@ -11,6 +11,14 @@ class SpecialDotExpr(BaseExpr):
         self.do_deref = False
         if self.obj.t_anot is None:
             return
+        raw_obj_type = (
+            self.obj.t_anot.tgt_type
+            if (
+                isinstance(self.obj.t_anot, QualType)
+                and self.obj.t_anot.qual_id == QualType.QUAL_REF
+            )
+            else self.obj.t_anot
+        )
         src_pt, src_vt, is_src_ref = get_tgt_ref_type(self.obj.t_anot)
         if src_vt.type_class_id not in [
             TypeClass.STRUCT,
@@ -39,13 +47,19 @@ class SpecialDotExpr(BaseExpr):
                 "Instance of union/class/struct '%s' has no member '%s'"
                 % (src_vt.name, attr)
             )
-        attr_pt, attr_vt, is_attr_ref = get_tgt_ref_type(ctx_var.typ)
+        member_type = ctx_var.typ
+        if is_volatile_type(raw_obj_type):
+            member_type = add_volatile_qualifier(member_type)
+        is_attr_ref = (
+            isinstance(member_type, QualType)
+            and member_type.qual_id == QualType.QUAL_REF
+        )
         if is_src_ref and not is_attr_ref:
-            self.t_anot = QualType(QualType.QUAL_REF, attr_pt)
+            self.t_anot = QualType(QualType.QUAL_REF, member_type)
         else:
             if is_attr_ref:
                 self.do_deref = True
-            self.t_anot = attr_pt
+            self.t_anot = member_type
         # Annotate bit-field info: (byte_offset, bit_shift, bit_mask, storage_sz)
         self.bit_field_info = None if member_res is None else member_res.bit_field_info
 
@@ -68,8 +82,10 @@ from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import TypeClass
 from ..type.get_user_str_from_type import get_user_str_from_type
 from ..type.types import (
+    add_volatile_qualifier,
     ClassType,
     CompileContext,
+    is_volatile_type,
     QualType,
     StructType,
     UnionType,

@@ -3,3 +3,4 @@ Global and static variable initialization
 C++ references
 C++ namespaces
 C++ function-overloading
+Volatile-qualified accesses are tracked in code generation, and there is currently no optimisation pass that removes or reorders them

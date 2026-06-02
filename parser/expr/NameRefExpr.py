@@ -36,7 +36,7 @@ class NameRefExpr(BaseExpr):
             raise ParsingError(tokens, c, "Expected Variable")
         self.ctx_var = ctx_var
         if ctx_var.typ.type_class_id != TypeClass.MULTI:
-            self.t_anot = QualType(QualType.QUAL_REF, get_value_type(ctx_var.typ))
+            self.t_anot = QualType(QualType.QUAL_REF, ctx_var.typ)
         return c
 
     def pretty_repr(self, pretty_repr_ctx=None):
@@ -51,5 +51,5 @@ from ..ParsingError import ParsingError
 from ..get_name_from_tokens import get_name_from_tokens
 from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import TypeClass
-from ..type.types import QualType, get_value_type, CompileContext, ContextVariable
+from ..type.types import QualType, CompileContext, ContextVariable
 from ...lexer.lexer import Token, TokenType

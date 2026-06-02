@@ -667,9 +667,11 @@ class PrimitiveType(BaseType):
                         assert sz == sz_var
                     else:
                         assert sz == 8
-                        sz_cls = sz_var.bit_length() - 1
-                        assert sz_var == (1 << sz_cls)
-                        cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
+                        emit_tracked_abs_s8_load(
+                            cmpl_obj,
+                            sz_var,
+                            is_volatile_storage_type(expr.t_anot, through_ref=True),
+                        )
                 if ctx_var is not None:
                     cmpl_data.put_local(ctx_var, name, sz_var, None, True)
             else:
@@ -689,7 +691,13 @@ class PrimitiveType(BaseType):
                 cmpl_data,
             )
             assert sz == sz_var
-            link.emit_stor(cmpl_obj.memory, sz_var, cmpl_obj, byte_copy_cmpl_intrinsic)
+            link.emit_stor(
+                cmpl_obj.memory,
+                sz_var,
+                cmpl_obj,
+                byte_copy_cmpl_intrinsic,
+                volatile_access=is_volatile_storage_type(self),
+            )
             return sz_var
         else:
             raise TypeError("Unrecognized VarRef: %s" % repr(ref))
@@ -1709,7 +1717,14 @@ class StructType(CompileContext, BaseType):
                 lnk = cmpl_data.put_local(ctx_var, name, sz_var, None, True)
             else:
                 lnk = link
-            _zero_init_link(cmpl_obj, lnk, sz_var)
+            _zero_init_link(
+                cmpl_obj,
+                lnk,
+                sz_var,
+                volatile_access=is_volatile_storage_type(
+                    self if ctx_var is None else ctx_var.typ
+                ),
+            )
             next_field_index = 0
             for elem in curly.lst_expr:
                 target_index = next_field_index
@@ -1762,9 +1777,11 @@ class StructType(CompileContext, BaseType):
                 )
                 if is_src_ref:
                     assert sz == 8
-                    sz_cls = sz_var.bit_length() - 1
-                    assert sz_var == (1 << sz_cls)
-                    cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
+                    emit_tracked_abs_s8_load(
+                        cmpl_obj,
+                        sz_var,
+                        is_volatile_storage_type(expr.t_anot, through_ref=True),
+                    )
                 else:
                     assert sz == sz_var
             if ctx_var is not None:
@@ -1788,9 +1805,11 @@ class StructType(CompileContext, BaseType):
                         link_name,
                         init_args[0],
                     )
-                    sz_cls = sz_var.bit_length() - 1
-                    assert sz_var == 1 << sz_cls
-                    cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
+                    emit_tracked_abs_s8_load(
+                        cmpl_obj,
+                        sz_var,
+                        is_volatile_storage_type(init_args[0].t_anot, through_ref=True),
+                    )
                 else:
                     sz = compile_expr(
                         cmpl_obj, init_args[0], context, cmpl_data, src_vt, temp_links
@@ -1804,7 +1823,13 @@ class StructType(CompileContext, BaseType):
                         init_args[0],
                     )
                 link.emit_stor(
-                    cmpl_obj.memory, sz_var, cmpl_obj, byte_copy_cmpl_intrinsic
+                    cmpl_obj.memory,
+                    sz_var,
+                    cmpl_obj,
+                    byte_copy_cmpl_intrinsic,
+                    volatile_access=is_volatile_storage_type(
+                        self if ctx_var is None else ctx_var.typ
+                    ),
                 )
         return sz_var
 
@@ -2057,9 +2082,11 @@ class UnionType(CompileContext, BaseType):
                 )
                 if is_src_ref:
                     assert sz == 8
-                    sz_cls = sz_var.bit_length() - 1
-                    assert sz_var == (1 << sz_cls)
-                    cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
+                    emit_tracked_abs_s8_load(
+                        cmpl_obj,
+                        sz_var,
+                        is_volatile_storage_type(expr.t_anot, through_ref=True),
+                    )
                 else:
                     assert sz == sz_var
             if ctx_var is not None:
@@ -2083,9 +2110,11 @@ class UnionType(CompileContext, BaseType):
                         link_name,
                         init_args[0],
                     )
-                    sz_cls = sz_var.bit_length() - 1
-                    assert sz_var == 1 << sz_cls
-                    cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
+                    emit_tracked_abs_s8_load(
+                        cmpl_obj,
+                        sz_var,
+                        is_volatile_storage_type(init_args[0].t_anot, through_ref=True),
+                    )
                 else:
                     sz = compile_expr(
                         cmpl_obj, init_args[0], context, cmpl_data, src_vt, temp_links
@@ -2099,7 +2128,13 @@ class UnionType(CompileContext, BaseType):
                         init_args[0],
                     )
                 link.emit_stor(
-                    cmpl_obj.memory, sz_var, cmpl_obj, byte_copy_cmpl_intrinsic
+                    cmpl_obj.memory,
+                    sz_var,
+                    cmpl_obj,
+                    byte_copy_cmpl_intrinsic,
+                    volatile_access=is_volatile_storage_type(
+                        self if ctx_var is None else ctx_var.typ
+                    ),
                 )
         return sz_var
 
@@ -3447,7 +3482,14 @@ class QualType(BaseType):
                     lnk = cmpl_data.put_local(ctx_var, name, sz_var, None, True)
                 else:
                     lnk = link
-                _zero_init_link(cmpl_obj, lnk, sz_var)
+                _zero_init_link(
+                    cmpl_obj,
+                    lnk,
+                    sz_var,
+                    volatile_access=is_volatile_storage_type(
+                        self if ctx_var is None else ctx_var.typ
+                    ),
+                )
                 next_index = 0
                 for elem in curly.lst_expr:
                     target_index = next_index
@@ -3555,7 +3597,11 @@ class QualType(BaseType):
             if len(init_args) == 1:
                 assert link is not None
                 link.emit_stor(
-                    cmpl_obj.memory, sz_var, cmpl_obj, byte_copy_cmpl_intrinsic
+                    cmpl_obj.memory,
+                    sz_var,
+                    cmpl_obj,
+                    byte_copy_cmpl_intrinsic,
+                    volatile_access=is_volatile_storage_type(self),
                 )
         return sz_var
 
@@ -3586,6 +3632,53 @@ def _strip_cv_qualifiers(typ: "BaseType") -> "BaseType":
     }:
         typ = typ.tgt_type
     return typ
+
+
+def is_volatile_type(
+    typ: Union["BaseType", "IdentifiedQualType"], through_ref: bool = False
+) -> bool:
+    if isinstance(typ, IdentifiedQualType):
+        typ = typ.typ
+    if (
+        through_ref
+        and isinstance(typ, QualType)
+        and typ.qual_id == QualType.QUAL_REF
+    ):
+        typ = typ.tgt_type
+    while isinstance(typ, QualType) and typ.qual_id in {
+        QualType.QUAL_CONST,
+        QualType.QUAL_DEF,
+        QualType.QUAL_REG,
+        QualType.QUAL_VOLATILE,
+    }:
+        if typ.qual_id == QualType.QUAL_VOLATILE:
+            return True
+        typ = typ.tgt_type
+    return False
+
+
+def is_volatile_storage_type(
+    typ: Union["BaseType", "IdentifiedQualType"], through_ref: bool = False
+) -> bool:
+    if is_volatile_type(typ, through_ref):
+        return True
+    if isinstance(typ, IdentifiedQualType):
+        typ = typ.typ
+    if (
+        through_ref
+        and isinstance(typ, QualType)
+        and typ.qual_id == QualType.QUAL_REF
+    ):
+        typ = typ.tgt_type
+    if isinstance(typ, QualType) and typ.qual_id == QualType.QUAL_ARR:
+        return is_volatile_storage_type(typ.tgt_type)
+    return False
+
+
+def add_volatile_qualifier(typ: "BaseType") -> "BaseType":
+    if is_volatile_type(typ):
+        return typ
+    return QualType(QualType.QUAL_VOLATILE, typ)
 
 
 def _is_flexible_array_type(typ: "BaseType") -> bool:
@@ -4353,6 +4446,7 @@ from ...code_gen.LocalRef import LocalRef
 from ...code_gen.byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
 from ...code_gen.compile_curly import compile_curly
 from ...code_gen.compile_expr import compile_expr
+from ...code_gen.memory_access import emit_tracked_abs_s8_load
 from ...lexer.lexer import Token, TokenType, tok_to_str
 from ..stmnt.helpers.SingleVarDecl import SingleVarDecl
 from ...code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
@@ -4373,9 +4467,20 @@ def _emit_push_zeros(memory: bytearray, n: int):
         emit_load_i_const(memory, 0, False, 0)  # 1-byte zero
 
 
-def _zero_init_link(cmpl_obj: "BaseCmplObj", link: "BaseLink", size: int) -> None:
+def _zero_init_link(
+    cmpl_obj: "BaseCmplObj",
+    link: "BaseLink",
+    size: int,
+    volatile_access: bool = False,
+) -> None:
     _emit_push_zeros(cmpl_obj.memory, size)
-    link.emit_stor(cmpl_obj.memory, size, cmpl_obj, byte_copy_cmpl_intrinsic)
+    link.emit_stor(
+        cmpl_obj.memory,
+        size,
+        cmpl_obj,
+        byte_copy_cmpl_intrinsic,
+        volatile_access=volatile_access,
+    )
 
 
 @dataclass

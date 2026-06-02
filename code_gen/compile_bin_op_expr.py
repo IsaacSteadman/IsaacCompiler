@@ -40,7 +40,11 @@ def _compile_bit_field_assign(cmpl_obj, expr, context, cmpl_data, temp_links, bf
     # DUP the storage-unit pointer: [..., ptr(8), ptr_dup(8)]
     cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | BCR_SZ_8])
     # LOAD storage unit through the dup: [..., ptr(8), su(storage_sz)]
-    cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls_bf << 5)])
+    emit_tracked_abs_s8_load(
+        cmpl_obj,
+        bfi.storage_sz,
+        is_volatile_storage_type(expr.a.t_anot, through_ref=True),
+    )
     # AND with the clear mask to zero the target field bits
     emit_load_i_const(cmpl_obj.memory, clear_mask, False, sz_cls_bf)
     cmpl_obj.memory.append(BC_AND1 + sz_cls_bf)
@@ -58,7 +62,11 @@ def _compile_bit_field_assign(cmpl_obj, expr, context, cmpl_data, temp_links, bf
     # SWAP to bring ptr to TOS: [..., modified_su(storage_sz), ptr(8)]
     cmpl_obj.memory.extend([BC_SWAP, (sz_cls_bf << 3) | BCS_SZ8_A])
     # STOR modified storage unit through ptr: [...]
-    cmpl_obj.memory.extend([BC_STOR, BCR_ABS_S8 | (sz_cls_bf << 5)])
+    emit_tracked_abs_s8_stor(
+        cmpl_obj,
+        bfi.storage_sz,
+        is_volatile_storage_type(expr.a.t_anot, through_ref=True),
+    )
     return 0, void_t
 
 
@@ -124,7 +132,13 @@ def compile_bin_op_expr(
             cmpl_obj, b, context, cmpl_data, a_value_type, temp_links
         )
         assert sz_out_b == sizeof_a
-        lnk.emit_stor(cmpl_obj.memory, sizeof_a, cmpl_obj, byte_copy_cmpl_intrinsic)
+        lnk.emit_stor(
+            cmpl_obj.memory,
+            sizeof_a,
+            cmpl_obj,
+            byte_copy_cmpl_intrinsic,
+            volatile_access=is_volatile_storage_type(a_value_type),
+        )
     elif expr.type_id in ASSIGNMENT_OPS:
         sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
         assert sz == 8, "Expression should be a reference"
@@ -147,8 +161,11 @@ def compile_bin_op_expr(
             cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | BCR_SZ_8])
             sz1 += 8
         if expr.type_id != BinaryExprSubType.ASSGN:
-            cmpl_obj.memory.extend(
-                [BC_LOAD, BCR_TOS | BCR_SZ_8, BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)]
+            cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | BCR_SZ_8])
+            emit_tracked_abs_s8_load(
+                cmpl_obj,
+                sz_type,
+                is_volatile_storage_type(expr.a.t_anot, through_ref=True),
             )
             sz1 += sz_type
         try:
@@ -241,8 +258,11 @@ def compile_bin_op_expr(
                     raise ValueError("Unsupported operator %s" % expr.type_id.name)
                 cmpl_obj.memory.append(op_code)
             sz1 -= sz_type1
-        cmpl_obj.memory.extend(
-            [BC_SWAP, (sz_cls << 3) | BCS_SZ8_A, BC_STOR, BCR_ABS_S8 | (sz_cls << 5)]
+        cmpl_obj.memory.extend([BC_SWAP, (sz_cls << 3) | BCS_SZ8_A])
+        emit_tracked_abs_s8_stor(
+            cmpl_obj,
+            sz_type,
+            is_volatile_storage_type(expr.a.t_anot, through_ref=True),
         )
         sz1 -= sz_type + 8
         if res_none:
@@ -328,6 +348,7 @@ from .CompileExprException import CompileExprException
 from .LocalCompileData import LocalCompileData
 from .byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
 from .compile_expr import compile_expr
+from .memory_access import emit_tracked_abs_s8_load, emit_tracked_abs_s8_stor
 from ..PrettyRepr import format_pretty
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import (
@@ -406,6 +427,7 @@ from ..parser.type.types import (
     QualType,
     compare_no_cvr,
     get_tgt_ref_type,
+    is_volatile_storage_type,
     prim_types,
     size_of,
     void_t,
