@@ -114,3 +114,11 @@ int __svm_ffs8(unsigned long long x) {
     }
     return n;
 }
+
+unsigned long long strlen(const char *str) {
+    unsigned long long n = 0;
+    while (str[n] != 0) {
+        n = n + 1;
+    }
+    return n;
+}

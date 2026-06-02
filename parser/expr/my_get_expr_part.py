@@ -136,6 +136,9 @@ def my_get_expr_part(
     elif s in _builtin_unary_specs and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_unary_expr(s, tokens, c + 2, end, context)
         return ExprOpPart(expr), c
+    elif s in _builtin_forward_specs and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_forward_expr(s, tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif (
         s in {"va_start", "va_arg", "va_end", "va_copy"}
         and c + 1 < end
@@ -210,9 +213,16 @@ class _BuiltinUnarySpec(NamedTuple):
     result_type: "BaseType"
 
 
-def _get_builtin_helper_link_name(helper_name, arg_type, result_type):
+class _BuiltinForwardSpec(NamedTuple):
+    helper_name: str
+    helper_link_name: str
+    arg_types: List["BaseType"]
+    result_type: "BaseType"
+
+
+def _get_builtin_helper_link_name(helper_name, arg_types, result_type):
     helper_ctx = CompileContext("", None, None)
-    helper_type = QualType(QualType.QUAL_FN, result_type, [arg_type])
+    helper_type = QualType(QualType.QUAL_FN, result_type, list(arg_types))
     helper_var = ContextVariable(helper_name, helper_type)
     helper_ctx.new_var(helper_name, helper_var)
     return helper_var.get_link_name()
@@ -221,8 +231,25 @@ def _get_builtin_helper_link_name(helper_name, arg_type, result_type):
 def _make_builtin_unary_spec(helper_name, arg_type, result_type):
     return _BuiltinUnarySpec(
         helper_name,
-        _get_builtin_helper_link_name(helper_name, arg_type, result_type),
+        _get_builtin_helper_link_name(helper_name, [arg_type], result_type),
         arg_type,
+        result_type,
+    )
+
+
+def _make_builtin_forward_spec(helper_name, arg_types, result_type):
+    return _make_builtin_forward_spec_with_link_types(
+        helper_name, arg_types, result_type, arg_types
+    )
+
+
+def _make_builtin_forward_spec_with_link_types(
+    helper_name, arg_types, result_type, link_arg_types
+):
+    return _BuiltinForwardSpec(
+        helper_name,
+        _get_builtin_helper_link_name(helper_name, link_arg_types, result_type),
+        list(arg_types),
         result_type,
     )
 
@@ -272,6 +299,35 @@ _builtin_unary_specs: Dict[str, _BuiltinUnarySpec] = {
     ),
     "__builtin_ffsll": _make_builtin_unary_spec(
         "__svm_ffs8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+}
+
+_builtin_void_ptr_t = QualType(QualType.QUAL_PTR, void_t)
+_builtin_const_void_ptr_t = QualType(
+    QualType.QUAL_PTR, QualType(QualType.QUAL_CONST, void_t)
+)
+_builtin_char_t = PrimitiveType.from_str_name(["char"])
+_builtin_const_char_ptr_t = QualType(
+    QualType.QUAL_PTR,
+    QualType(QualType.QUAL_CONST, _builtin_char_t),
+)
+
+_builtin_forward_specs: Dict[str, _BuiltinForwardSpec] = {
+    "__builtin_memcpy": _make_builtin_forward_spec_with_link_types(
+        "memcpy",
+        [_builtin_void_ptr_t, _builtin_void_ptr_t, size_l_t],
+        _builtin_void_ptr_t,
+        [_builtin_void_ptr_t, _builtin_const_void_ptr_t, size_l_t],
+    ),
+    "__builtin_memset": _make_builtin_forward_spec(
+        "memset",
+        [_builtin_void_ptr_t, _builtin_char_t, size_l_t],
+        _builtin_void_ptr_t,
+    ),
+    "__builtin_strlen": _make_builtin_forward_spec(
+        "strlen",
+        [_builtin_const_char_ptr_t],
+        size_l_t,
     ),
 }
 
@@ -359,6 +415,43 @@ def _build_builtin_unary_expr(name, tokens, c, end, context):
     expr, _ = converted
     return (
         BuiltinCallExpr(name, [expr], spec.helper_link_name, spec.result_type),
+        paren_end + 1,
+    )
+
+
+def _build_builtin_forward_expr(name, tokens, c, end, context):
+    spec = _builtin_forward_specs[name]
+    paren_end = _find_call_paren_end(tokens, c, end)
+    args = []
+    while c < paren_end:
+        expr, c = get_expr(tokens, c, ",", paren_end, context)
+        if expr is None:
+            break
+        args.append(expr)
+        if c < paren_end:
+            if tokens[c].str != ",":
+                raise ParsingError(tokens, c, "Expected ',' in %s argument list" % name)
+            c += 1
+    if len(args) != len(spec.arg_types):
+        raise ParsingError(
+            tokens,
+            c,
+            "%s expects exactly %u arguments" % (name, len(spec.arg_types)),
+        )
+
+    converted_args = []
+    for index, (arg, arg_type) in enumerate(zip(args, spec.arg_types), start=1):
+        converted = get_implicit_conv_expr(arg, arg_type)
+        if converted is None:
+            raise ParsingError(
+                tokens,
+                c,
+                "%s argument %u must be convertible to %s"
+                % (name, index, arg_type.to_user_str()),
+            )
+        converted_args.append(converted[0])
+    return (
+        BuiltinCallExpr(name, converted_args, spec.helper_link_name, spec.result_type),
         paren_end + 1,
     )
 
