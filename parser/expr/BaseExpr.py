@@ -21,6 +21,7 @@ class ExprType(Enum):
     STMNT_EXPR = 14  # GNU statement expression: ({ ... })
     VA_INTRINSIC = 15  # va_start / va_arg / va_end / va_copy compiler intrinsics
     COMPOUND_LITERAL = 16  # C compound literal: (type){ ... }
+    BUILTIN_CALL = 17  # compiler intrinsic call lowered by helper/runtime support
 
 
 class BaseExpr(PrettyRepr):

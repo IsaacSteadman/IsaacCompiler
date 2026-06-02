@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 from ..util import try_catch_wrapper0
 
 """def GetTypeName(tokens, c, end, context, Strict=False):
@@ -133,6 +133,9 @@ def my_get_expr_part(
     elif s == "__builtin_offsetof" and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_offsetof_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
+    elif s in _builtin_unary_specs and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_unary_expr(s, tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif (
         s in {"va_start", "va_arg", "va_end", "va_copy"}
         and c + 1 < end
@@ -156,10 +159,12 @@ def my_get_expr_part(
 from .CompoundLiteralExpr import CompoundLiteralExpr
 from .CurlyExpr import CurlyExpr
 from .DesigInitExpr import DesigInitExpr
+from .BuiltinCallExpr import BuiltinCallExpr
 from .LiteralExpr import LiteralExpr
 from .NameRefExpr import NameRefExpr
 from .StmntExpr import StmntExpr
 from .VaIntrinsicExpr import VaIntrinsicExpr
+from .get_implicit_conv_expr import get_implicit_conv_expr
 from .get_expr import get_expr
 from ..ParsingError import ParsingError
 from ..constants import DCT_FIXES
@@ -174,6 +179,7 @@ from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
 from ..type.types import (
     ClassType,
     CompileContext,
+    ContextVariable,
     PrimitiveType,
     IdentifiedQualType,
     QualType,
@@ -189,6 +195,85 @@ from ...lexer.lexer import BreakSymClass, OperatorClass, Token, TokenType
 
 
 _builtin_result_int_t = PrimitiveType.from_str_name(["signed", "int"])
+_builtin_arg_u16_t = PrimitiveType.from_str_name(["unsigned", "short"])
+_builtin_arg_u32_t = PrimitiveType.from_str_name(["unsigned", "int"])
+_builtin_arg_u64_t = size_l_t
+_builtin_ret_u16_t = PrimitiveType.from_str_name(["unsigned", "short"])
+_builtin_ret_u32_t = PrimitiveType.from_str_name(["unsigned", "int"])
+_builtin_ret_u64_t = size_l_t
+
+
+class _BuiltinUnarySpec(NamedTuple):
+    helper_name: str
+    helper_link_name: str
+    arg_type: "BaseType"
+    result_type: "BaseType"
+
+
+def _get_builtin_helper_link_name(helper_name, arg_type, result_type):
+    helper_ctx = CompileContext("", None, None)
+    helper_type = QualType(QualType.QUAL_FN, result_type, [arg_type])
+    helper_var = ContextVariable(helper_name, helper_type)
+    helper_ctx.new_var(helper_name, helper_var)
+    return helper_var.get_link_name()
+
+
+def _make_builtin_unary_spec(helper_name, arg_type, result_type):
+    return _BuiltinUnarySpec(
+        helper_name,
+        _get_builtin_helper_link_name(helper_name, arg_type, result_type),
+        arg_type,
+        result_type,
+    )
+
+
+_builtin_unary_specs: Dict[str, _BuiltinUnarySpec] = {
+    "__builtin_clz": _make_builtin_unary_spec(
+        "__svm_clz4", _builtin_arg_u32_t, _builtin_result_int_t
+    ),
+    "__builtin_clzl": _make_builtin_unary_spec(
+        "__svm_clz8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+    "__builtin_clzll": _make_builtin_unary_spec(
+        "__svm_clz8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+    "__builtin_ctz": _make_builtin_unary_spec(
+        "__svm_ctz4", _builtin_arg_u32_t, _builtin_result_int_t
+    ),
+    "__builtin_ctzl": _make_builtin_unary_spec(
+        "__svm_ctz8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+    "__builtin_ctzll": _make_builtin_unary_spec(
+        "__svm_ctz8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+    "__builtin_popcount": _make_builtin_unary_spec(
+        "__svm_popcnt4", _builtin_arg_u32_t, _builtin_result_int_t
+    ),
+    "__builtin_popcountl": _make_builtin_unary_spec(
+        "__svm_popcnt8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+    "__builtin_popcountll": _make_builtin_unary_spec(
+        "__svm_popcnt8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+    "__builtin_bswap16": _make_builtin_unary_spec(
+        "__svm_bswap2", _builtin_arg_u16_t, _builtin_ret_u16_t
+    ),
+    "__builtin_bswap32": _make_builtin_unary_spec(
+        "__svm_bswap4", _builtin_arg_u32_t, _builtin_ret_u32_t
+    ),
+    "__builtin_bswap64": _make_builtin_unary_spec(
+        "__svm_bswap8", _builtin_arg_u64_t, _builtin_ret_u64_t
+    ),
+    "__builtin_ffs": _make_builtin_unary_spec(
+        "__svm_ffs4", _builtin_arg_u32_t, _builtin_result_int_t
+    ),
+    "__builtin_ffsl": _make_builtin_unary_spec(
+        "__svm_ffs8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+    "__builtin_ffsll": _make_builtin_unary_spec(
+        "__svm_ffs8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+}
 
 
 def _deduce_compound_literal_array_extent(typ, expr):
@@ -253,6 +338,29 @@ def _find_call_paren_end(tokens, c, end):
                 return c
         c += 1
     raise ParsingError(tokens, end - 1, "Expected ')' to terminate builtin call")
+
+
+def _build_builtin_unary_expr(name, tokens, c, end, context):
+    spec = _builtin_unary_specs[name]
+    paren_end = _find_call_paren_end(tokens, c, end)
+    expr, c = get_expr(tokens, c, ",", paren_end, context)
+    if expr is None:
+        raise ParsingError(tokens, c, "%s expects one argument" % name)
+    if c != paren_end:
+        raise ParsingError(tokens, c, "%s expects exactly one argument" % name)
+    converted = get_implicit_conv_expr(expr, spec.arg_type)
+    if converted is None:
+        raise ParsingError(
+            tokens,
+            c,
+            "%s expects an integer argument convertible to %s"
+            % (name, spec.arg_type.to_user_str()),
+        )
+    expr, _ = converted
+    return (
+        BuiltinCallExpr(name, [expr], spec.helper_link_name, spec.result_type),
+        paren_end + 1,
+    )
 
 
 def _build_builtin_expect_expr(tokens, c, end, context):

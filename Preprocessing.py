@@ -421,7 +421,22 @@ class Preprocessor:
     )
     _SUPPORTED_BUILTINS: FrozenSet[str] = frozenset(
         {
+            "builtin_bswap16",
+            "builtin_bswap32",
+            "builtin_bswap64",
+            "builtin_clz",
+            "builtin_clzl",
+            "builtin_clzll",
             "builtin_expect",
+            "builtin_ctz",
+            "builtin_ctzl",
+            "builtin_ctzll",
+            "builtin_ffs",
+            "builtin_ffsl",
+            "builtin_ffsll",
+            "builtin_popcount",
+            "builtin_popcountl",
+            "builtin_popcountll",
             "builtin_unreachable",
             "builtin_offsetof",
             "builtin_types_compatible_p",

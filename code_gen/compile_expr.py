@@ -11,6 +11,36 @@ def _is_int128_type(typ: "BaseType") -> bool:
     )
 
 
+def _compile_direct_helper_call(
+    cmpl_obj: "BaseCmplObj",
+    helper_link_name: str,
+    args: List["BaseExpr"],
+    res_type: "BaseType",
+    context: "CompileContext",
+    cmpl_data: "LocalCompileData",
+    temp_links: List[Tuple["BaseType", "BaseLink"]],
+):
+    sz_args = 0
+    sz_ret = size_of(res_type)
+    sz_cls_ret = emit_load_i_const(cmpl_obj.memory, sz_ret, False)
+    cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls_ret])
+    cmpl_data.bp_off += sz_ret
+    c = len(args)
+    while c > 0:
+        c -= 1
+        arg = args[c]
+        sz = compile_expr(cmpl_obj, arg, context, cmpl_data, arg.t_anot, temp_links)
+        cmpl_data.bp_off += sz
+        sz_args += sz
+    cmpl_obj.get_link(helper_link_name).emit_lea(cmpl_obj.memory)
+    cmpl_obj.memory.extend([BC_CALL])
+    sz_cls = emit_load_i_const(cmpl_obj.memory, sz_args, False)
+    cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
+    cmpl_data.bp_off -= sz_args
+    cmpl_data.bp_off -= sz_ret
+    return sz_ret
+
+
 @try_catch_wrapper_co_expr
 def compile_expr(
     cmpl_obj: "BaseCmplObj",
@@ -195,6 +225,18 @@ def compile_expr(
         cmpl_data.bp_off -= sz0
         cmpl_data.bp_off -= sz_ret
         sz = sz_ret
+    elif expr.expr_id == ExprType.BUILTIN_CALL:
+        assert isinstance(expr, BuiltinCallExpr)
+        assert cmpl_data is not None
+        sz = _compile_direct_helper_call(
+            cmpl_obj,
+            expr.helper_link_name,
+            expr.args,
+            res_type,
+            context,
+            cmpl_data,
+            temp_links,
+        )
     elif expr.expr_id == ExprType.PTR_MEMBER:
         assert isinstance(expr, SpecialPtrMemberExpr)
         prim_type = get_base_prim_type(expr.obj.t_anot)
@@ -754,6 +796,7 @@ from ..StackVM.PyStackVM import (
 )
 from ..parser.expr.BaseExpr import BaseExpr, ExprType
 from ..parser.expr.BinaryOpExpr import BinaryOpExpr
+from ..parser.expr.BuiltinCallExpr import BuiltinCallExpr
 from ..parser.expr.CastOpExpr import CastOpExpr, CastType
 from ..parser.expr.CompoundLiteralExpr import CompoundLiteralExpr
 from ..parser.expr.FnCallExpr import FnCallExpr

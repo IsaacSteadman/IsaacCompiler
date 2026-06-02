@@ -23,7 +23,7 @@ from .parser.type.types import (
     PrimitiveType,
     TypeDefCtxMember,
 )
-from .code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import lib_utils_abi
+from .lib.runtime_support import runtime_extern_deps
 
 
 def flatify_dep_desc(dep_dct: Dict[str, List[str]], start_k: str) -> Set[str]:
@@ -339,7 +339,7 @@ if args.subcommand == "compile":
         link_opts = LinkerOptions(
             True,
             args.data_seg_align,
-            lib_utils_abi.objects,
+            runtime_extern_deps,
             LNK_RUN_STANDALONE if link_style == "standalone" else 0,
             args.default_alignment,
         )
