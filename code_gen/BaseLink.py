@@ -1,5 +1,7 @@
 from typing import Any, Callable, Optional, TypeVar, Union
 
+from ..StackVM.PyStackVM import BCR_ATOMIC_LOAD, BCR_ATOMIC_STORE
+
 
 class BaseLink(object):
     def get_offset_link(self, offset: int) -> "BaseLink":
@@ -17,11 +19,16 @@ class BaseLink(object):
         sz_cls: int,
         cmpl_obj=None,
         volatile_access: bool = False,
+        atomic_access: bool = False,
+        atomic_order: int = 3,
     ):
         self.emit_lea(memory)
         if cmpl_obj is not None:
             record_memory_access(cmpl_obj, "load", 1 << sz_cls, volatile_access)
-        memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
+        if atomic_access:
+            memory.extend([BC_LOAD, BCR_ATOMIC_LOAD | (sz_cls << 5), atomic_order & 0xFF])
+        else:
+            memory.extend([BC_LOAD, BCR_ABS_S8 | (sz_cls << 5)])
 
     def emit_stor_pot(
         self,
@@ -29,13 +36,28 @@ class BaseLink(object):
         sz_cls: int,
         cmpl_obj=None,
         volatile_access: bool = False,
+        atomic_access: bool = False,
+        atomic_order: int = 3,
     ):
         self.emit_lea(memory)
         if cmpl_obj is not None:
             record_memory_access(cmpl_obj, "stor", 1 << sz_cls, volatile_access)
-        memory.extend([
-            # BC_SWAP, BCS_SZ8_B | sz_cls,  # SzCls0 does not need to be shifted as BCS_SZ_A_MASK is 0x7
-            BC_STOR, BCR_ABS_S8 | (sz_cls << 5)])
+        if atomic_access:
+            memory.extend(
+                [
+                    BC_STOR,
+                    BCR_ATOMIC_STORE | (sz_cls << 5),
+                    atomic_order & 0xFF,
+                ]
+            )
+        else:
+            memory.extend(
+                [
+                    # BC_SWAP, BCS_SZ8_B | sz_cls,  # SzCls0 does not need to be shifted as BCS_SZ_A_MASK is 0x7
+                    BC_STOR,
+                    BCR_ABS_S8 | (sz_cls << 5),
+                ]
+            )
 
     def emit_load(
         self,
@@ -44,10 +66,14 @@ class BaseLink(object):
         byte_copy_arg: TypeVar("T"),
         byte_copy_intrinsic: Callable[[TypeVar("T"), Union[memoryview, bytearray], Optional[int], bool, bool], Any],
         volatile_access: bool = False,
+        atomic_access: bool = False,
+        atomic_order: int = 3,
     ):
         cmpl_obj = byte_copy_arg if hasattr(byte_copy_arg, "memory_accesses") else None
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 4:
+            if atomic_access:
+                raise ValueError("Atomic loads only support 1, 2, 4, 8, and 16 byte objects")
             if cmpl_obj is not None:
                 record_memory_access(
                     cmpl_obj,
@@ -64,7 +90,14 @@ class BaseLink(object):
             sz_cls_1 = emit_load_i_const(memory, stack_left, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_load_pot(memory, sz_cls_0, cmpl_obj, volatile_access)
+            self.emit_load_pot(
+                memory,
+                sz_cls_0,
+                cmpl_obj,
+                volatile_access,
+                atomic_access,
+                atomic_order,
+            )
 
     def emit_stor(
         self,
@@ -73,10 +106,14 @@ class BaseLink(object):
         byte_copy_arg: TypeVar("T"),
         byte_copy_intrinsic: Callable[[TypeVar("T"), Union[memoryview, bytearray], Optional[int], bool, bool], Any],
         volatile_access: bool = False,
+        atomic_access: bool = False,
+        atomic_order: int = 3,
     ):
         cmpl_obj = byte_copy_arg if hasattr(byte_copy_arg, "memory_accesses") else None
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 4:
+            if atomic_access:
+                raise ValueError("Atomic stores only support 1, 2, 4, 8, and 16 byte objects")
             if cmpl_obj is not None:
                 record_memory_access(
                     cmpl_obj,
@@ -91,7 +128,14 @@ class BaseLink(object):
             sz_cls_1 = emit_load_i_const(memory, stack_left + size, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_stor_pot(memory, sz_cls_0, cmpl_obj, volatile_access)
+            self.emit_stor_pot(
+                memory,
+                sz_cls_0,
+                cmpl_obj,
+                volatile_access,
+                atomic_access,
+                atomic_order,
+            )
     # byte_copy_intrinsic
     # OutIsStack for Load, InIsStack for Stor
     #   Arg: Generic

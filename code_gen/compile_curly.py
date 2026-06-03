@@ -16,12 +16,28 @@ def compile_curly(
     cmpl_data = LocalCompileData(cmpl_data)
     for cur_stmnt in stmnt.stmnts:
         compile_stmnt(cmpl_obj, cur_stmnt, stmnt.context, cmpl_data)
+    implicit_cmpl_obj = (
+        cmpl_obj if isinstance(cmpl_obj, Compilation) else cmpl_obj.parent
+    )
+    for ctx_var in stmnt.implicit_ctx_vars:
+        link = cmpl_obj.linkages.get(ctx_var.get_link_name())
+        if link is None or not link.lst_tgt:
+            continue
+        ctx_var.typ.compile_var_init(
+            implicit_cmpl_obj,
+            [] if ctx_var.init_expr is None else [ctx_var.init_expr],
+            stmnt.context,
+            VarRefTosNamed(ctx_var),
+            cmpl_data,
+        )
     cmpl_data.compile_leave_scope(cmpl_obj, stmnt.context)
     return 0
 
 
 from .CompileObject import CompileObject
+from .Compilation import Compilation
 from .LocalCompileData import LocalCompileData
 from .compile_stmnt import compile_stmnt
+from ..parser.type.helpers.VarRef import VarRefTosNamed
 from ..parser.stmnt.CurlyStmnt import CurlyStmnt
 from ..parser.type.types import CompileContext

@@ -41,6 +41,150 @@ def _compile_direct_helper_call(
     return sz_ret
 
 
+def _get_atomic_size_class(size: int) -> int:
+    sz_cls = size.bit_length() - 1
+    if size != 1 << sz_cls or sz_cls > 4:
+        raise ValueError(
+            "Atomic operations only support 1, 2, 4, 8, and 16 byte objects"
+        )
+    return sz_cls
+
+
+def _emit_raw_equality_compare(cmpl_obj: "BaseCmplObj", size: int) -> None:
+    sz_cls = _get_atomic_size_class(size)
+    if size == 16:
+        cmpl_obj.memory.extend([BC_INT128, BC128_CMP128U])
+    else:
+        cmpl_obj.memory.append(BC_CMP1 + 2 * sz_cls)
+
+
+def _compile_atomic_intrinsic_expr(
+    cmpl_obj: "BaseCmplObj",
+    expr: "AtomicIntrinsicExpr",
+    context: "CompileContext",
+    cmpl_data: "LocalCompileData",
+    temp_links: List[Tuple["BaseType", "BaseLink"]],
+) -> int:
+    value_type = get_value_type(expr.value_type)
+    size = size_of(value_type)
+    sz_cls = _get_atomic_size_class(size)
+    order = expr.order & 0xFF
+
+    if expr.intrinsic_id == AtomicIntrinsicExpr.INTRINSIC_LOAD:
+        ptr_type = get_value_type(expr.args[0].t_anot)
+        compile_expr(cmpl_obj, expr.args[0], context, cmpl_data, ptr_type, temp_links)
+        emit_atomic_load_variant(
+            cmpl_obj,
+            BCR_ATOMIC_LOAD,
+            size,
+            order,
+            is_volatile_storage_type(ptr_type.tgt_type),
+        )
+        return size
+
+    if expr.intrinsic_id == AtomicIntrinsicExpr.INTRINSIC_STORE:
+        ptr_type = get_value_type(expr.args[0].t_anot)
+        compile_expr(cmpl_obj, expr.args[1], context, cmpl_data, value_type, temp_links)
+        compile_expr(cmpl_obj, expr.args[0], context, cmpl_data, ptr_type, temp_links)
+        emit_tracked_abs_s8_stor(
+            cmpl_obj,
+            size,
+            is_volatile_storage_type(ptr_type.tgt_type),
+            atomic_access=True,
+            atomic_order=order,
+        )
+        return 0
+
+    if expr.intrinsic_id in {
+        AtomicIntrinsicExpr.INTRINSIC_XCHG,
+        AtomicIntrinsicExpr.INTRINSIC_FADD,
+        AtomicIntrinsicExpr.INTRINSIC_FSUB,
+        AtomicIntrinsicExpr.INTRINSIC_FAND,
+        AtomicIntrinsicExpr.INTRINSIC_FOR,
+        AtomicIntrinsicExpr.INTRINSIC_FXOR,
+    }:
+        ptr_type = get_value_type(expr.args[0].t_anot)
+        compile_expr(cmpl_obj, expr.args[1], context, cmpl_data, value_type, temp_links)
+        compile_expr(cmpl_obj, expr.args[0], context, cmpl_data, ptr_type, temp_links)
+        variant = {
+            AtomicIntrinsicExpr.INTRINSIC_XCHG: BCR_ATOMIC_XCHG,
+            AtomicIntrinsicExpr.INTRINSIC_FADD: BCR_ATOMIC_FADD,
+            AtomicIntrinsicExpr.INTRINSIC_FSUB: BCR_ATOMIC_FSUB,
+            AtomicIntrinsicExpr.INTRINSIC_FAND: BCR_ATOMIC_FAND,
+            AtomicIntrinsicExpr.INTRINSIC_FOR: BCR_ATOMIC_FOR,
+            AtomicIntrinsicExpr.INTRINSIC_FXOR: BCR_ATOMIC_FXOR,
+        }[expr.intrinsic_id]
+        emit_atomic_load_variant(
+            cmpl_obj,
+            variant,
+            size,
+            order,
+            is_volatile_storage_type(ptr_type.tgt_type),
+        )
+        return size
+
+    if expr.intrinsic_id == AtomicIntrinsicExpr.INTRINSIC_CAS_STRONG:
+        expected_ptr_link = temp_links[expr.temps_off][1]
+        expected_value_link = temp_links[expr.temps_off + 1][1]
+        obj_ptr_type = get_value_type(expr.args[0].t_anot)
+        expected_ptr_type = get_value_type(expr.args[1].t_anot)
+
+        compile_expr(
+            cmpl_obj,
+            expr.args[1],
+            context,
+            cmpl_data,
+            expected_ptr_type,
+            temp_links,
+        )
+        cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | BCR_SZ_8])
+        expected_ptr_link.emit_stor(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        sz_cls_addr = emit_load_i_const(cmpl_obj.memory, 8, False)
+        cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls_addr])
+
+        expected_ptr_link.emit_load(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        emit_tracked_abs_s8_load(cmpl_obj, size)
+        cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | (sz_cls << 5)])
+        expected_value_link.emit_stor(
+            cmpl_obj.memory, size, cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        compile_expr(cmpl_obj, expr.args[2], context, cmpl_data, value_type, temp_links)
+        cmpl_obj.memory.extend([BC_SWAP, (sz_cls << 3) | sz_cls])
+        compile_expr(
+            cmpl_obj,
+            expr.args[0],
+            context,
+            cmpl_data,
+            obj_ptr_type,
+            temp_links,
+        )
+        emit_atomic_load_variant(
+            cmpl_obj,
+            BCR_ATOMIC_CAS,
+            size,
+            order,
+            is_volatile_storage_type(obj_ptr_type.tgt_type),
+        )
+
+        cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | (sz_cls << 5)])
+        expected_value_link.emit_load(
+            cmpl_obj.memory, size, cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        _emit_raw_equality_compare(cmpl_obj, size)
+        cmpl_obj.memory.append(BC_EQ0)
+        expected_value_link.emit_stor(
+            cmpl_obj.memory, 1, cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        expected_ptr_link.emit_load(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        emit_tracked_abs_s8_stor(cmpl_obj, size)
+        expected_value_link.emit_load(
+            cmpl_obj.memory, 1, cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        return 1
+
+    raise ValueError("Unknown atomic intrinsic id: %d" % expr.intrinsic_id)
+
+
 @try_catch_wrapper_co_expr
 def compile_expr(
     cmpl_obj: "BaseCmplObj",
@@ -237,6 +381,13 @@ def compile_expr(
             cmpl_data,
             temp_links,
         )
+    elif expr.expr_id == ExprType.ATOMIC_INTRINSIC:
+        assert isinstance(expr, AtomicIntrinsicExpr)
+        assert cmpl_data is not None
+        sz = _compile_atomic_intrinsic_expr(
+            cmpl_obj, expr, context, cmpl_data, temp_links
+        )
+        res_type = expr.t_anot
     elif expr.expr_id == ExprType.PTR_MEMBER:
         assert isinstance(expr, SpecialPtrMemberExpr)
         prim_type = get_base_prim_type(expr.obj.t_anot)
@@ -331,6 +482,7 @@ def compile_expr(
                         cmpl_obj,
                         byte_copy_cmpl_intrinsic,
                         volatile_access=is_volatile_storage_type(ctx_var.typ),
+                        atomic_access=is_atomic_storage_type(ctx_var.typ),
                     )
                 else:
                     raise TypeError(
@@ -380,6 +532,7 @@ def compile_expr(
                         cmpl_obj,
                         byte_copy_cmpl_intrinsic,
                         volatile_access=is_volatile_storage_type(temp_type),
+                        atomic_access=is_atomic_storage_type(temp_type),
                     )
                 else:
                     raise TypeError(
@@ -496,6 +649,7 @@ def compile_expr(
             assert a_type.qual_id == QualType.QUAL_REF
             swap_byte = (sz_cls << 3) | BCS_SZ8_A
             is_volatile_access = is_volatile_storage_type(a_type, through_ref=True)
+            is_atomic_access = is_atomic_storage_type(a_type, through_ref=True)
             is_add = expr.type_id in [
                 UnaryExprSubType.PRE_INC,
                 UnaryExprSubType.POST_INC,
@@ -517,7 +671,12 @@ def compile_expr(
                         BCR_TOS | BCR_SZ_8,
                     ]
                 )
-                emit_tracked_abs_s8_load(cmpl_obj, sz_num, is_volatile_access)
+                emit_tracked_abs_s8_load(
+                    cmpl_obj,
+                    sz_num,
+                    is_volatile_access,
+                    atomic_access=is_atomic_access,
+                )
             else:
                 if type_coerce is void_t:
                     res_type = void_t
@@ -528,7 +687,12 @@ def compile_expr(
                             BCR_TOS | BCR_SZ_8,
                         ]
                     )
-                    emit_tracked_abs_s8_load(cmpl_obj, sz_num, is_volatile_access)
+                    emit_tracked_abs_s8_load(
+                        cmpl_obj,
+                        sz_num,
+                        is_volatile_access,
+                        atomic_access=is_atomic_access,
+                    )
                 else:
                     res_type = get_value_type(a_type)
                     sz = size_of(res_type)
@@ -538,9 +702,19 @@ def compile_expr(
                             BCR_TOS | BCR_SZ_8,
                         ]
                     )
-                    emit_tracked_abs_s8_load(cmpl_obj, sz_num, is_volatile_access)
+                    emit_tracked_abs_s8_load(
+                        cmpl_obj,
+                        sz_num,
+                        is_volatile_access,
+                        atomic_access=is_atomic_access,
+                    )
                     cmpl_obj.memory.extend([BC_SWAP, swap_byte, BC_LOAD, BCR_TOS | BCR_SZ_8])
-                    emit_tracked_abs_s8_load(cmpl_obj, sz_num, is_volatile_access)
+                    emit_tracked_abs_s8_load(
+                        cmpl_obj,
+                        sz_num,
+                        is_volatile_access,
+                        atomic_access=is_atomic_access,
+                    )
             emit_load_i_const(cmpl_obj.memory, inc_by, False, sz_cls)
             if sz_num == 16 and isinstance(prim_inc_type, PrimitiveType):
                 cmpl_obj.memory.extend(
@@ -563,7 +737,12 @@ def compile_expr(
                         swap_byte,
                     ]
                 )
-                emit_tracked_abs_s8_stor(cmpl_obj, sz_num, is_volatile_access)
+                emit_tracked_abs_s8_stor(
+                    cmpl_obj,
+                    sz_num,
+                    is_volatile_access,
+                    atomic_access=is_atomic_access,
+                )
             else:
                 cmpl_obj.memory.extend(
                     [
@@ -572,7 +751,12 @@ def compile_expr(
                         swap_byte,
                     ]
                 )
-                emit_tracked_abs_s8_stor(cmpl_obj, sz_num, is_volatile_access)
+                emit_tracked_abs_s8_stor(
+                    cmpl_obj,
+                    sz_num,
+                    is_volatile_access,
+                    atomic_access=is_atomic_access,
+                )
 
         else:
             raise NotImplementedError(
@@ -749,6 +933,7 @@ def compile_expr(
 from .BaseCmplObj import BaseCmplObj
 from .BaseLink import BaseLink
 from .CompileExprException import CompileExprException
+from .LinkRef import LinkRef
 from .LocalCompileData import LocalCompileData
 from .LocalRef import LocalRef
 from .byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
@@ -757,7 +942,11 @@ from .compile_conv_general import compile_conv_general
 from .compile_expr import compile_expr
 from .compile_stmnt import compile_stmnt
 from .CompileObject import CompileObject
-from .memory_access import emit_tracked_abs_s8_load, emit_tracked_abs_s8_stor
+from .memory_access import (
+    emit_atomic_load_variant,
+    emit_tracked_abs_s8_load,
+    emit_tracked_abs_s8_stor,
+)
 from .get_bc_conv_bits import get_bc_conv_bits
 from .setup_temp_links import setup_temp_links
 from .tear_down_temp_links import tear_down_temp_links
@@ -766,11 +955,21 @@ from .stackvm_binutils.sz_cls_align_long import sz_cls_align_long
 from ..StackVM.PyStackVM import (
     BC128_ADD128S,
     BC128_ADD128U,
+    BC128_CMP128U,
     BC128_NOT128,
     BC128_SUB128S,
     BC128_SUB128U,
     BCR_ABS_C,
+    BCR_ATOMIC_CAS,
+    BCR_ATOMIC_FADD,
+    BCR_ATOMIC_FAND,
+    BCR_ATOMIC_FOR,
+    BCR_ATOMIC_FSUB,
+    BCR_ATOMIC_FXOR,
+    BCR_ATOMIC_LOAD,
+    BCR_ATOMIC_XCHG,
     BCR_ABS_S8,
+    BCR_EA_R_IP,
     BCR_SZ_8,
     BCR_TOS,
     BCS_SZ8_A,
@@ -778,14 +977,18 @@ from ..StackVM.PyStackVM import (
     BC_ADD8,
     BC_ADD_SP1,
     BC_CALL,
+    BC_CMP1,
     BC_CONV,
     BC_EQ0,
     BC_FSUB_16,
     BC_FSUB_2,
     BC_INT128,
+    BC_JMP,
+    BC_JMPIF,
     BC_LOAD,
     BC_MUL8,
     BC_NOT1,
+    BC_NE0,
     BC_RST_SP1,
     BC_STOR,
     BC_SUB1,
@@ -795,6 +998,7 @@ from ..StackVM.PyStackVM import (
     float_t,
 )
 from ..parser.expr.BaseExpr import BaseExpr, ExprType
+from ..parser.expr.AtomicIntrinsicExpr import AtomicIntrinsicExpr
 from ..parser.expr.BinaryOpExpr import BinaryOpExpr
 from ..parser.expr.BuiltinCallExpr import BuiltinCallExpr
 from ..parser.expr.CastOpExpr import CastOpExpr, CastType
@@ -829,6 +1033,7 @@ from ..parser.type.types import (
     get_base_prim_type,
     get_tgt_ref_type,
     get_value_type,
+    is_atomic_storage_type,
     is_volatile_storage_type,
     prim_types,
     size_of,

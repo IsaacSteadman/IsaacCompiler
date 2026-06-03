@@ -9,16 +9,17 @@ def tear_down_temp_links(
     cmpl_data: Optional["LocalCompileData"] = None,
 ):
     c = len(temp_links)
-    sz_reset = 0
     while c > 0:
         c -= 1
         assert isinstance(c, int)
         typ, link = temp_links[c]
         typ.compile_var_de_init(cmpl_obj, context, VarRefLnkPrealloc(link), cmpl_data)
-        sz_reset += size_of(typ)
+    sz_reset = expr.temps_stack_size
     if sz_reset:
         sz_cls = emit_load_i_const(cmpl_obj.memory, sz_reset, False)
         cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
+        if cmpl_data is not None:
+            cmpl_data.bp_off -= sz_reset
 
 
 from .BaseCmplObj import BaseCmplObj
@@ -28,5 +29,5 @@ from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import BC_RST_SP1
 from ..parser.expr.BaseExpr import BaseExpr
 from ..parser.type.BaseType import BaseType
-from ..parser.type.types import CompileContext, size_of
+from ..parser.type.types import CompileContext
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc

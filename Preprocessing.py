@@ -151,7 +151,6 @@ class Preprocessor:
             "__STDC__": "1",
             "__STDC_VERSION__": "201112L",
             "__STDC_HOSTED__": "0",
-            "__STDC_NO_ATOMICS__": "1",
         }
         for name, repl in _builtin.items():
             if name not in self.defines:

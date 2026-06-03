@@ -671,6 +671,9 @@ class PrimitiveType(BaseType):
                             cmpl_obj,
                             sz_var,
                             is_volatile_storage_type(expr.t_anot, through_ref=True),
+                            atomic_access=is_atomic_storage_type(
+                                expr.t_anot, through_ref=True
+                            ),
                         )
                 if ctx_var is not None:
                     cmpl_data.put_local(ctx_var, name, sz_var, None, True)
@@ -697,6 +700,7 @@ class PrimitiveType(BaseType):
                 cmpl_obj,
                 byte_copy_cmpl_intrinsic,
                 volatile_access=is_volatile_storage_type(self),
+                atomic_access=is_atomic_storage_type(self),
             )
             return sz_var
         else:
@@ -1123,6 +1127,14 @@ def _get_context_default_alignment(
 def _align_up(x: int, align: int) -> int:
     """Round x up to the nearest multiple of align (align must be a power of 2)."""
     return (x + align - 1) & ~(align - 1)
+
+
+def _host_atomic_align_for_size(size: int) -> int:
+    if size <= 1:
+        return 1
+    if size in {2, 4, 8, 16}:
+        return size
+    return 1 << (size - 1).bit_length()
 
 
 def _eval_attr_align_expr(
@@ -1781,6 +1793,9 @@ class StructType(CompileContext, BaseType):
                         cmpl_obj,
                         sz_var,
                         is_volatile_storage_type(expr.t_anot, through_ref=True),
+                        atomic_access=is_atomic_storage_type(
+                            expr.t_anot, through_ref=True
+                        ),
                     )
                 else:
                     assert sz == sz_var
@@ -1809,6 +1824,9 @@ class StructType(CompileContext, BaseType):
                         cmpl_obj,
                         sz_var,
                         is_volatile_storage_type(init_args[0].t_anot, through_ref=True),
+                        atomic_access=is_atomic_storage_type(
+                            init_args[0].t_anot, through_ref=True
+                        ),
                     )
                 else:
                     sz = compile_expr(
@@ -1828,6 +1846,9 @@ class StructType(CompileContext, BaseType):
                     cmpl_obj,
                     byte_copy_cmpl_intrinsic,
                     volatile_access=is_volatile_storage_type(
+                        self if ctx_var is None else ctx_var.typ
+                    ),
+                    atomic_access=is_atomic_storage_type(
                         self if ctx_var is None else ctx_var.typ
                     ),
                 )
@@ -2086,6 +2107,9 @@ class UnionType(CompileContext, BaseType):
                         cmpl_obj,
                         sz_var,
                         is_volatile_storage_type(expr.t_anot, through_ref=True),
+                        atomic_access=is_atomic_storage_type(
+                            expr.t_anot, through_ref=True
+                        ),
                     )
                 else:
                     assert sz == sz_var
@@ -2114,6 +2138,9 @@ class UnionType(CompileContext, BaseType):
                         cmpl_obj,
                         sz_var,
                         is_volatile_storage_type(init_args[0].t_anot, through_ref=True),
+                        atomic_access=is_atomic_storage_type(
+                            init_args[0].t_anot, through_ref=True
+                        ),
                     )
                 else:
                     sz = compile_expr(
@@ -2133,6 +2160,9 @@ class UnionType(CompileContext, BaseType):
                     cmpl_obj,
                     byte_copy_cmpl_intrinsic,
                     volatile_access=is_volatile_storage_type(
+                        self if ctx_var is None else ctx_var.typ
+                    ),
+                    atomic_access=is_atomic_storage_type(
                         self if ctx_var is None else ctx_var.typ
                     ),
                 )
@@ -2952,7 +2982,15 @@ def proc_typed_decl(
         elif (
             tokens[c].type_id == TokenType.NAME
             and tokens[c].str
-            not in {"const", "auto", "volatile", "register", "restrict", "_Noreturn"}
+            not in {
+                "const",
+                "auto",
+                "volatile",
+                "_Atomic",
+                "register",
+                "restrict",
+                "_Noreturn",
+            }
         ) or tokens[c].str == "::":
             i_type = 2
             i_start = c
@@ -3138,17 +3176,20 @@ class QualType(BaseType):
     QUAL_CONST = 1
     QUAL_PTR = 2
     QUAL_VOLATILE = 3
-    QUAL_REG = 4
-    QUAL_REF = 5
-    QUAL_ARR = 6  # basically a pointer but defines how it is allocated (right where it is declared if not an argument)
-    QUAL_FN = 7
-    QUAL_CL_FN = 8
-    QUAL_CTOR = 9
-    QUAL_DTOR = 10
+    QUAL_ATOMIC = 4
+    QUAL_REG = 5
+    QUAL_REF = 6
+    QUAL_ARR = 7  # basically a pointer but defines how it is allocated (right where it is declared if not an argument)
+    QUAL_FN = 8
+    QUAL_CL_FN = 9
+    QUAL_CTOR = 10
+    QUAL_DTOR = 11
     QUAL_Lst = list(
         map(
             lambda x: "QUAL_" + x,
-            "DEF CONST PTR VOLATILE REG REF ARR FN CL_FN CTOR DTOR".split(" "),
+            "DEF CONST PTR VOLATILE ATOMIC REG REF ARR FN CL_FN CTOR DTOR".split(
+                " "
+            ),
         )
     )
     QUAL_Dct = {
@@ -3156,6 +3197,7 @@ class QualType(BaseType):
         "const": QUAL_CONST,
         "*": QUAL_PTR,
         "volatile": QUAL_VOLATILE,
+        "_Atomic": QUAL_ATOMIC,
         "register": QUAL_REG,
         "&": QUAL_REF,
         "[": QUAL_ARR,
@@ -3165,6 +3207,7 @@ class QualType(BaseType):
         "C": QUAL_CONST,
         "P": QUAL_PTR,
         "V": QUAL_VOLATILE,
+        "Q": QUAL_ATOMIC,
         "S": QUAL_REG,
         "R": QUAL_REF,
         "A": QUAL_ARR,
@@ -3202,6 +3245,7 @@ class QualType(BaseType):
             QualType.QUAL_REG,
             QualType.QUAL_CONST,
             QualType.QUAL_VOLATILE,
+            QualType.QUAL_ATOMIC,
             QualType.QUAL_DEF,
         }:
             return self.tgt_type.get_ctor_fn_types()
@@ -3285,6 +3329,8 @@ class QualType(BaseType):
             s = "pointer to "
         elif self.qual_id == QualType.QUAL_VOLATILE:
             s = "volatile "
+        elif self.qual_id == QualType.QUAL_ATOMIC:
+            s = "_Atomic "
         elif self.qual_id == QualType.QUAL_REG:
             s = "register "
         elif self.qual_id == QualType.QUAL_REF:
@@ -3456,6 +3502,7 @@ class QualType(BaseType):
             QualType.QUAL_DEF,
             QualType.QUAL_CONST,
             QualType.QUAL_VOLATILE,
+            QualType.QUAL_ATOMIC,
             QualType.QUAL_REG,
         ]:
             return self.tgt_type.compile_var_init(
@@ -3602,6 +3649,7 @@ class QualType(BaseType):
                     cmpl_obj,
                     byte_copy_cmpl_intrinsic,
                     volatile_access=is_volatile_storage_type(self),
+                    atomic_access=is_atomic_storage_type(self),
                 )
         return sz_var
 
@@ -3611,6 +3659,7 @@ class QualType(BaseType):
             QualType.QUAL_REG,
             QualType.QUAL_DEF,
             QualType.QUAL_VOLATILE,
+            QualType.QUAL_ATOMIC,
         ]:
             return self.tgt_type.compile_var_de_init(cmpl_obj, context, ref, cmpl_data)
         elif self.qual_id == QualType.QUAL_ARR:
@@ -3629,6 +3678,7 @@ def _strip_cv_qualifiers(typ: "BaseType") -> "BaseType":
         QualType.QUAL_DEF,
         QualType.QUAL_REG,
         QualType.QUAL_VOLATILE,
+        QualType.QUAL_ATOMIC,
     }:
         typ = typ.tgt_type
     return typ
@@ -3650,8 +3700,33 @@ def is_volatile_type(
         QualType.QUAL_DEF,
         QualType.QUAL_REG,
         QualType.QUAL_VOLATILE,
+        QualType.QUAL_ATOMIC,
     }:
         if typ.qual_id == QualType.QUAL_VOLATILE:
+            return True
+        typ = typ.tgt_type
+    return False
+
+
+def is_atomic_type(
+    typ: Union["BaseType", "IdentifiedQualType"], through_ref: bool = False
+) -> bool:
+    if isinstance(typ, IdentifiedQualType):
+        typ = typ.typ
+    if (
+        through_ref
+        and isinstance(typ, QualType)
+        and typ.qual_id == QualType.QUAL_REF
+    ):
+        typ = typ.tgt_type
+    while isinstance(typ, QualType) and typ.qual_id in {
+        QualType.QUAL_CONST,
+        QualType.QUAL_DEF,
+        QualType.QUAL_REG,
+        QualType.QUAL_VOLATILE,
+        QualType.QUAL_ATOMIC,
+    }:
+        if typ.qual_id == QualType.QUAL_ATOMIC:
             return True
         typ = typ.tgt_type
     return False
@@ -3675,10 +3750,34 @@ def is_volatile_storage_type(
     return False
 
 
+def is_atomic_storage_type(
+    typ: Union["BaseType", "IdentifiedQualType"], through_ref: bool = False
+) -> bool:
+    if is_atomic_type(typ, through_ref):
+        return True
+    if isinstance(typ, IdentifiedQualType):
+        typ = typ.typ
+    if (
+        through_ref
+        and isinstance(typ, QualType)
+        and typ.qual_id == QualType.QUAL_REF
+    ):
+        typ = typ.tgt_type
+    if isinstance(typ, QualType) and typ.qual_id == QualType.QUAL_ARR:
+        return is_atomic_storage_type(typ.tgt_type)
+    return False
+
+
 def add_volatile_qualifier(typ: "BaseType") -> "BaseType":
     if is_volatile_type(typ):
         return typ
     return QualType(QualType.QUAL_VOLATILE, typ)
+
+
+def add_atomic_qualifier(typ: "BaseType") -> "BaseType":
+    if is_atomic_type(typ):
+        return typ
+    return QualType(QualType.QUAL_ATOMIC, typ)
 
 
 def _is_flexible_array_type(typ: "BaseType") -> bool:
@@ -3727,6 +3826,21 @@ def align_of(
             )
         elif typ.qual_id in {QualType.QUAL_FN, QualType.QUAL_PTR, QualType.QUAL_REF}:
             return _default_align_for_size(8, resolved_default_alignment)
+        elif typ.qual_id == QualType.QUAL_ATOMIC:
+            return max(
+                align_of(
+                    typ.tgt_type,
+                    default_alignment=resolved_default_alignment,
+                    owner=owner,
+                ),
+                _host_atomic_align_for_size(
+                    size_of(
+                        typ.tgt_type,
+                        default_alignment=resolved_default_alignment,
+                        owner=owner,
+                    )
+                ),
+            )
         elif typ.qual_id in {
             QualType.QUAL_CONST,
             QualType.QUAL_DEF,
@@ -3842,6 +3956,7 @@ def size_of(
             QualType.QUAL_DEF,
             QualType.QUAL_REG,
             QualType.QUAL_VOLATILE,
+            QualType.QUAL_ATOMIC,
         }:
             return size_of(
                 typ.tgt_type,
@@ -3932,6 +4047,7 @@ def get_base_prim_type(typ: Union["BaseType", "IdentifiedQualType"]) -> "BaseTyp
         QualType.QUAL_CONST,
         QualType.QUAL_DEF,
         QualType.QUAL_VOLATILE,
+        QualType.QUAL_ATOMIC,
     }
     if typ.type_class_id == TypeClass.PRIM:
         assert isinstance(typ, PrimitiveType)
@@ -3962,6 +4078,7 @@ def get_value_type(typ: "BaseType", do_arr_to_ptr_decay: bool = False):
             QualType.QUAL_CONST,
             QualType.QUAL_REG,
             QualType.QUAL_VOLATILE,
+            QualType.QUAL_ATOMIC,
             QualType.QUAL_DEF,
         ]:
             return get_value_type(typ.tgt_type)
@@ -4781,6 +4898,7 @@ def _try_encode_static_initializer(
             QualType.QUAL_DEF,
             QualType.QUAL_REG,
             QualType.QUAL_VOLATILE,
+            QualType.QUAL_ATOMIC,
         }:
             return _try_encode_static_initializer(
                 storage_obj, value_type.tgt_type, expr, context, base_offset

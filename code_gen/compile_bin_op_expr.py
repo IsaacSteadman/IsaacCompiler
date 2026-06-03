@@ -44,6 +44,7 @@ def _compile_bit_field_assign(cmpl_obj, expr, context, cmpl_data, temp_links, bf
         cmpl_obj,
         bfi.storage_sz,
         is_volatile_storage_type(expr.a.t_anot, through_ref=True),
+        atomic_access=is_atomic_storage_type(expr.a.t_anot, through_ref=True),
     )
     # AND with the clear mask to zero the target field bits
     emit_load_i_const(cmpl_obj.memory, clear_mask, False, sz_cls_bf)
@@ -66,6 +67,7 @@ def _compile_bit_field_assign(cmpl_obj, expr, context, cmpl_data, temp_links, bf
         cmpl_obj,
         bfi.storage_sz,
         is_volatile_storage_type(expr.a.t_anot, through_ref=True),
+        atomic_access=is_atomic_storage_type(expr.a.t_anot, through_ref=True),
     )
     return 0, void_t
 
@@ -138,6 +140,7 @@ def compile_bin_op_expr(
             cmpl_obj,
             byte_copy_cmpl_intrinsic,
             volatile_access=is_volatile_storage_type(a_value_type),
+            atomic_access=is_atomic_storage_type(a_value_type),
         )
     elif expr.type_id in ASSIGNMENT_OPS:
         sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
@@ -166,6 +169,7 @@ def compile_bin_op_expr(
                 cmpl_obj,
                 sz_type,
                 is_volatile_storage_type(expr.a.t_anot, through_ref=True),
+                atomic_access=is_atomic_storage_type(expr.a.t_anot, through_ref=True),
             )
             sz1 += sz_type
         try:
@@ -263,6 +267,7 @@ def compile_bin_op_expr(
             cmpl_obj,
             sz_type,
             is_volatile_storage_type(expr.a.t_anot, through_ref=True),
+            atomic_access=is_atomic_storage_type(expr.a.t_anot, through_ref=True),
         )
         sz1 -= sz_type + 8
         if res_none:
@@ -427,6 +432,7 @@ from ..parser.type.types import (
     QualType,
     compare_no_cvr,
     get_tgt_ref_type,
+    is_atomic_storage_type,
     is_volatile_storage_type,
     prim_types,
     size_of,

@@ -139,6 +139,9 @@ def my_get_expr_part(
     elif s in _builtin_forward_specs and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_forward_expr(s, tokens, c + 2, end, context)
         return ExprOpPart(expr), c
+    elif s in _atomic_intrinsic_specs and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_atomic_intrinsic_expr(s, tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif (
         s in {"va_start", "va_arg", "va_end", "va_copy"}
         and c + 1 < end
@@ -162,9 +165,12 @@ def my_get_expr_part(
 from .CompoundLiteralExpr import CompoundLiteralExpr
 from .CurlyExpr import CurlyExpr
 from .DesigInitExpr import DesigInitExpr
+from .AtomicIntrinsicExpr import AtomicIntrinsicExpr
 from .BuiltinCallExpr import BuiltinCallExpr
+from .CastOpExpr import CastOpExpr
 from .LiteralExpr import LiteralExpr
 from .NameRefExpr import NameRefExpr
+from .ParenthExpr import ParenthExpr
 from .StmntExpr import StmntExpr
 from .VaIntrinsicExpr import VaIntrinsicExpr
 from .get_implicit_conv_expr import get_implicit_conv_expr
@@ -188,8 +194,10 @@ from ..type.types import (
     QualType,
     StructType,
     UnionType,
+    bool_t,
     compare_no_cvr,
     get_value_type,
+    is_atomic_type,
     proc_typed_decl,
     size_l_t,
     void_t,
@@ -218,6 +226,11 @@ class _BuiltinForwardSpec(NamedTuple):
     helper_link_name: str
     arg_types: List["BaseType"]
     result_type: "BaseType"
+
+
+class _AtomicIntrinsicSpec(NamedTuple):
+    intrinsic_id: int
+    arg_count: int
 
 
 def _get_builtin_helper_link_name(helper_name, arg_types, result_type):
@@ -328,6 +341,36 @@ _builtin_forward_specs: Dict[str, _BuiltinForwardSpec] = {
         "strlen",
         [_builtin_const_char_ptr_t],
         size_l_t,
+    ),
+}
+
+_atomic_intrinsic_specs: Dict[str, _AtomicIntrinsicSpec] = {
+    "__svm_atomic_load_explicit": _AtomicIntrinsicSpec(
+        AtomicIntrinsicExpr.INTRINSIC_LOAD, 2
+    ),
+    "__svm_atomic_store_explicit": _AtomicIntrinsicSpec(
+        AtomicIntrinsicExpr.INTRINSIC_STORE, 3
+    ),
+    "__svm_atomic_exchange_explicit": _AtomicIntrinsicSpec(
+        AtomicIntrinsicExpr.INTRINSIC_XCHG, 3
+    ),
+    "__svm_atomic_compare_exchange_strong_explicit": _AtomicIntrinsicSpec(
+        AtomicIntrinsicExpr.INTRINSIC_CAS_STRONG, 5
+    ),
+    "__svm_atomic_fetch_add_explicit": _AtomicIntrinsicSpec(
+        AtomicIntrinsicExpr.INTRINSIC_FADD, 3
+    ),
+    "__svm_atomic_fetch_sub_explicit": _AtomicIntrinsicSpec(
+        AtomicIntrinsicExpr.INTRINSIC_FSUB, 3
+    ),
+    "__svm_atomic_fetch_and_explicit": _AtomicIntrinsicSpec(
+        AtomicIntrinsicExpr.INTRINSIC_FAND, 3
+    ),
+    "__svm_atomic_fetch_or_explicit": _AtomicIntrinsicSpec(
+        AtomicIntrinsicExpr.INTRINSIC_FOR, 3
+    ),
+    "__svm_atomic_fetch_xor_explicit": _AtomicIntrinsicSpec(
+        AtomicIntrinsicExpr.INTRINSIC_FXOR, 3
     ),
 }
 
@@ -454,6 +497,151 @@ def _build_builtin_forward_expr(name, tokens, c, end, context):
         BuiltinCallExpr(name, converted_args, spec.helper_link_name, spec.result_type),
         paren_end + 1,
     )
+
+
+def _unwrap_atomic_const_expr(expr):
+    while isinstance(expr, ParenthExpr) and len(expr.lst_expr) == 1:
+        expr = expr.lst_expr[0]
+    while isinstance(expr, CastOpExpr):
+        expr = expr.expr
+    return expr
+
+
+def _parse_atomic_order_expr(name, arg_name, expr, tokens, c):
+    expr = _unwrap_atomic_const_expr(expr)
+    if not isinstance(expr, LiteralExpr) or expr.t_lit != LiteralExpr.LIT_INT:
+        raise ParsingError(
+            tokens,
+            c,
+            "%s %s must be an integer constant memory_order"
+            % (name, arg_name),
+        )
+    order = int(expr.l_val)
+    if order < 0 or order > 3:
+        raise ParsingError(
+            tokens,
+            c,
+            "%s %s must be between 0 and 3 for StackVM ordering bytes"
+            % (name, arg_name),
+        )
+    return order
+
+
+def _require_atomic_object_ptr(name, tokens, c, expr, arg_name):
+    ptr_type = get_value_type(expr.t_anot)
+    if not isinstance(ptr_type, QualType) or ptr_type.qual_id != QualType.QUAL_PTR:
+        raise ParsingError(tokens, c, "%s %s must be a pointer" % (name, arg_name))
+    if not is_atomic_type(ptr_type.tgt_type):
+        raise ParsingError(
+            tokens, c, "%s %s must point to an _Atomic-qualified object" % (name, arg_name)
+        )
+    return ptr_type, get_value_type(ptr_type.tgt_type)
+
+
+def _require_expected_ptr(name, tokens, c, expr, value_type):
+    ptr_type = get_value_type(expr.t_anot)
+    if not isinstance(ptr_type, QualType) or ptr_type.qual_id != QualType.QUAL_PTR:
+        raise ParsingError(tokens, c, "%s expected argument must be a pointer" % name)
+    pointee_type = get_value_type(ptr_type.tgt_type)
+    if not compare_no_cvr(pointee_type, value_type):
+        raise ParsingError(
+            tokens,
+            c,
+            "%s expected argument must point to %s"
+            % (name, value_type.to_user_str()),
+        )
+    return ptr_type
+
+
+def _build_atomic_intrinsic_expr(name, tokens, c, end, context):
+    spec = _atomic_intrinsic_specs[name]
+    paren_end = _find_call_paren_end(tokens, c, end)
+    args = []
+    while c < paren_end:
+        expr, c = get_expr(tokens, c, ",", paren_end, context)
+        if expr is None:
+            break
+        args.append(expr)
+        if c < paren_end:
+            if tokens[c].str != ",":
+                raise ParsingError(tokens, c, "Expected ',' in %s argument list" % name)
+            c += 1
+    if len(args) != spec.arg_count:
+        raise ParsingError(
+            tokens,
+            c,
+            "%s expects exactly %u arguments" % (name, spec.arg_count),
+        )
+
+    obj_ptr_type, value_type = _require_atomic_object_ptr(
+        name, tokens, c, args[0], "first argument"
+    )
+
+    if spec.intrinsic_id == AtomicIntrinsicExpr.INTRINSIC_LOAD:
+        order = _parse_atomic_order_expr(name, "second argument", args[1], tokens, c)
+        expr = AtomicIntrinsicExpr(spec.intrinsic_id, [args[0]], value_type, order)
+        expr.t_anot = value_type
+        return expr, paren_end + 1
+
+    if spec.intrinsic_id == AtomicIntrinsicExpr.INTRINSIC_STORE:
+        converted = get_implicit_conv_expr(args[1], value_type)
+        if converted is None:
+            raise ParsingError(
+                tokens,
+                c,
+                "%s second argument must be convertible to %s"
+                % (name, value_type.to_user_str()),
+            )
+        order = _parse_atomic_order_expr(name, "third argument", args[2], tokens, c)
+        expr = AtomicIntrinsicExpr(
+            spec.intrinsic_id,
+            [args[0], converted[0]],
+            value_type,
+            order,
+        )
+        expr.t_anot = void_t
+        return expr, paren_end + 1
+
+    if spec.intrinsic_id == AtomicIntrinsicExpr.INTRINSIC_CAS_STRONG:
+        expected_ptr_type = _require_expected_ptr(name, tokens, c, args[1], value_type)
+        converted = get_implicit_conv_expr(args[2], value_type)
+        if converted is None:
+            raise ParsingError(
+                tokens,
+                c,
+                "%s desired argument must be convertible to %s"
+                % (name, value_type.to_user_str()),
+            )
+        succ = _parse_atomic_order_expr(name, "success order", args[3], tokens, c)
+        fail = _parse_atomic_order_expr(name, "failure order", args[4], tokens, c)
+        expr = AtomicIntrinsicExpr(
+            spec.intrinsic_id,
+            [args[0], args[1], converted[0]],
+            value_type,
+            succ,
+            fail,
+        )
+        expr.t_anot = bool_t
+        expr.temps = [expected_ptr_type, value_type]
+        return expr, paren_end + 1
+
+    converted = get_implicit_conv_expr(args[1], value_type)
+    if converted is None:
+        raise ParsingError(
+            tokens,
+            c,
+            "%s second argument must be convertible to %s"
+            % (name, value_type.to_user_str()),
+        )
+    order = _parse_atomic_order_expr(name, "third argument", args[2], tokens, c)
+    expr = AtomicIntrinsicExpr(
+        spec.intrinsic_id,
+        [args[0], converted[0]],
+        value_type,
+        order,
+    )
+    expr.t_anot = value_type
+    return expr, paren_end + 1
 
 
 def _build_builtin_expect_expr(tokens, c, end, context):

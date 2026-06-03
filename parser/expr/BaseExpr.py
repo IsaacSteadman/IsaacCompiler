@@ -22,6 +22,7 @@ class ExprType(Enum):
     VA_INTRINSIC = 15  # va_start / va_arg / va_end / va_copy compiler intrinsics
     COMPOUND_LITERAL = 16  # C compound literal: (type){ ... }
     BUILTIN_CALL = 17  # compiler intrinsic call lowered by helper/runtime support
+    ATOMIC_INTRINSIC = 18  # StackVM-backed atomic compiler intrinsics
 
 
 class BaseExpr(PrettyRepr):
@@ -31,11 +32,13 @@ class BaseExpr(PrettyRepr):
     # temps is a list of the types of the temporaries owned by the parent Expression Object only (ie 'self')
     temps: Optional[List["BaseType"]] = None
     temps_off: int = 0
+    temps_stack_size: int = 0
 
     def init_temps(
         self, main_temps: Optional[List["BaseType"]]
     ) -> Optional[List["BaseType"]]:
         self.temps_off = 0 if main_temps is None else len(main_temps)
+        self.temps_stack_size = 0
         if main_temps is None:
             main_temps = []
         if self.temps is not None:

@@ -317,6 +317,7 @@ class CurlyStmnt(BaseStmnt):
         self.stmnts = stmnts
         self.name = name
         self.context = None
+        self.implicit_ctx_vars = []
 
     def pretty_repr(self):
         rtn = [self.__class__.__name__, "("] + get_pretty_repr(self.stmnts) + [")"]
@@ -329,12 +330,36 @@ class CurlyStmnt(BaseStmnt):
     ) -> int:
         self.stmnts = []
         self.context = context.new_scope(LocalScope(self.name))
+        self._inject_function_name_builtins(context)
         c += 1
         while c < end and tokens[c].str != "}":
             stmnt, c = get_stmnt(tokens, c, end, self.context)
             self.stmnts.append(stmnt)
         c += 1
         return c
+
+    def _inject_function_name_builtins(self, parent_context):
+        if (
+            not isinstance(parent_context, LocalScope)
+            or parent_context.lvl != 0
+            or len(parent_context.name) == 0
+        ):
+            return
+        if self.context.has_var_strict("__func__"):
+            return
+        fn_name = parent_context.name
+        char_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C)
+        elem_type = QualType(QualType.QUAL_CONST, char_type)
+        arr_type = QualType(QualType.QUAL_ARR, elem_type, len(fn_name) + 1)
+        literal = LiteralExpr(LiteralExpr.LIT_STR, '"%s"' % fn_name)
+        literal.l_val = list(map(ord, fn_name))
+        literal.t_anot = QualType(QualType.QUAL_REF, arr_type)
+        ctx_var = ContextVariable(
+            "__func__", arr_type, literal, VarDeclMods.STATIC
+        )
+        self.context.new_var("__func__", ctx_var)
+        self.context.new_var("__FUNCTION__", ctx_var)
+        self.implicit_ctx_vars.append(ctx_var)
 
 
 class ReturnStmnt(BaseStmnt):
@@ -7850,6 +7875,20 @@ def compile_curly(cmpl_obj, stmnt, context, cmpl_data=None):
     cmpl_data = LocalCompileData(cmpl_data)
     for cur_stmnt in stmnt.stmnts:
         compile_stmnt(cmpl_obj, cur_stmnt, stmnt.context, cmpl_data)
+    implicit_cmpl_obj = (
+        cmpl_obj if isinstance(cmpl_obj, Compilation) else cmpl_obj.parent
+    )
+    for ctx_var in stmnt.implicit_ctx_vars:
+        link = cmpl_obj.linkages.get(ctx_var.get_link_name())
+        if link is None or not link.lst_tgt:
+            continue
+        ctx_var.typ.compile_var_init(
+            implicit_cmpl_obj,
+            [] if ctx_var.init_expr is None else [ctx_var.init_expr],
+            stmnt.context,
+            VarRefTosNamed(ctx_var),
+            cmpl_data,
+        )
     cmpl_data.compile_leave_scope(cmpl_obj, stmnt.context)
     return 0
 

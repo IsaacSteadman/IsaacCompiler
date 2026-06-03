@@ -17,7 +17,7 @@ PRIM_TYPE_WORDS = SINGLE_TYPES1 | INT_TYPES1 | BASE_TYPE_MODS
 
 assert "int" not in INT_TYPES1
 
-MODIFIERS = {"volatile", "register", "const", "auto", "restrict"}
+MODIFIERS = {"volatile", "register", "const", "auto", "restrict", "_Atomic"}
 TYPE_WORDS = MODIFIERS | BASE_TYPE_MODS | INT_TYPES | SINGLE_TYPES
 META_TYPE_WORDS = {"struct", "union", "class", "enum", "typename"}
 KEYWORDS = (

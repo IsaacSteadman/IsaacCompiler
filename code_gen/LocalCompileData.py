@@ -1,9 +1,14 @@
 from typing import Dict, List, Optional, TYPE_CHECKING, Tuple, TypeVar, Union
 
 
+def _align_up(x: int, align: int) -> int:
+    return (x + align - 1) & ~(align - 1)
+
+
 class LocalCompileData(object):
     def __init__(self, parent: Optional["LocalCompileData"] = None):
         self.bp_off: int = 0 if parent is None else parent.bp_off
+        self.scope_bp_off_start: int = 0 if parent is None else parent.bp_off
         self.vars: List[Tuple["ContextVariable", "LocalRef"]] = []
         self.local_links: Dict[str, int] = {}
         self.sizes = {}  # TODO: appears unused
@@ -17,10 +22,9 @@ class LocalCompileData(object):
         self.res_data: Optional[Tuple["BaseType", "BaseLink"]] = None
 
     def compile_leave_scope(self, cmpl_obj: "BaseCmplObj", context: "CompileContext"):
-        rel_bp_off = self.get_rel_bp_off()
-        if not rel_bp_off:
+        stack_sz = self.bp_off - self.scope_bp_off_start
+        if not stack_sz:
             return
-        stack_sz = 0
         c = len(
             self.vars
         )  # TODO: Convert to putLocal and __getitem__ for LocalLink access
@@ -39,7 +43,6 @@ class LocalCompileData(object):
                 cmpl_obj, context, VarRefTosNamed(ctx_var), self
             )
             assert res == -1, "cannot do complex de-initialization"
-            stack_sz += sz_var
         if stack_sz != 0:
             sz_cls = emit_load_i_const(cmpl_obj.memory, stack_sz, False)
             cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
@@ -72,6 +75,12 @@ class LocalCompileData(object):
         if bp_off is None:
             bp_off = self.bp_off
         add_bp = bp_off == self.bp_off
+        align = ctx_var.effective_alignment()
+        if align > 1:
+            if bp_off_pre_inc:
+                bp_off = _align_up(bp_off + sz_var, align) - sz_var
+            else:
+                bp_off = _align_up(bp_off, align)
         lnk = (
             LocalRef.from_bp_off_pre_inc(bp_off, sz_var)
             if bp_off_pre_inc
@@ -80,7 +89,7 @@ class LocalCompileData(object):
         # print "PUT_LOCAL: link_name=%r, initial-bp_off=%r, lnk.RelAddr=%r" % (link_name, self.bp_off, lnk.RelAddr)
         self.setitem(link_name, (ctx_var, lnk))
         if add_bp:
-            self.bp_off += sz_var
+            self.bp_off = bp_off + sz_var
         # print "PUT_LOCAL: final-bp_off=%r" % self.bp_off
         return lnk
 

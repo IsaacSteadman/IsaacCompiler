@@ -19,10 +19,14 @@ class Linkage(BaseLink):
             byte_copy_arg: TypeVar("T"),
             byte_copy_intrinsic: Callable[[TypeVar("T"), bytearray, Optional[int], bool, bool], Any],
             volatile_access: bool = False,
+            atomic_access: bool = False,
+            atomic_order: int = 3,
     ):
         cmpl_obj = byte_copy_arg if hasattr(byte_copy_arg, "memory_accesses") else None
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 4:
+            if atomic_access:
+                raise ValueError("Atomic loads only support 1, 2, 4, 8, and 16 byte objects")
             if cmpl_obj is not None:
                 record_memory_access(
                     cmpl_obj,
@@ -39,7 +43,14 @@ class Linkage(BaseLink):
             sz_cls_1 = emit_load_i_const(memory, stack_left, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_load_pot(memory, sz_cls_0, cmpl_obj, volatile_access)
+            self.emit_load_pot(
+                memory,
+                sz_cls_0,
+                cmpl_obj,
+                volatile_access,
+                atomic_access,
+                atomic_order,
+            )
 
     def emit_stor(
             self,
@@ -48,10 +59,14 @@ class Linkage(BaseLink):
             byte_copy_arg: TypeVar("T"),
             byte_copy_intrinsic: Callable[[TypeVar("T"), bytearray, Optional[int], bool, bool], Any],
             volatile_access: bool = False,
+            atomic_access: bool = False,
+            atomic_order: int = 3,
     ):
         cmpl_obj = byte_copy_arg if hasattr(byte_copy_arg, "memory_accesses") else None
         sz_cls_0 = size.bit_length() - 1
         if 1 << sz_cls_0 != size or sz_cls_0 > 4:
+            if atomic_access:
+                raise ValueError("Atomic stores only support 1, 2, 4, 8, and 16 byte objects")
             if cmpl_obj is not None:
                 record_memory_access(
                     cmpl_obj,
@@ -66,7 +81,14 @@ class Linkage(BaseLink):
             sz_cls_1 = emit_load_i_const(memory, stack_left + size, False)
             memory.extend([BC_RST_SP1 + sz_cls_1])
         else:
-            self.emit_stor_pot(memory, sz_cls_0, cmpl_obj, volatile_access)
+            self.emit_stor_pot(
+                memory,
+                sz_cls_0,
+                cmpl_obj,
+                volatile_access,
+                atomic_access,
+                atomic_order,
+            )
 
     def emit_lea(self, memory: bytearray):
         memory.extend([

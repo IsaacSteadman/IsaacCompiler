@@ -17,19 +17,26 @@ def setup_temp_links(
     assert (
         expr.temps is not None or len(temp_links) == 0
     ), "len(temp_links) must be 0 if expr.temps is None"
-    sz_add = 0
+    expr.temps_stack_size = 0
+    bp_off_start = cmpl_data.bp_off
+    bp_off = bp_off_start
     for c in range(len(temp_links)):
         sz_var = size_of(expr.temps[c])
+        align = align_of(expr.temps[c])
+        if align > 1:
+            bp_off = _align_up(bp_off + sz_var, align) - sz_var
         temp_links[c] = (
             expr.temps[c],
-            LocalRef.from_bp_off_pre_inc(cmpl_data.bp_off, sz_var),
+            LocalRef.from_bp_off_pre_inc(bp_off, sz_var),
         )
-        sz_add += sz_var
+        bp_off += sz_var
+    sz_add = bp_off - bp_off_start
+    expr.temps_stack_size = sz_add
     if sz_add == 0:
         return temp_links
     sz_cls = emit_load_i_const(cmpl_obj.memory, sz_add, False)
     cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls])
-    cmpl_data.bp_off += sz_add
+    cmpl_data.bp_off = bp_off
     return temp_links
 
 
@@ -41,4 +48,8 @@ from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import BC_ADD_SP1
 from ..parser.expr.BaseExpr import BaseExpr
 from ..parser.type.BaseType import BaseType
-from ..parser.type.types import CompileContext, OPT_CODE_GEN, size_of
+from ..parser.type.types import CompileContext, OPT_CODE_GEN, align_of, size_of
+
+
+def _align_up(x: int, align: int) -> int:
+    return (x + align - 1) & ~(align - 1)
