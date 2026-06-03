@@ -540,24 +540,15 @@ class Preprocessor:
         # BEFORE general macro expansion.
         def _sub_has_include(s: str) -> str:
             def _repl(m: "re.Match") -> str:
-                arg = m.group(1).strip()
-                if arg.startswith('"') and arg.endswith('"'):
-                    filename = arg[1:-1]
-                    is_angled = False
-                elif arg.startswith("<") and arg.endswith(">"):
-                    filename = arg[1:-1]
-                    is_angled = True
-                else:
-                    return "0"
-                found = self._find_include(filename, source_path, is_angled)
-                return "1" if found is not None else "0"
+                return str(self._has_include_value(m.group(1), source_path))
 
             return re.sub(r"__has_include\s*\(([^)]*)\)", _repl, s)
 
         expr = _sub_has_include(expr)
 
         # Macro-expand the remaining expression text.
-        expr = self._apply_macros(expr)
+        expr = self._apply_macros(expr, preserve_has_include=True)
+        expr = _sub_has_include(expr)
         expr = expr.strip()
         if not expr:
             return False
@@ -573,6 +564,20 @@ class Preprocessor:
                 file=sys.stderr,
             )
             return False
+
+    def _has_include_value(self, arg: str, source_path: str) -> int:
+        """Return 1 when a __has_include operand resolves to a file, else 0."""
+        arg = arg.strip()
+        if arg.startswith('"') and arg.endswith('"'):
+            filename = arg[1:-1]
+            is_angled = False
+        elif arg.startswith("<") and arg.endswith(">"):
+            filename = arg[1:-1]
+            is_angled = True
+        else:
+            return 0
+        found = self._find_include(filename, source_path, is_angled)
+        return 1 if found is not None else 0
 
     # Operator precedence levels for _eval_int_expr (lowest first).
     # Each entry is a tuple of operator strings at the same precedence.
@@ -717,7 +722,12 @@ class Preprocessor:
     # Macro substitution
     # ------------------------------------------------------------------
 
-    def _apply_macros(self, text: str, _expanding: FrozenSet[str] = frozenset()) -> str:
+    def _apply_macros(
+        self,
+        text: str,
+        _expanding: FrozenSet[str] = frozenset(),
+        preserve_has_include: bool = False,
+    ) -> str:
         """Apply macro substitution to *text*, skipping string/char literals and
         block/line comments.
 
@@ -847,8 +857,11 @@ class Preprocessor:
                         # Find the closing paren (the argument may contain < > or " ")
                         args, end_args = self._parse_macro_args(text, k)
                         if args is not None:
-                            val = 0  # not evaluated at expansion time; handled in _eval_if_expr
-                            result.append(str(val))
+                            if preserve_has_include:
+                                result.append(text[i:end_args])
+                            else:
+                                val = 0  # not evaluated at expansion time; handled in _eval_if_expr
+                                result.append(str(val))
                             i = end_args
                             continue
 
@@ -857,7 +870,11 @@ class Preprocessor:
                     if macro.params is None:
                         # Object-like: process ## then recursively expand.
                         pasted = self._process_token_paste(macro.replacement)
-                        expanded = self._apply_macros(pasted, _expanding | {ident})
+                        expanded = self._apply_macros(
+                            pasted,
+                            _expanding | {ident},
+                            preserve_has_include,
+                        )
                         result.append(expanded)
                         i = j
                         continue
@@ -870,7 +887,10 @@ class Preprocessor:
                             args, end = self._parse_macro_args(text, k)
                             if args is not None:
                                 expanded = self._expand_func_macro(
-                                    macro, args, _expanding | {ident}
+                                    macro,
+                                    args,
+                                    _expanding | {ident},
+                                    preserve_has_include,
                                 )
                                 result.append(expanded)
                                 i = end
@@ -925,6 +945,7 @@ class Preprocessor:
         macro: MacroDef,
         args: List[str],
         _expanding: FrozenSet[str],
+        preserve_has_include: bool = False,
     ) -> str:
         """Expand a function-like macro call."""
         if macro.variadic:
@@ -966,13 +987,15 @@ class Preprocessor:
             # strip the ## so __VA_ARGS__ is substituted normally below).
             replacement = re.sub(r"##\s*__VA_ARGS__", "__VA_ARGS__", replacement)
         # Expand any macros in the argument expressions.
-        expanded_args = [self._apply_macros(a, _expanding) for a in args]
+        expanded_args = [
+            self._apply_macros(a, _expanding, preserve_has_include) for a in args
+        ]
         # Substitute parameter names in the replacement template.
         substituted = self._substitute_params(replacement, macro.params, expanded_args)
         # Process ## token-pasting after parameter substitution.
         substituted = self._process_token_paste(substituted)
         # Recursively expand macros in the result (allows pasted token to be a macro).
-        return self._apply_macros(substituted, _expanding)
+        return self._apply_macros(substituted, _expanding, preserve_has_include)
 
     @staticmethod
     def _stringify_arg(raw_arg: str) -> str:
