@@ -10,6 +10,7 @@ class CompileObject(BaseCmplObj):
         self.parent = None
         self.local_links = {}
         self.alignment = 1
+        self.section_name = None
 
     def get_local_link(self, name):
         """

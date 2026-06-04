@@ -148,6 +148,19 @@ class AttributeParserTests(unittest.TestCase):
         self.assertTrue(struct_type.is_packed)
         self.assertEqual(struct_type.align_override, 4)
 
+    def test_section_attribute_is_decoded_and_stored_on_declarations(self):
+        global_ctx, stmnts = _parse_source(
+            'void __attribute__((section(".init.text"))) init(void); '
+            'int __attribute__((section(".data.cacheline_aligned"))) cache;'
+        )
+
+        self.assertEqual(global_ctx.vars["init"].section_name, ".init.text")
+        self.assertEqual(
+            global_ctx.vars["cache"].section_name,
+            ".data.cacheline_aligned",
+        )
+        self.assertEqual(_get_attr(stmnts[0].decl_lst[0], "section").args, ['".init.text"'])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -213,6 +213,13 @@ class CompileContext(ContextMember, PrettyRepr):
             previous.align_override = max(
                 previous.align_override or 1, current.align_override
             )
+        if current.section_name is not None:
+            if (
+                previous.section_name is not None
+                and previous.section_name != current.section_name
+            ):
+                raise TypeError("Conflicting section for '%s'" % previous.name)
+            previous.section_name = current.section_name
         previous.attributes.extend(current.attributes)
         return previous
 
@@ -1102,6 +1109,11 @@ class GNUAttributes:
             cur = 0 if self.align_override is None else self.align_override
             self.align_override = max(cur, other.align_override)
         if other.section_name is not None:
+            if (
+                self.section_name is not None
+                and self.section_name != other.section_name
+            ):
+                raise TypeError("conflicting section attributes")
             self.section_name = other.section_name
         self.weak = self.weak or other.weak
         self.noreturn = self.noreturn or other.noreturn
@@ -1325,8 +1337,15 @@ def _dispatch_gnu_attr_spec(
                 cur = 0 if attrs.align_override is None else attrs.align_override
                 attrs.align_override = max(cur, align)
     elif attr.name == "section":
-        if len(attr.args) > 0:
-            attrs.section_name = attr.args[0]
+        if (
+            len(spec.arg_tokens) != 1
+            or len(spec.arg_tokens[0]) != 1
+            or spec.arg_tokens[0][0].type_id != TokenType.DBL_QUOTE
+        ):
+            raise TypeError("section attribute requires one string literal")
+        attrs.section_name = str(LiteralExpr.literal_to_value(spec.arg_tokens[0][0]))
+        if not attrs.section_name or "\0" in attrs.section_name:
+            raise ValueError("section attribute name must be non-empty")
     elif attr.name == "weak":
         attrs.weak = True
     elif attr.name == "noreturn":
@@ -1384,6 +1403,11 @@ def _apply_gnu_attributes_to_decl(
         cur = getattr(decl, "align_override")
         cur = 0 if cur is None else cur
         decl.align_override = max(cur, attrs.align_override)
+    if attrs.section_name is not None and hasattr(decl, "section_name"):
+        cur = getattr(decl, "section_name")
+        if cur is not None and cur != attrs.section_name:
+            raise TypeError("conflicting section attributes")
+        decl.section_name = attrs.section_name
     return decl
 
 
@@ -2807,6 +2831,7 @@ class DeclStmnt(BaseStmnt):
                     named_qual_type.name, named_qual_type.typ, None, ext_spec
                 )
                 inst.align_override = named_qual_type.align_override
+                inst.section_name = named_qual_type.section_name
                 inst.attributes = list(named_qual_type.attributes)
                 return inst
             if named_qual_type.name is None:
@@ -2841,6 +2866,7 @@ class DeclStmnt(BaseStmnt):
                             ext_spec,
                         )
                         inst.align_override = named_qual_type.align_override
+                        inst.section_name = named_qual_type.section_name
                         inst.attributes = list(named_qual_type.attributes)
                         context.add_anonymous_member(inst)
                     c += 1
@@ -2981,6 +3007,7 @@ class DeclStmnt(BaseStmnt):
                         cur_decl.var_name, cur_decl.type_name, None, ext_spec
                     )
                     inst.align_override = named_qual_type.align_override
+                    inst.section_name = named_qual_type.section_name
                     inst.attributes = list(named_qual_type.attributes)
                     if bf_width is not None:
                         inst.bit_field_width = bf_width
@@ -4322,6 +4349,7 @@ class IdentifiedQualType(PrettyRepr):
         self.typ = typ
         self.is_op_fn = False
         self.align_override: Optional[int] = None
+        self.section_name: Optional[str] = None
         self.attributes: List[Attribute] = []
 
     def add_qual_type(self, qual_id, ext_inf=None):
@@ -4362,6 +4390,7 @@ class ContextVariable(ContextMember, PrettyRepr):
         self.mods = mods if isinstance(mods, VarDeclMods) else VarDeclMods(mods)
         self.bit_field_width: Optional[int] = None
         self.align_override: Optional[int] = None
+        self.section_name: Optional[str] = None
         self.attributes: List[Attribute] = []
 
     def pretty_repr(self, pretty_repr_ctx=None):
@@ -4782,7 +4811,11 @@ def _register_context_symbol(
         defined,
         size if defined else 0,
         alignment,
+        ctx_var.section_name,
     )
+    obj = compilation.objects.get(link_name)
+    if obj is not None:
+        obj.section_name = ctx_var.section_name
 
 
 def _ensure_static_storage_object(
@@ -4790,6 +4823,9 @@ def _ensure_static_storage_object(
 ) -> "CompileObject":
     compilation = _get_compilation(cmpl_obj)
     storage_obj = compilation.ensure_compile_object(CompileObjectType.GLOBAL, link_name)
+    registry_symbol = compilation.symbol_registry.get(link_name)
+    if registry_symbol is not None:
+        storage_obj.section_name = registry_symbol.section_name
     storage_obj.alignment = max(storage_obj.alignment, alignment)
     if len(storage_obj.memory) < size:
         storage_obj.memory.extend([0] * (size - len(storage_obj.memory)))

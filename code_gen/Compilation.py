@@ -5,10 +5,12 @@ from typing import Dict, Optional, Set
 from .BaseCmplObj import BaseCmplObj
 from .NameMangling import NameManglingMode, normalize_name_mangling_mode
 from .stackvm_binutils.object_file import (
+    ObjectSection,
     ObjectRelocation,
     ObjectSegment,
     ObjectSymbol,
     RelocationType,
+    SectionFlags,
     StackVMObject,
     SymbolBinding,
     SymbolFlags,
@@ -35,6 +37,7 @@ class TranslationUnitSymbol:
     defined: bool = False
     size: int = 0
     alignment: int = 1
+    section_name: Optional[str] = None
 
 
 def _align_up(x: int, align: int) -> int:
@@ -70,6 +73,7 @@ class Compilation(BaseCmplObj):
         defined: bool = False,
         size: int = 0,
         alignment: int = 1,
+        section_name: Optional[str] = None,
     ) -> TranslationUnitSymbol:
         binding = SymbolBinding(binding)
         segment = ObjectSegment(segment)
@@ -87,6 +91,7 @@ class Compilation(BaseCmplObj):
                 defined,
                 size,
                 alignment,
+                section_name,
             )
             self.symbol_registry[link_name] = cur
             return cur
@@ -104,6 +109,10 @@ class Compilation(BaseCmplObj):
         cur.defined = cur.defined or defined
         cur.size = max(cur.size, size)
         cur.alignment = max(cur.alignment, alignment)
+        if section_name is not None:
+            if cur.section_name is not None and cur.section_name != section_name:
+                raise TypeError("Conflicting section for symbol '%s'" % link_name)
+            cur.section_name = section_name
         if cur.typ is None:
             cur.typ = typ
         return cur
@@ -112,6 +121,9 @@ class Compilation(BaseCmplObj):
         self, typ: CompileObjectType, name: str
     ) -> "CompileObject":
         rtn = CompileObject(typ, name)
+        registry_symbol = self.symbol_registry.get(name)
+        if registry_symbol is not None:
+            rtn.section_name = registry_symbol.section_name
         self.objects[name] = rtn
         return rtn.set_parent(self)
 
@@ -291,30 +303,122 @@ class Compilation(BaseCmplObj):
             else:
                 raise TypeError("Unexpected compile object type: %r" % obj.typ)
 
-        code = bytearray()
-        data = bytearray()
-        object_positions = {}
-        for obj in funcs:
-            offset = len(code)
-            code.extend(obj.memory)
-            object_positions[obj.name] = (
-                ObjectSegment.CODE,
-                offset,
-                len(obj.memory),
+        def matches_section(name: str, base: str) -> bool:
+            return name == base or name.startswith(base + ".")
+
+        def is_read_only_type(typ: object) -> bool:
+            from ..parser.type.types import QualType
+
+            while isinstance(typ, QualType):
+                if typ.qual_id == QualType.QUAL_CONST:
+                    return True
+                if typ.qual_id == QualType.QUAL_PTR:
+                    return False
+                if typ.qual_id == QualType.QUAL_ARR:
+                    typ = typ.tgt_type
+                    continue
+                if typ.qual_id in {
+                    QualType.QUAL_DEF,
+                    QualType.QUAL_REG,
+                    QualType.QUAL_VOLATILE,
+                    QualType.QUAL_ATOMIC,
+                }:
+                    typ = typ.tgt_type
+                    continue
+                return False
+            return False
+
+        def has_source_relocations(obj: "CompileObject") -> bool:
+            return any(linkage.lst_tgt for linkage in obj.linkages.values()) or any(
+                linkage.lst_tgt for linkage in obj.string_pool.values()
             )
-        data_alignment = 1
-        for obj in globs:
+
+        def default_section_name(obj: "CompileObject") -> str:
+            if obj.section_name is not None:
+                return obj.section_name
+            if obj.typ == CompileObjectType.FUNCTION:
+                return ".text"
+            registry_symbol = self.symbol_registry.get(obj.name)
+            if registry_symbol is not None and is_read_only_type(registry_symbol.typ):
+                return ".rodata"
+            if not any(obj.memory) and not has_source_relocations(obj):
+                return ".bss"
+            return ".data"
+
+        section_builders = {}
+
+        def get_section_builder(
+            section_name: str,
+            segment: ObjectSegment,
+            alignment: int,
+            flags: SectionFlags,
+        ):
+            builder = section_builders.get(section_name)
+            if builder is None:
+                builder = {
+                    "name": section_name,
+                    "segment": segment,
+                    "alignment": alignment,
+                    "flags": flags,
+                    "memory": bytearray(),
+                    "size": 0,
+                }
+                section_builders[section_name] = builder
+            elif builder["segment"] != segment or builder["flags"] != flags:
+                raise ValueError("incompatible uses of section '%s'" % section_name)
+            else:
+                builder["alignment"] = max(builder["alignment"], alignment)
+            return builder
+
+        def add_compile_object(obj: "CompileObject") -> None:
+            section_name = default_section_name(obj)
+            segment, _symbol_type = self._object_symbol_defaults(obj)
             alignment = max(1, obj.alignment)
-            data_alignment = max(data_alignment, alignment)
-            offset = _align_up(len(data), alignment)
-            if offset > len(data):
-                data.extend([0] * (offset - len(data)))
-            data.extend(obj.memory)
+            flags = SectionFlags.NONE
+            if segment == ObjectSegment.CODE:
+                flags |= SectionFlags.EXECUTABLE
+                if any(
+                    matches_section(section_name, base)
+                    for base in (".data", ".rodata", ".bss")
+                ):
+                    raise ValueError(
+                        "function '%s' cannot be placed in data section '%s'"
+                        % (obj.name, section_name)
+                    )
+            else:
+                if matches_section(section_name, ".text") or matches_section(
+                    section_name, ".init.text"
+                ):
+                    raise ValueError(
+                        "object '%s' cannot be placed in code section '%s'"
+                        % (obj.name, section_name)
+                    )
+                if matches_section(section_name, ".rodata"):
+                    flags |= SectionFlags.READ_ONLY
+                if matches_section(section_name, ".bss"):
+                    flags |= SectionFlags.NOBITS
+                    if any(obj.memory) or has_source_relocations(obj):
+                        raise ValueError(
+                            "initialized object '%s' cannot be placed in NOBITS section '%s'"
+                            % (obj.name, section_name)
+                        )
+            builder = get_section_builder(section_name, segment, alignment, flags)
+            offset = _align_up(builder["size"], alignment)
+            if not flags & SectionFlags.NOBITS:
+                memory = builder["memory"]
+                if offset > len(memory):
+                    memory.extend([0] * (offset - len(memory)))
+                memory.extend(obj.memory)
+            builder["size"] = offset + len(obj.memory)
             object_positions[obj.name] = (
-                ObjectSegment.DATA,
+                section_name,
                 offset,
                 len(obj.memory),
             )
+
+        object_positions = {}
+        for obj in funcs + globs:
+            add_compile_object(obj)
 
         string_alignments = {}
         for obj in funcs + globs:
@@ -326,20 +430,57 @@ class Compilation(BaseCmplObj):
                     )
         string_values = sorted(string_alignments)
         string_positions = {}
+        rodata_builder = None
         for index, value in enumerate(string_values):
             alignment = string_alignments[value]
-            data_alignment = max(data_alignment, alignment)
-            offset = _align_up(len(data), alignment)
-            if offset > len(data):
-                data.extend([0] * (offset - len(data)))
-            data.extend(value)
+            if rodata_builder is None:
+                rodata_builder = get_section_builder(
+                    ".rodata",
+                    ObjectSegment.DATA,
+                    alignment,
+                    SectionFlags.READ_ONLY,
+                )
+            else:
+                rodata_builder["alignment"] = max(
+                    rodata_builder["alignment"], alignment
+                )
+            offset = _align_up(rodata_builder["size"], alignment)
+            memory = rodata_builder["memory"]
+            if offset > len(memory):
+                memory.extend([0] * (offset - len(memory)))
+            memory.extend(value)
+            rodata_builder["size"] = offset + len(value)
             string_positions[value] = (".L.str.%u" % index, offset, len(value))
+
+        section_priority = {
+            ".text": 0,
+            ".init.text": 1,
+            ".rodata": 2,
+            ".data": 3,
+            ".bss": 4,
+        }
+
+        def section_sort_key(builder):
+            name = builder["name"]
+            family_priority = len(section_priority)
+            for base, priority in section_priority.items():
+                if matches_section(name, base):
+                    family_priority = priority
+                    break
+            return (int(builder["segment"]), family_priority, name)
+
+        ordered_builders = sorted(section_builders.values(), key=section_sort_key)
+        section_indices = {
+            builder["name"]: index for index, builder in enumerate(ordered_builders)
+        }
 
         symbols = []
         symbol_indices = {}
         for name in sorted(object_positions):
             obj = self.objects[name]
-            segment, value, size = object_positions[name]
+            section_name, value, size = object_positions[name]
+            section_index = section_indices[section_name]
+            segment = ordered_builders[section_index]["segment"]
             registry_symbol = self.symbol_registry.get(name)
             if registry_symbol is None:
                 binding = (
@@ -361,6 +502,7 @@ class Compilation(BaseCmplObj):
                     segment,
                     binding,
                     symbol_type,
+                    section_index=section_index,
                 )
             )
 
@@ -376,6 +518,7 @@ class Compilation(BaseCmplObj):
                     ObjectSegment.DATA,
                     SymbolBinding.LOCAL,
                     SymbolType.OBJECT,
+                    section_index=section_indices[".rodata"],
                 )
             )
 
@@ -404,8 +547,11 @@ class Compilation(BaseCmplObj):
 
         relocations = []
         for obj in funcs + globs:
-            segment, base_offset, _size = object_positions[obj.name]
-            segment_memory = code if segment == ObjectSegment.CODE else data
+            section_name, base_offset, _size = object_positions[obj.name]
+            section_index = section_indices[section_name]
+            builder = ordered_builders[section_index]
+            segment = builder["segment"]
+            section_memory = builder["memory"]
             for name in sorted(obj.linkages):
                 linkage = obj.linkages[name]
                 if not linkage.lst_tgt:
@@ -418,13 +564,14 @@ class Compilation(BaseCmplObj):
                             "Relocation patch for '%s' is outside object '%s'"
                             % (name, obj.name)
                         )
-                    self._write_relocation_addend(segment_memory, offset, ref.addend)
+                    self._write_relocation_addend(section_memory, offset, ref.addend)
                     relocations.append(
                         ObjectRelocation(
                             offset,
                             symbol_index,
                             segment,
                             RelocationType(ref.relocation_type),
+                            section_index,
                         )
                     )
             for value in sorted(obj.string_pool):
@@ -439,17 +586,75 @@ class Compilation(BaseCmplObj):
                             "String relocation patch is outside object '%s'"
                             % obj.name
                         )
-                    self._write_relocation_addend(segment_memory, offset, ref.addend)
+                    self._write_relocation_addend(section_memory, offset, ref.addend)
                     relocations.append(
                         ObjectRelocation(
                             offset,
                             symbol_index,
                             segment,
                             RelocationType(ref.relocation_type),
+                            section_index,
                         )
                     )
 
-        relocations.sort(key=lambda rel: (int(rel.segment), rel.offset, rel.symbol_index))
+        code = bytearray()
+        data = bytearray()
+        data_alignment = 1
+        section_offsets = {}
+        for segment, segment_memory in (
+            (ObjectSegment.CODE, code),
+            (ObjectSegment.DATA, data),
+        ):
+            for index, builder in enumerate(ordered_builders):
+                if (
+                    builder["segment"] != segment
+                    or builder["flags"] & SectionFlags.NOBITS
+                ):
+                    continue
+                if segment == ObjectSegment.DATA:
+                    data_alignment = max(data_alignment, builder["alignment"])
+                offset = _align_up(len(segment_memory), builder["alignment"])
+                if offset > len(segment_memory):
+                    segment_memory.extend([0] * (offset - len(segment_memory)))
+                section_offsets[index] = offset
+                segment_memory.extend(builder["memory"])
+            logical_end = len(segment_memory)
+            for index, builder in enumerate(ordered_builders):
+                if (
+                    builder["segment"] != segment
+                    or not builder["flags"] & SectionFlags.NOBITS
+                ):
+                    continue
+                if segment == ObjectSegment.DATA:
+                    data_alignment = max(data_alignment, builder["alignment"])
+                logical_end = _align_up(logical_end, builder["alignment"])
+                section_offsets[index] = logical_end
+                logical_end += builder["size"]
+
+        sections = []
+        for index, builder in enumerate(ordered_builders):
+            sections.append(
+                ObjectSection(
+                    builder["name"],
+                    section_offsets[index],
+                    builder["size"],
+                    builder["alignment"],
+                    builder["segment"],
+                    builder["flags"],
+                )
+            )
+        for symbol in symbols:
+            if symbol.section_index is not None:
+                symbol.value += section_offsets[symbol.section_index]
+        for relocation in relocations:
+            relocation.offset += section_offsets[relocation.section_index]
+        relocations.sort(
+            key=lambda rel: (
+                int(rel.segment),
+                rel.offset,
+                rel.symbol_index,
+            )
+        )
         return StackVMObject(
             bytes(code),
             bytes(data),
@@ -457,6 +662,7 @@ class Compilation(BaseCmplObj):
             relocations,
             0 if default_alignment is None else default_alignment,
             data_alignment,
+            sections,
         )
 
     def link_all(self):

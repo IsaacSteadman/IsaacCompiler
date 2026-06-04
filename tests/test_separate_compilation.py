@@ -14,6 +14,7 @@ from IsaacCompiler.StackVM.PyStackVM import BC_RET
 from IsaacCompiler.code_gen.stackvm_binutils.object_file import (
     ObjectSegment,
     RelocationType,
+    SectionFlags,
     SymbolBinding,
     SymbolType,
     load_sbo,
@@ -250,6 +251,32 @@ class SeparateCompilationTests(unittest.TestCase):
                 ),
                 0,
             )
+
+    def test_compiler_emits_named_rodata_and_nobits_sections(self):
+        source = (
+            'void __attribute__((section(".init.text"))) init(void) {} '
+            'int __attribute__((section(".data.cacheline_aligned"), aligned(16))) '
+            "cache = 7; "
+            "const int read_only = 3; "
+            "int zeroes[32];\n"
+        )
+        proc, obj = _compile_object(source)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+        symbols = _symbols_by_name(obj)
+        symbol_sections = {
+            name: obj.sections[symbols[name].section_index].name
+            for name in ("init", "cache", "read_only", "zeroes")
+        }
+
+        self.assertEqual(symbol_sections["init"], ".init.text")
+        self.assertEqual(symbol_sections["cache"], ".data.cacheline_aligned")
+        self.assertEqual(symbol_sections["read_only"], ".rodata")
+        self.assertEqual(symbol_sections["zeroes"], ".bss")
+        bss = next(section for section in obj.sections if section.name == ".bss")
+        self.assertEqual(bss.flags & SectionFlags.NOBITS, SectionFlags.NOBITS)
+        self.assertEqual(bss.size, symbols["zeroes"].size)
+        self.assertGreaterEqual(bss.offset, len(obj.data))
+        self.assertEqual(symbols["cache"].value % 16, 0)
 
     def test_runtime_helpers_remain_undefined(self):
         source = (

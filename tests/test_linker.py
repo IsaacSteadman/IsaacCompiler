@@ -18,22 +18,30 @@ from IsaacCompiler.code_gen.stackvm_binutils.archive_file import (
     loads_sba,
     write_sba,
 )
-from IsaacCompiler.code_gen.stackvm_binutils.executable_file import loads_sbc
+from IsaacCompiler.code_gen.stackvm_binutils.executable_file import (
+    SBC_HEADER_SIZE,
+    SBC_SPARSE_MAGIC,
+    loads_sbc,
+)
 from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.names import (
     ISAAC_RUNTIME_LINK_NAMES,
 )
 from IsaacCompiler.code_gen.stackvm_binutils.linker import (
     DuplicateSymbolError,
+    LINKER_DEFINED_SYMBOLS,
     UndefinedSymbolError,
     format_map,
     link,
     link_objects,
+    parse_linker_script,
 )
 from IsaacCompiler.code_gen.stackvm_binutils.object_file import (
     ObjectRelocation,
+    ObjectSection,
     ObjectSegment,
     ObjectSymbol,
     RelocationType,
+    SectionFlags,
     StackVMObject,
     SymbolBinding,
     SymbolFlags,
@@ -200,6 +208,153 @@ class LinkerTests(unittest.TestCase):
             0x38,
         )
 
+    def test_named_sections_bss_and_linker_defined_symbols(self):
+        init = StackVMObject(
+            b"I" * 4,
+            b"",
+            [
+                ObjectSymbol(
+                    "init",
+                    0,
+                    4,
+                    ObjectSegment.CODE,
+                    SymbolBinding.GLOBAL,
+                    SymbolType.FUNCTION,
+                    section_index=0,
+                )
+            ],
+            sections=[
+                ObjectSection(
+                    ".init.text",
+                    0,
+                    4,
+                    1,
+                    ObjectSegment.CODE,
+                    SectionFlags.EXECUTABLE,
+                )
+            ],
+        )
+        normal = StackVMObject(
+            _patch() + b"T" * 8,
+            b"DATA",
+            [
+                ObjectSymbol(
+                    "normal",
+                    8,
+                    8,
+                    ObjectSegment.CODE,
+                    SymbolBinding.GLOBAL,
+                    SymbolType.FUNCTION,
+                    section_index=0,
+                ),
+                ObjectSymbol(
+                    "zero",
+                    4,
+                    12,
+                    ObjectSegment.DATA,
+                    SymbolBinding.GLOBAL,
+                    SymbolType.OBJECT,
+                    section_index=2,
+                ),
+                _undefined("__bss_start", ObjectSegment.DATA, SymbolType.OBJECT),
+            ],
+            [
+                ObjectRelocation(
+                    0,
+                    2,
+                    ObjectSegment.CODE,
+                    RelocationType.ABS8,
+                    section_index=0,
+                )
+            ],
+            sections=[
+                ObjectSection(
+                    ".text",
+                    0,
+                    16,
+                    1,
+                    ObjectSegment.CODE,
+                    SectionFlags.EXECUTABLE,
+                ),
+                ObjectSection(
+                    ".data.cacheline_aligned",
+                    0,
+                    4,
+                    1,
+                    ObjectSegment.DATA,
+                ),
+                ObjectSection(
+                    ".bss",
+                    4,
+                    12,
+                    4,
+                    ObjectSegment.DATA,
+                    SectionFlags.NOBITS,
+                ),
+            ],
+        )
+
+        result = link_objects([("init.sbo", init), ("normal.sbo", normal)])
+        sections = {section.name: section for section in result.section_layouts}
+
+        self.assertEqual(result.global_symbols["normal"], 8)
+        self.assertEqual(result.global_symbols["__init_begin"], 16)
+        self.assertEqual(result.global_symbols["__init_end"], 20)
+        self.assertEqual(result.global_symbols["_start"], 0)
+        self.assertEqual(result.global_symbols["__bss_start"], 0x1004)
+        self.assertEqual(result.global_symbols["__bss_end"], 0x1010)
+        self.assertEqual(result.global_symbols["_end"], 0x1010)
+        self.assertEqual(
+            int.from_bytes(result.memory[0:8], "little"),
+            result.global_symbols["__bss_start"],
+        )
+        self.assertEqual(result.memory[0x1004:0x1010], b"\0" * 12)
+        self.assertEqual(sections[".bss"].file_size, 0)
+        self.assertLess(sections[".text"].address, sections[".init.text"].address)
+        self.assertIn("__init_begin [<linker>]", format_map(result))
+        sbc = result.to_sbc()
+        self.assertEqual(sbc[:8], SBC_SPARSE_MAGIC)
+        self.assertEqual(len(sbc), SBC_HEADER_SIZE + sections[".bss"].address)
+        self.assertEqual(loads_sbc(sbc).memory, result.memory)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "bss.sbc")
+            with open(path, "wb") as fl:
+                fl.write(sbc)
+            runtime_memory, _code_end, _data_start = load_runtime_sbc(path)
+        self.assertEqual(runtime_memory, result.memory)
+
+    def test_simple_linker_script_controls_data_section_order(self):
+        obj = StackVMObject(
+            b"",
+            b"DATARODA",
+            sections=[
+                ObjectSection(".data", 0, 4, 1, ObjectSegment.DATA),
+                ObjectSection(
+                    ".rodata",
+                    4,
+                    4,
+                    1,
+                    ObjectSegment.DATA,
+                    SectionFlags.READ_ONLY,
+                ),
+            ],
+        )
+        script = parse_linker_script(
+            "SECTIONS { "
+            ".text : { *(.text) } "
+            ".init.text : { *(.init.text) } "
+            ".rodata : { *(.rodata) } "
+            ".data : { *(.data) } "
+            ".bss : { *(.bss) } "
+            "}"
+        )
+
+        result = link_objects([obj], linker_script=script)
+        sections = {section.name: section for section in result.section_layouts}
+        self.assertEqual(sections[".rodata"].address, 0x1000)
+        self.assertEqual(sections[".data"].address, 0x1004)
+        self.assertEqual(result.memory[0x1000:0x1008], b"RODADATA")
+
     def test_unresolved_symbols_error_or_remain_unmodified(self):
         obj = _referencing_object("missing", RelocationType.ABS8, addend=7)
         with self.assertRaisesRegex(UndefinedSymbolError, "missing"):
@@ -287,17 +442,30 @@ class LinkerTests(unittest.TestCase):
             archive_path = os.path.join(tmpdir, "lib.sba")
             output_path = os.path.join(tmpdir, "out.sbc")
             map_path = os.path.join(tmpdir, "out.map")
+            script_path = os.path.join(tmpdir, "layout.lds")
             write_sbo(root, root_path)
             write_sba(
                 StackVMArchive([ArchiveMember("foo.sbo", definition)]),
                 archive_path,
             )
+            with open(script_path, "w") as fl:
+                fl.write(
+                    "SECTIONS { "
+                    ".text : { *(.text) } "
+                    ".init.text : { *(.init.text) } "
+                    ".data : { *(.data) } "
+                    ".rodata : { *(.rodata) } "
+                    ".bss : { *(.bss) } "
+                    "}"
+                )
             proc = subprocess.run(
                 [
                     sys.executable,
                     "-m",
                     "IsaacCompiler",
                     "link",
+                    "-T",
+                    script_path,
                     "-o",
                     output_path,
                     "--map",
@@ -321,6 +489,7 @@ class LinkerTests(unittest.TestCase):
                 map_text = fl.read()
             self.assertIn("foo", map_text)
             self.assertIn("lib.sba(foo.sbo)", map_text)
+            self.assertIn(".init.text", map_text)
 
     def test_compiler_produced_objects_link_across_translation_units(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -384,6 +553,63 @@ class LinkerTests(unittest.TestCase):
                 ),
                 expected,
             )
+
+    def test_compiler_sections_and_linker_boundaries_end_to_end(self):
+        source = (
+            "extern char __init_begin[], __init_end[], "
+            "__bss_start[], __bss_end[], _start[], _end[]; "
+            'void __attribute__((section(".init.text"))) kernel_init(void) {} '
+            "int zero; "
+            "char *a = __init_begin; char *b = __init_end; "
+            "char *c = __bss_start; char *d = __bss_end; "
+            "char *e = _start; char *f = _end;\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "kernel.c")
+            object_path = os.path.join(tmpdir, "kernel.sbo")
+            with open(source_path, "w") as fl:
+                fl.write(source)
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "IsaacCompiler",
+                    "compile",
+                    "-c",
+                    "-o",
+                    object_path,
+                    source_path,
+                ],
+                cwd=REPO_PARENT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+            obj = load_sbo(object_path)
+
+        symbols = {symbol.name: symbol for symbol in obj.symbols}
+        self.assertEqual(
+            obj.sections[symbols["kernel_init"].section_index].name,
+            ".init.text",
+        )
+        self.assertEqual(obj.sections[symbols["zero"].section_index].name, ".bss")
+        targets = {
+            obj.symbols[relocation.symbol_index].name
+            for relocation in obj.relocations
+        }
+        self.assertTrue(LINKER_DEFINED_SYMBOLS <= targets)
+
+        result = link_objects([obj])
+        self.assertEqual(result.unresolved_symbols, [])
+        self.assertEqual(result.global_symbols["_end"], len(result.memory))
+        self.assertLessEqual(
+            result.global_symbols["__init_begin"],
+            result.global_symbols["__init_end"],
+        )
+        self.assertLess(
+            result.global_symbols["__bss_start"],
+            result.global_symbols["__bss_end"],
+        )
 
     def test_compiler_emits_weak_bindings_for_weak_declarations(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -12,13 +12,17 @@ if REPO_PARENT not in sys.path:
 
 from IsaacCompiler.code_gen.stackvm_binutils.object_file import (
     ObjectRelocation,
+    ObjectSection,
     ObjectSegment,
     ObjectSymbol,
     RelocationType,
     SBO_HEADER_SIZE,
     SBO_MAGIC,
     SBO_RELOCATION_ENTRY_SIZE,
+    SBO_SECTION_ENTRY_SIZE,
     SBO_SYMBOL_ENTRY_SIZE,
+    SBO_VERSION,
+    SectionFlags,
     StackVMObject,
     SymbolBinding,
     SymbolFlags,
@@ -156,6 +160,97 @@ class ObjectFileFormatTests(unittest.TestCase):
         obj.symbols[2].size = 1
         with self.assertRaisesRegex(ValueError, "undefined symbols"):
             dumps_sbo(obj)
+
+    def test_section_table_round_trip_and_nobits_storage(self):
+        obj = StackVMObject(
+            _signed_bytes(0),
+            b"DATA",
+            [
+                ObjectSymbol(
+                    "init",
+                    0,
+                    8,
+                    ObjectSegment.CODE,
+                    SymbolBinding.GLOBAL,
+                    SymbolType.FUNCTION,
+                    section_index=0,
+                ),
+                ObjectSymbol(
+                    "zero",
+                    8,
+                    8,
+                    ObjectSegment.DATA,
+                    SymbolBinding.GLOBAL,
+                    SymbolType.OBJECT,
+                    section_index=2,
+                ),
+                ObjectSymbol(
+                    "external",
+                    0,
+                    0,
+                    ObjectSegment.DATA,
+                    SymbolBinding.GLOBAL,
+                    SymbolType.OBJECT,
+                    SymbolFlags.UNDEFINED,
+                ),
+            ],
+            [
+                ObjectRelocation(
+                    0,
+                    2,
+                    ObjectSegment.CODE,
+                    RelocationType.ABS8,
+                    section_index=0,
+                )
+            ],
+            sections=[
+                ObjectSection(
+                    ".init.text",
+                    0,
+                    8,
+                    8,
+                    ObjectSegment.CODE,
+                    SectionFlags.EXECUTABLE,
+                ),
+                ObjectSection(".data", 0, 4, 4, ObjectSegment.DATA),
+                ObjectSection(
+                    ".bss",
+                    4,
+                    16,
+                    8,
+                    ObjectSegment.DATA,
+                    SectionFlags.NOBITS,
+                ),
+            ],
+        )
+
+        blob = dumps_sbo(obj)
+        header = struct.unpack("<8s9Q", blob[:SBO_HEADER_SIZE])
+        self.assertEqual(header[1], SBO_VERSION)
+        self.assertEqual(header[5], 4)
+        section_count_offset = (
+            header[8] + header[9] * SBO_RELOCATION_ENTRY_SIZE
+        )
+        self.assertEqual(struct.unpack_from("<Q", blob, section_count_offset)[0], 3)
+        self.assertLessEqual(
+            section_count_offset + 8 + 3 * SBO_SECTION_ENTRY_SIZE,
+            len(blob),
+        )
+        self.assertEqual(loads_sbo(blob), obj)
+
+        bad = _sample_object()
+        bad.sections = [
+            ObjectSection(
+                ".bss",
+                len(bad.data),
+                8,
+                8,
+                ObjectSegment.DATA,
+                SectionFlags.NOBITS,
+            )
+        ]
+        with self.assertRaisesRegex(ValueError, "need a section"):
+            dumps_sbo(bad)
 
     def test_reader_rejects_malformed_files(self):
         good = bytearray(dumps_sbo(_sample_object()))

@@ -16,7 +16,11 @@ from .code_gen.get_dict_links import get_dict_links
 from .lexer.lexer import get_list_tokens
 from .code_gen.stackvm_binutils.disassemble import disassemble
 from .code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
-from .code_gen.stackvm_binutils.linker import LinkerError, link_files
+from .code_gen.stackvm_binutils.linker import (
+    LinkerError,
+    link_files,
+    load_linker_script,
+)
 from .code_gen.stackvm_binutils.object_file import write_sbo
 from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
@@ -46,6 +50,9 @@ def flatify_dep_desc(dep_dct: Dict[str, List[str]], start_k: str) -> Set[str]:
 
 _SVC_MAGIC = (
     b"\xf7SVE\0\0\0\0"  # [S]tack[V]m [E]xecutable magic number for version 0000
+)
+_SVC_SPARSE_MAGIC = (
+    b"\xf7SVE\0\0\0\1"  # executable with an omitted trailing zero-filled region
 )
 
 no_addr_options = {
@@ -304,6 +311,14 @@ link_parser.add_argument(
     default=None,
     dest="map_file",
     help="write a linker map showing final object and symbol addresses",
+)
+link_parser.add_argument(
+    "-T",
+    "--script",
+    metavar="linker_script",
+    default=None,
+    dest="linker_script",
+    help="use a linker script defining .text, .init.text, .data, .rodata, and .bss",
 )
 link_parser.add_argument(
     "--allow-undefined",
@@ -627,6 +642,11 @@ elif args.subcommand == "link":
             data_base=args.data_base,
             data_alignment=args.data_seg_align,
             runtime_aliases=args.runtime_aliases,
+            linker_script=(
+                None
+                if args.linker_script is None
+                else load_linker_script(args.linker_script)
+            ),
         )
     except (LinkerError, OSError, ValueError) as exc:
         link_parser.error(str(exc))
@@ -648,9 +668,10 @@ elif args.subcommand == "run":
     print(f"Loading binary: {input_file}")
     with open(input_file, "rb") as fl:
         magic = fl.read(8)
-        assert (
-            magic == _SVC_MAGIC
-        ), f"invalid magic in binary file: expected {_SVC_MAGIC!r}, got {magic!r}"
+        assert magic in {_SVC_MAGIC, _SVC_SPARSE_MAGIC}, (
+            f"invalid magic in binary file: expected {_SVC_MAGIC!r} or "
+            f"{_SVC_SPARSE_MAGIC!r}, got {magic!r}"
+        )
         header_bytes = fl.read(24)
         assert (
             len(header_bytes) == 24
@@ -658,11 +679,16 @@ elif args.subcommand == "run":
         code_segment_end, data_segment_start, total_memory_length = struct.unpack(
             "<QQQ", header_bytes
         )
-        memory = bytearray(fl.read(total_memory_length))
-    assert len(memory) == total_memory_length, (
+        memory = bytearray(fl.read())
+    assert magic != _SVC_MAGIC or len(memory) == total_memory_length, (
         f"binary file is truncated: expected {total_memory_length} bytes of memory, "
         f"got {len(memory)}"
     )
+    assert len(memory) <= total_memory_length, (
+        f"binary file payload exceeds memory size: expected at most "
+        f"{total_memory_length} bytes, got {len(memory)}"
+    )
+    memory.extend([0] * (total_memory_length - len(memory)))
     print(
         f"  code_segment_end   = {code_segment_end:#010x}\n"
         f"  data_segment_start = {data_segment_start:#010x}\n"

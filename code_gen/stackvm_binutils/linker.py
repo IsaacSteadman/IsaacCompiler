@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import os
+import re
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, TextIO, Tuple, Union
 
 from .archive_file import (
@@ -14,6 +15,7 @@ from .object_file import (
     ObjectSegment,
     ObjectSymbol,
     RelocationType,
+    SectionFlags,
     StackVMObject,
     SymbolBinding,
     SymbolType,
@@ -25,6 +27,17 @@ from .object_file import (
 DEFAULT_CODE_BASE = 0
 DEFAULT_DATA_BASE = 0x1000
 DEFAULT_DATA_ALIGNMENT = 0x1000
+DEFAULT_SECTION_ORDER = (".text", ".init.text", ".data", ".rodata", ".bss")
+CODE_SECTIONS = {".text", ".init.text"}
+DATA_SECTIONS = {".data", ".rodata", ".bss"}
+LINKER_DEFINED_SYMBOLS = {
+    "__init_begin",
+    "__init_end",
+    "__bss_start",
+    "__bss_end",
+    "_start",
+    "_end",
+}
 
 
 class LinkerError(Exception):
@@ -41,6 +54,64 @@ class UndefinedSymbolError(LinkerError):
         super().__init__("unresolved symbols: " + ", ".join(self.symbols))
 
 
+def _matches_section(name: str, base: str) -> bool:
+    return name == base or name.startswith(base + ".")
+
+
+@dataclass(frozen=True)
+class LinkerScript:
+    sections: Tuple[str, ...] = DEFAULT_SECTION_ORDER
+
+    def __post_init__(self) -> None:
+        sections = tuple(self.sections)
+        object.__setattr__(self, "sections", sections)
+        if len(sections) != len(DEFAULT_SECTION_ORDER) or set(sections) != set(
+            DEFAULT_SECTION_ORDER
+        ):
+            raise ValueError(
+                "linker script must contain each supported output section exactly once"
+            )
+        if sections.index(".init.text") < sections.index(".text"):
+            raise ValueError(".init.text must be placed after .text")
+        first_data = min(sections.index(name) for name in DATA_SECTIONS)
+        last_code = max(sections.index(name) for name in CODE_SECTIONS)
+        if last_code > first_data:
+            raise ValueError("all code sections must precede data sections")
+        if sections[-1] != ".bss":
+            raise ValueError(".bss must be the final output section")
+
+    def output_section_for(self, input_section_name: str) -> str:
+        matches = [
+            name for name in self.sections if _matches_section(input_section_name, name)
+        ]
+        if not matches:
+            raise LinkerError("unsupported input section: %s" % input_section_name)
+        return max(matches, key=len)
+
+
+def parse_linker_script(text: str) -> LinkerScript:
+    """Parse output-section declarations from a constrained GNU-style script."""
+
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = re.sub(r"//.*?$|#.*?$", "", text, flags=re.MULTILINE)
+    supported = "|".join(re.escape(name) for name in DEFAULT_SECTION_ORDER)
+    sections = re.findall(r"(?<![\w.])(%s)\s*:" % supported, text)
+    if not sections:
+        sections = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() in DEFAULT_SECTION_ORDER
+        ]
+    if not sections:
+        raise ValueError("linker script does not define any supported sections")
+    return LinkerScript(tuple(sections))
+
+
+def load_linker_script(path: str) -> LinkerScript:
+    with open(path, "r") as fl:
+        return parse_linker_script(fl.read())
+
+
 @dataclass
 class LinkOptions:
     allow_undefined: bool = False
@@ -49,6 +120,7 @@ class LinkOptions:
     data_alignment: int = DEFAULT_DATA_ALIGNMENT
     runtime_aliases: bool = True
     symbol_aliases: Mapping[str, str] = field(default_factory=dict)
+    script: LinkerScript = field(default_factory=LinkerScript)
 
     def __post_init__(self) -> None:
         if self.code_base < 0 or self.data_base < 0:
@@ -57,6 +129,10 @@ class LinkOptions:
             self.data_alignment & (self.data_alignment - 1)
         ):
             raise ValueError("data alignment must be a power of two")
+        if isinstance(self.script, str):
+            self.script = parse_linker_script(self.script)
+        if not isinstance(self.script, LinkerScript):
+            raise TypeError("script must be a LinkerScript or linker script text")
 
 
 @dataclass
@@ -88,6 +164,20 @@ class ObjectLayout:
 
 
 @dataclass
+class SectionLayout:
+    name: str
+    address: int
+    size: int
+    file_size: int
+    segment: ObjectSegment
+    input_sections: List[str] = field(default_factory=list)
+
+    @property
+    def end(self) -> int:
+        return self.address + self.size
+
+
+@dataclass
 class LinkedSymbol:
     name: str
     address: int
@@ -97,6 +187,7 @@ class LinkedSymbol:
     typ: SymbolType
     object_name: str
     selected: bool = True
+    section_name: str = ""
 
 
 @dataclass
@@ -109,16 +200,27 @@ class LinkResult:
     unresolved_symbols: List[str]
     included_objects: List[str]
     object_layouts: List[ObjectLayout]
+    section_layouts: List[SectionLayout]
 
     @property
     def symbol_addresses(self) -> Dict[str, int]:
         return self.global_symbols
 
     def to_executable(self) -> StackVMExecutable:
+        bss = next(
+            (layout for layout in self.section_layouts if layout.name == ".bss"),
+            None,
+        )
+        file_size = (
+            bss.address
+            if bss is not None and bss.size > 0
+            else len(self.memory)
+        )
         return StackVMExecutable(
             self.memory,
             self.code_segment_end,
             self.data_segment_start,
+            file_size,
         )
 
     def to_sbc(self) -> bytes:
@@ -129,6 +231,27 @@ class LinkResult:
 class _Definition:
     object_index: int
     symbol_index: int
+
+
+@dataclass
+class _InputSection:
+    object_index: int
+    section_key: int
+    name: str
+    segment: ObjectSegment
+    object_offset: int
+    size: int
+    alignment: int
+    flags: SectionFlags
+    data: bytes
+
+    @property
+    def key(self) -> Tuple[int, int]:
+        return self.object_index, self.section_key
+
+    @property
+    def is_nobits(self) -> bool:
+        return bool(self.flags & SectionFlags.NOBITS)
 
 
 class _AliasResolver:
@@ -183,6 +306,9 @@ class _ObjectLinker:
             options.runtime_aliases,
             options.symbol_aliases,
         )
+        self.linker_defined_keys = {
+            self.aliases.canonical(name) for name in LINKER_DEFINED_SYMBOLS
+        }
         self.included: List[ObjectInput] = []
         self.selected: Dict[str, _Definition] = {}
 
@@ -198,6 +324,10 @@ class _ObjectLinker:
         symbol: ObjectSymbol,
     ) -> None:
         key = self.aliases.canonical(symbol.name)
+        if key in self.linker_defined_keys:
+            raise DuplicateSymbolError(
+                "'%s' is reserved as a linker-defined symbol" % symbol.name
+            )
         previous = self.selected.get(key)
         if previous is None:
             self.selected[key] = _Definition(object_index, symbol_index)
@@ -235,7 +365,7 @@ class _ObjectLinker:
                 if symbol.binding == SymbolBinding.LOCAL:
                     continue
                 key = self.aliases.canonical(symbol.name)
-                if key not in self.selected:
+                if key not in self.selected and key not in self.linker_defined_keys:
                     unresolved.add(key)
         return unresolved
 
@@ -248,7 +378,8 @@ class _ObjectLinker:
                     if symbol.is_undefined:
                         unresolved.add(symbol.name)
                     continue
-                if self.aliases.canonical(symbol.name) not in self.selected:
+                key = self.aliases.canonical(symbol.name)
+                if key not in self.selected and key not in self.linker_defined_keys:
                     unresolved.add(symbol.name)
         return unresolved
 
@@ -291,11 +422,136 @@ class _ObjectLinker:
         return self._layout_and_relocate(sorted(unresolved_names))
 
     def _layout_and_relocate(self, unresolved_names: List[str]) -> LinkResult:
+        input_sections = []
+        for object_index, obj_input in enumerate(self.included):
+            obj = obj_input.obj
+            if obj.sections:
+                for section_index, section in enumerate(obj.sections):
+                    segment_data = (
+                        obj.code
+                        if section.segment == ObjectSegment.CODE
+                        else obj.data
+                    )
+                    data = (
+                        b""
+                        if section.is_nobits
+                        else segment_data[section.offset : section.offset + section.size]
+                    )
+                    input_sections.append(
+                        _InputSection(
+                            object_index,
+                            section_index,
+                            section.name,
+                            section.segment,
+                            section.offset,
+                            section.size,
+                            section.alignment,
+                            section.flags,
+                            data,
+                        )
+                    )
+            else:
+                for section_key, name, segment, data, alignment in (
+                    (-1, ".text", ObjectSegment.CODE, obj.code, 1),
+                    (
+                        -2,
+                        ".data",
+                        ObjectSegment.DATA,
+                        obj.data,
+                        obj.data_alignment,
+                    ),
+                ):
+                    needed = bool(data) or any(
+                        not symbol.is_undefined and symbol.segment == segment
+                        for symbol in obj.symbols
+                    ) or any(
+                        relocation.segment == segment for relocation in obj.relocations
+                    )
+                    if needed:
+                        input_sections.append(
+                            _InputSection(
+                                object_index,
+                                section_key,
+                                name,
+                                segment,
+                                0,
+                                len(data),
+                                alignment,
+                                (
+                                    SectionFlags.EXECUTABLE
+                                    if segment == ObjectSegment.CODE
+                                    else SectionFlags.NONE
+                                ),
+                                data,
+                            )
+                        )
+
+        section_lookup = {section.key: section for section in input_sections}
+        members_by_output = {name: [] for name in self.options.script.sections}
+        for section in input_sections:
+            output_name = self.options.script.output_section_for(section.name)
+            expected_segment = (
+                ObjectSegment.CODE
+                if output_name in CODE_SECTIONS
+                else ObjectSegment.DATA
+            )
+            if section.segment != expected_segment:
+                raise LinkerError(
+                    "section %s has the wrong segment for output section %s"
+                    % (section.name, output_name)
+                )
+            if output_name == ".bss" and not section.is_nobits:
+                raise LinkerError("input .bss sections must be NOBITS")
+            if output_name != ".bss" and section.is_nobits:
+                raise LinkerError(
+                    "NOBITS section %s must be placed in .bss" % section.name
+                )
+            members_by_output[output_name].append(section)
+
         memory = bytearray(self.options.code_base)
-        code_addresses = []
-        for obj_input in self.included:
-            code_addresses.append(len(memory))
-            memory.extend(obj_input.obj.code)
+        input_section_addresses = {}
+        section_layouts = []
+
+        def place_output_section(name: str) -> SectionLayout:
+            members = members_by_output[name]
+            if members:
+                alignment = max(section.alignment for section in members)
+                start = _align_up(len(memory), alignment)
+                memory.extend([0] * (start - len(memory)))
+            else:
+                start = len(memory)
+            file_size = 0
+            input_names = []
+            for section in members:
+                address = _align_up(len(memory), section.alignment)
+                memory.extend([0] * (address - len(memory)))
+                input_section_addresses[section.key] = address
+                input_names.append(
+                    "%s:%s"
+                    % (self.included[section.object_index].display_name, section.name)
+                )
+                if section.is_nobits:
+                    memory.extend([0] * section.size)
+                else:
+                    memory.extend(section.data)
+                    file_size += len(section.data)
+            return SectionLayout(
+                name,
+                start,
+                len(memory) - start,
+                file_size,
+                (
+                    ObjectSegment.CODE
+                    if name in CODE_SECTIONS
+                    else ObjectSegment.DATA
+                ),
+                input_names,
+            )
+
+        for name in self.options.script.sections:
+            if name not in CODE_SECTIONS:
+                continue
+            section_layouts.append(place_output_section(name))
         code_segment_end = len(memory)
 
         data_segment_start = _align_up(
@@ -303,49 +559,108 @@ class _ObjectLinker:
             self.options.data_alignment,
         )
         memory.extend([0] * (data_segment_start - len(memory)))
-        data_addresses = []
-        for obj_input in self.included:
-            data_address = _align_up(len(memory), obj_input.obj.data_alignment)
-            memory.extend([0] * (data_address - len(memory)))
-            data_addresses.append(data_address)
-            memory.extend(obj_input.obj.data)
+        for name in self.options.script.sections:
+            if name not in DATA_SECTIONS:
+                continue
+            section_layouts.append(place_output_section(name))
 
-        layouts = [
-            ObjectLayout(
-                obj_input.display_name,
-                code_addresses[index],
-                len(obj_input.obj.code),
-                data_addresses[index],
-                len(obj_input.obj.data),
+        layout_by_name = {layout.name: layout for layout in section_layouts}
+
+        def section_for_symbol(
+            object_index: int, symbol: ObjectSymbol
+        ) -> _InputSection:
+            obj = self.included[object_index].obj
+            section_key = (
+                symbol.section_index
+                if obj.sections
+                else (-1 if symbol.segment == ObjectSegment.CODE else -2)
             )
-            for index, obj_input in enumerate(self.included)
-        ]
+            return section_lookup[(object_index, section_key)]
 
         def symbol_address(object_index: int, symbol: ObjectSymbol) -> int:
-            base = (
-                code_addresses[object_index]
-                if symbol.segment == ObjectSegment.CODE
-                else data_addresses[object_index]
+            section = section_for_symbol(object_index, symbol)
+            return (
+                input_section_addresses[section.key]
+                + symbol.value
+                - section.object_offset
             )
-            return base + symbol.value
 
-        selected_addresses = {
+        layouts = []
+        for object_index, obj_input in enumerate(self.included):
+            object_sections = [
+                section
+                for section in input_sections
+                if section.object_index == object_index
+            ]
+
+            def segment_layout(segment: ObjectSegment, fallback: int) -> Tuple[int, int]:
+                regions = [
+                    (
+                        input_section_addresses[section.key],
+                        input_section_addresses[section.key] + section.size,
+                    )
+                    for section in object_sections
+                    if section.segment == segment
+                ]
+                if not regions:
+                    return fallback, 0
+                return min(start for start, _end in regions), sum(
+                    end - start for start, end in regions
+                )
+
+            code_address, code_size = segment_layout(
+                ObjectSegment.CODE, self.options.code_base
+            )
+            data_address, data_size = segment_layout(
+                ObjectSegment.DATA, data_segment_start
+            )
+            layouts.append(
+                ObjectLayout(
+                    obj_input.display_name,
+                    code_address,
+                    code_size,
+                    data_address,
+                    data_size,
+                )
+            )
+
+        object_selected_addresses = {
             key: symbol_address(
                 definition.object_index,
                 self._symbol_for_definition(definition),
             )
             for key, definition in self.selected.items()
         }
+        linker_addresses = {
+            "_start": layout_by_name[".text"].address,
+            "__init_begin": layout_by_name[".init.text"].address,
+            "__init_end": layout_by_name[".init.text"].end,
+            "__bss_start": layout_by_name[".bss"].address,
+            "__bss_end": layout_by_name[".bss"].end,
+            "_end": len(memory),
+        }
+        selected_addresses = dict(object_selected_addresses)
+        selected_addresses.update(
+            {
+                self.aliases.canonical(name): address
+                for name, address in linker_addresses.items()
+            }
+        )
 
         for object_index, obj_input in enumerate(self.included):
             for relocation in obj_input.obj.relocations:
                 symbol = obj_input.obj.symbols[relocation.symbol_index]
-                patch_base = (
-                    code_addresses[object_index]
-                    if relocation.segment == ObjectSegment.CODE
-                    else data_addresses[object_index]
+                section_key = (
+                    relocation.section_index
+                    if obj_input.obj.sections
+                    else (-1 if relocation.segment == ObjectSegment.CODE else -2)
                 )
-                patch_address = patch_base + relocation.offset
+                section = section_lookup[(object_index, section_key)]
+                patch_address = (
+                    input_section_addresses[section.key]
+                    + relocation.offset
+                    - section.object_offset
+                )
                 if symbol.binding == SymbolBinding.LOCAL:
                     target_address = (
                         None
@@ -392,15 +707,39 @@ class _ObjectLinker:
                         symbol.typ,
                         obj_input.display_name,
                         selected,
+                        section_for_symbol(object_index, symbol).name,
                     )
                 )
 
         global_symbols = {}
-        for key, address in selected_addresses.items():
+        for key, address in object_selected_addresses.items():
             for name in self.aliases.names_for(key):
                 global_symbols[name] = address
             definition = self.selected[key]
             global_symbols[self._symbol_for_definition(definition).name] = address
+        for name, address in linker_addresses.items():
+            global_symbols[name] = address
+            for alias in self.aliases.names_for(self.aliases.canonical(name)):
+                global_symbols[alias] = address
+            if name in {"_start", "__init_begin", "__init_end"}:
+                segment = ObjectSegment.CODE
+                section_name = ".text" if name == "_start" else ".init.text"
+            else:
+                segment = ObjectSegment.DATA
+                section_name = ".bss"
+            linked_symbols.append(
+                LinkedSymbol(
+                    name,
+                    address,
+                    0,
+                    segment,
+                    SymbolBinding.GLOBAL,
+                    SymbolType.NOTYPE,
+                    "<linker>",
+                    True,
+                    section_name,
+                )
+            )
 
         return LinkResult(
             bytes(memory),
@@ -411,6 +750,7 @@ class _ObjectLinker:
             unresolved_names,
             [obj_input.display_name for obj_input in self.included],
             layouts,
+            section_layouts,
         )
 
 
@@ -469,6 +809,7 @@ def link_objects(
     data_alignment: int = DEFAULT_DATA_ALIGNMENT,
     runtime_aliases: bool = True,
     symbol_aliases: Optional[Mapping[str, str]] = None,
+    linker_script: Optional[Union[LinkerScript, str]] = None,
 ) -> LinkResult:
     return link(
         list(objects) + list(archives),
@@ -479,6 +820,7 @@ def link_objects(
             data_alignment,
             runtime_aliases,
             {} if symbol_aliases is None else symbol_aliases,
+            LinkerScript() if linker_script is None else linker_script,
         ),
     )
 
@@ -505,6 +847,7 @@ def link_files(
     data_alignment: int = DEFAULT_DATA_ALIGNMENT,
     runtime_aliases: bool = True,
     symbol_aliases: Optional[Mapping[str, str]] = None,
+    linker_script: Optional[Union[LinkerScript, str]] = None,
 ) -> LinkResult:
     result = link_objects(
         [load_link_input(path) for path in input_paths],
@@ -514,6 +857,7 @@ def link_files(
         data_alignment=data_alignment,
         runtime_aliases=runtime_aliases,
         symbol_aliases=symbol_aliases,
+        linker_script=linker_script,
     )
     if output_path is not None:
         write_sbc(result.to_executable(), output_path)
@@ -528,8 +872,24 @@ def format_map(result: LinkResult) -> str:
         "CODE 0x%016X 0x%016X" % (0, result.code_segment_end),
         "DATA 0x%016X 0x%016X" % (result.data_segment_start, len(result.memory)),
         "",
-        "Object layout:",
+        "Sections:",
     ]
+    for layout in result.section_layouts:
+        lines.append(
+            "  0x%016X +0x%X file=0x%X %-10s"
+            % (
+                layout.address,
+                layout.size,
+                layout.file_size,
+                layout.name,
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "Object layout:",
+        ]
+    )
     for layout in result.object_layouts:
         lines.append(
             "  CODE 0x%016X +0x%X  DATA 0x%016X +0x%X  %s"
@@ -548,12 +908,13 @@ def format_map(result: LinkResult) -> str:
     ):
         suffix = "" if symbol.selected else " (overridden)"
         lines.append(
-            "  0x%016X %-4s %-6s %-8s %s [%s]%s"
+            "  0x%016X %-4s %-6s %-8s %-10s %s [%s]%s"
             % (
                 symbol.address,
                 symbol.segment.name,
                 symbol.binding.name,
                 symbol.typ.name,
+                symbol.section_name,
                 symbol.name,
                 symbol.object_name,
                 suffix,

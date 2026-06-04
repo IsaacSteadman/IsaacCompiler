@@ -1,22 +1,32 @@
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
 import struct
-from typing import BinaryIO, List, Union
+from typing import BinaryIO, List, Optional, Union
 
 
 SBO_MAGIC = b"\xf7SVO\0\0\0\0"
-SBO_VERSION = 1
+SBO_LEGACY_VERSION = 1
+SBO_VERSION = 2
 SBO_HEADER_SIZE = 80
 SBO_SYMBOL_ENTRY_SIZE = 40
 SBO_RELOCATION_ENTRY_SIZE = 24
+SBO_SECTION_ENTRY_SIZE = 40
+SBO_NO_SECTION = (1 << 64) - 1
 
 _HEADER = struct.Struct("<8s9Q")
 _SYMBOL = struct.Struct("<QQQBBBB12s")
 _RELOCATION = struct.Struct("<QQBB6s")
+_SYMBOL_V2 = struct.Struct("<QQQBBBBQ4s")
+_RELOCATION_V2 = struct.Struct("<QQBBI2s")
+_SECTION = struct.Struct("<QQQQBB6s")
+_SECTION_COUNT = struct.Struct("<Q")
 
 assert _HEADER.size == SBO_HEADER_SIZE
 assert _SYMBOL.size == SBO_SYMBOL_ENTRY_SIZE
 assert _RELOCATION.size == SBO_RELOCATION_ENTRY_SIZE
+assert _SYMBOL_V2.size == SBO_SYMBOL_ENTRY_SIZE
+assert _RELOCATION_V2.size == SBO_RELOCATION_ENTRY_SIZE
+assert _SECTION.size == SBO_SECTION_ENTRY_SIZE
 
 
 class ObjectSegment(IntEnum):
@@ -41,9 +51,32 @@ class SymbolFlags(IntFlag):
     UNDEFINED = 1
 
 
+class SectionFlags(IntFlag):
+    NONE = 0
+    NOBITS = 1
+    READ_ONLY = 2
+    EXECUTABLE = 4
+
+
 class RelocationType(IntEnum):
     ABS8 = 0
     PCREL8 = 1
+
+
+@dataclass
+class ObjectSection:
+    """A logical region of code or data; NOBITS size is not present in the segment bytes."""
+
+    name: str
+    offset: int
+    size: int
+    alignment: int
+    segment: ObjectSegment
+    flags: SectionFlags = SectionFlags.NONE
+
+    @property
+    def is_nobits(self) -> bool:
+        return bool(self.flags & SectionFlags.NOBITS)
 
 
 @dataclass
@@ -55,6 +88,7 @@ class ObjectSymbol:
     binding: SymbolBinding
     typ: SymbolType
     flags: SymbolFlags = SymbolFlags.NONE
+    section_index: Optional[int] = None
 
     @property
     def is_undefined(self) -> bool:
@@ -67,6 +101,7 @@ class ObjectRelocation:
     symbol_index: int
     segment: ObjectSegment
     typ: RelocationType
+    section_index: Optional[int] = None
 
 
 @dataclass
@@ -77,6 +112,7 @@ class StackVMObject:
     relocations: List[ObjectRelocation] = field(default_factory=list)
     default_alignment: int = 0
     data_alignment: int = 1
+    sections: List[ObjectSection] = field(default_factory=list)
 
 
 def _is_power_of_two(value: int) -> bool:
@@ -97,6 +133,24 @@ def _validate_object(obj: StackVMObject) -> None:
         ObjectSegment.CODE: obj.code,
         ObjectSegment.DATA: obj.data,
     }
+    for section in obj.sections:
+        if not isinstance(section.segment, ObjectSegment):
+            raise ValueError("invalid section segment")
+        if int(section.flags) & ~int(
+            SectionFlags.NOBITS | SectionFlags.READ_ONLY | SectionFlags.EXECUTABLE
+        ):
+            raise ValueError("invalid section flags")
+        _validate_alignment("section alignment", section.alignment)
+        if section.offset < 0 or section.size < 0:
+            raise ValueError("section offset and size must be non-negative")
+        segment_size = len(segments[section.segment])
+        if not section.is_nobits and section.offset + section.size > segment_size:
+            raise ValueError("section is outside its segment")
+        if not section.name:
+            raise ValueError("section names cannot be empty")
+        if "\0" in section.name:
+            raise ValueError("section names cannot contain null bytes")
+        section.name.encode("utf-8")
     for symbol in obj.symbols:
         if not isinstance(symbol.segment, ObjectSegment):
             raise ValueError("invalid symbol segment")
@@ -111,6 +165,23 @@ def _validate_object(obj: StackVMObject) -> None:
         if symbol.is_undefined:
             if symbol.value != 0 or symbol.size != 0:
                 raise ValueError("undefined symbols must have zero value and size")
+            if symbol.section_index is not None:
+                raise ValueError("undefined symbols cannot belong to a section")
+        elif obj.sections:
+            if symbol.section_index is None:
+                raise ValueError("defined symbols in sectioned objects need a section")
+            if symbol.section_index < 0 or symbol.section_index >= len(obj.sections):
+                raise ValueError("symbol section index is out of range")
+            section = obj.sections[symbol.section_index]
+            if symbol.segment != section.segment:
+                raise ValueError("symbol segment does not match its section")
+            if (
+                symbol.value < section.offset
+                or symbol.value + symbol.size > section.offset + section.size
+            ):
+                raise ValueError("defined symbol is outside its section")
+        elif symbol.section_index is not None:
+            raise ValueError("symbols cannot reference sections that do not exist")
         elif symbol.value + symbol.size > len(segments[symbol.segment]):
             raise ValueError("defined symbol is outside its segment")
         if "\0" in symbol.name:
@@ -123,7 +194,27 @@ def _validate_object(obj: StackVMObject) -> None:
             raise ValueError("invalid relocation type")
         if relocation.symbol_index < 0 or relocation.symbol_index >= len(obj.symbols):
             raise ValueError("relocation symbol index is out of range")
-        if relocation.offset < 0 or relocation.offset + 8 > len(segments[relocation.segment]):
+        if obj.sections:
+            if relocation.section_index is None:
+                raise ValueError("relocations in sectioned objects need a section")
+            if (
+                relocation.section_index < 0
+                or relocation.section_index >= len(obj.sections)
+            ):
+                raise ValueError("relocation section index is out of range")
+            section = obj.sections[relocation.section_index]
+            if relocation.segment != section.segment:
+                raise ValueError("relocation segment does not match its section")
+            if section.is_nobits:
+                raise ValueError("NOBITS sections cannot contain relocations")
+            patch_start = section.offset
+            patch_limit = section.offset + section.size
+        elif relocation.section_index is not None:
+            raise ValueError("relocations cannot reference sections that do not exist")
+        else:
+            patch_start = 0
+            patch_limit = len(segments[relocation.segment])
+        if relocation.offset < patch_start or relocation.offset + 8 > patch_limit:
             raise ValueError("relocation patch is outside its segment")
 
 
@@ -135,11 +226,17 @@ def dumps_sbo(obj: StackVMObject) -> bytes:
     _validate_object(obj)
     code = bytes(obj.code)
     data = bytes(obj.data)
+    version = SBO_VERSION if obj.sections else SBO_LEGACY_VERSION
     string_table = bytearray()
     name_offsets = []
     for symbol in obj.symbols:
         name_offsets.append(len(string_table))
         string_table.extend(symbol.name.encode("utf-8"))
+        string_table.append(0)
+    section_name_offsets = []
+    for section in obj.sections:
+        section_name_offsets.append(len(string_table))
+        string_table.extend(section.name.encode("utf-8"))
         string_table.append(0)
 
     symbol_table_offset = SBO_HEADER_SIZE + len(code) + len(data)
@@ -149,7 +246,7 @@ def dumps_sbo(obj: StackVMObject) -> bytes:
     out = bytearray(
         _HEADER.pack(
             SBO_MAGIC,
-            SBO_VERSION,
+            version,
             obj.default_alignment,
             obj.data_alignment,
             len(code),
@@ -163,28 +260,73 @@ def dumps_sbo(obj: StackVMObject) -> bytes:
     out.extend(code)
     out.extend(data)
     for name_offset, symbol in zip(name_offsets, obj.symbols):
-        out.extend(
-            _SYMBOL.pack(
-                name_offset,
-                symbol.value,
-                symbol.size,
-                int(symbol.segment),
-                int(symbol.binding),
-                int(symbol.typ),
-                int(symbol.flags),
-                b"\0" * 12,
+        if version == SBO_LEGACY_VERSION:
+            out.extend(
+                _SYMBOL.pack(
+                    name_offset,
+                    symbol.value,
+                    symbol.size,
+                    int(symbol.segment),
+                    int(symbol.binding),
+                    int(symbol.typ),
+                    int(symbol.flags),
+                    b"\0" * 12,
+                )
             )
-        )
+        else:
+            out.extend(
+                _SYMBOL_V2.pack(
+                    name_offset,
+                    symbol.value,
+                    symbol.size,
+                    int(symbol.segment),
+                    int(symbol.binding),
+                    int(symbol.typ),
+                    int(symbol.flags),
+                    (
+                        SBO_NO_SECTION
+                        if symbol.section_index is None
+                        else symbol.section_index
+                    ),
+                    b"\0" * 4,
+                )
+            )
     for relocation in obj.relocations:
-        out.extend(
-            _RELOCATION.pack(
-                relocation.offset,
-                relocation.symbol_index,
-                int(relocation.segment),
-                int(relocation.typ),
-                b"\0" * 6,
+        if version == SBO_LEGACY_VERSION:
+            out.extend(
+                _RELOCATION.pack(
+                    relocation.offset,
+                    relocation.symbol_index,
+                    int(relocation.segment),
+                    int(relocation.typ),
+                    b"\0" * 6,
+                )
             )
-        )
+        else:
+            out.extend(
+                _RELOCATION_V2.pack(
+                    relocation.offset,
+                    relocation.symbol_index,
+                    int(relocation.segment),
+                    int(relocation.typ),
+                    relocation.section_index,
+                    b"\0" * 2,
+                )
+            )
+    if version == SBO_VERSION:
+        out.extend(_SECTION_COUNT.pack(len(obj.sections)))
+        for name_offset, section in zip(section_name_offsets, obj.sections):
+            out.extend(
+                _SECTION.pack(
+                    name_offset,
+                    section.offset,
+                    section.size,
+                    section.alignment,
+                    int(section.segment),
+                    int(section.flags),
+                    b"\0" * 6,
+                )
+            )
     out.extend(string_table)
     return bytes(out)
 
@@ -227,7 +369,7 @@ def loads_sbo(data: bytes) -> StackVMObject:
     ) = _HEADER.unpack_from(data)
     if magic != SBO_MAGIC:
         raise ValueError("invalid .sbo magic")
-    if version != SBO_VERSION:
+    if version not in {SBO_LEGACY_VERSION, SBO_VERSION}:
         raise ValueError("unsupported .sbo version: %u" % version)
     _validate_alignment("default alignment", default_alignment, True)
     _validate_alignment("data alignment", data_alignment)
@@ -240,11 +382,26 @@ def loads_sbo(data: bytes) -> StackVMObject:
     )
     if relocation_table_offset != expected_relocation_offset:
         raise ValueError("relocation table is not at the canonical offset")
-    string_table_offset = (
+    tables_end = (
         relocation_table_offset + relocation_count * SBO_RELOCATION_ENTRY_SIZE
     )
-    if string_table_offset > len(data):
+    if tables_end > len(data):
         raise ValueError("object file tables extend past the end of the file")
+    sections = []
+    if version == SBO_VERSION:
+        if tables_end + _SECTION_COUNT.size > len(data):
+            raise ValueError("object file is too short to contain a section count")
+        section_count = _SECTION_COUNT.unpack_from(data, tables_end)[0]
+        section_table_offset = tables_end + _SECTION_COUNT.size
+        string_table_offset = (
+            section_table_offset + section_count * SBO_SECTION_ENTRY_SIZE
+        )
+        if string_table_offset > len(data):
+            raise ValueError("section table extends past the end of the file")
+    else:
+        section_count = 0
+        section_table_offset = tables_end
+        string_table_offset = tables_end
 
     code_start = SBO_HEADER_SIZE
     data_start = code_start + code_size
@@ -255,18 +412,36 @@ def loads_sbo(data: bytes) -> StackVMObject:
     symbols = []
     for index in range(symbol_count):
         offset = symbol_table_offset + index * SBO_SYMBOL_ENTRY_SIZE
-        (
-            name_offset,
-            value,
-            size,
-            segment_value,
-            binding_value,
-            type_value,
-            flags_value,
-            reserved,
-        ) = _SYMBOL.unpack_from(data, offset)
-        if reserved != b"\0" * 12:
-            raise ValueError("symbol reserved bytes must be zero")
+        if version == SBO_LEGACY_VERSION:
+            (
+                name_offset,
+                value,
+                size,
+                segment_value,
+                binding_value,
+                type_value,
+                flags_value,
+                reserved,
+            ) = _SYMBOL.unpack_from(data, offset)
+            section_index = None
+            if reserved != b"\0" * 12:
+                raise ValueError("symbol reserved bytes must be zero")
+        else:
+            (
+                name_offset,
+                value,
+                size,
+                segment_value,
+                binding_value,
+                type_value,
+                flags_value,
+                section_index,
+                reserved,
+            ) = _SYMBOL_V2.unpack_from(data, offset)
+            if section_index == SBO_NO_SECTION:
+                section_index = None
+            if reserved != b"\0" * 4:
+                raise ValueError("symbol reserved bytes must be zero")
         try:
             segment = ObjectSegment(segment_value)
             binding = SymbolBinding(binding_value)
@@ -285,27 +460,76 @@ def loads_sbo(data: bytes) -> StackVMObject:
                 binding,
                 typ,
                 flags,
+                section_index,
             )
         )
 
     relocations = []
     for index in range(relocation_count):
         offset = relocation_table_offset + index * SBO_RELOCATION_ENTRY_SIZE
-        (
-            patch_offset,
-            symbol_index,
-            segment_value,
-            type_value,
-            reserved,
-        ) = _RELOCATION.unpack_from(data, offset)
-        if reserved != b"\0" * 6:
-            raise ValueError("relocation reserved bytes must be zero")
+        if version == SBO_LEGACY_VERSION:
+            (
+                patch_offset,
+                symbol_index,
+                segment_value,
+                type_value,
+                reserved,
+            ) = _RELOCATION.unpack_from(data, offset)
+            section_index = None
+            if reserved != b"\0" * 6:
+                raise ValueError("relocation reserved bytes must be zero")
+        else:
+            (
+                patch_offset,
+                symbol_index,
+                segment_value,
+                type_value,
+                section_index,
+                reserved,
+            ) = _RELOCATION_V2.unpack_from(data, offset)
+            if reserved != b"\0" * 2:
+                raise ValueError("relocation reserved bytes must be zero")
         try:
             segment = ObjectSegment(segment_value)
             typ = RelocationType(type_value)
         except ValueError as exc:
             raise ValueError("invalid relocation enum value") from exc
-        relocations.append(ObjectRelocation(patch_offset, symbol_index, segment, typ))
+        relocations.append(
+            ObjectRelocation(patch_offset, symbol_index, segment, typ, section_index)
+        )
+
+    for index in range(section_count):
+        offset = section_table_offset + index * SBO_SECTION_ENTRY_SIZE
+        (
+            name_offset,
+            section_offset,
+            size,
+            alignment,
+            segment_value,
+            flags_value,
+            reserved,
+        ) = _SECTION.unpack_from(data, offset)
+        if reserved != b"\0" * 6:
+            raise ValueError("section reserved bytes must be zero")
+        try:
+            segment = ObjectSegment(segment_value)
+            flags = SectionFlags(flags_value)
+        except ValueError as exc:
+            raise ValueError("invalid section enum value") from exc
+        if flags_value & ~int(
+            SectionFlags.NOBITS | SectionFlags.READ_ONLY | SectionFlags.EXECUTABLE
+        ):
+            raise ValueError("invalid section flags")
+        sections.append(
+            ObjectSection(
+                _decode_name(string_table, name_offset),
+                section_offset,
+                size,
+                alignment,
+                segment,
+                flags,
+            )
+        )
 
     obj = StackVMObject(
         code,
@@ -314,6 +538,7 @@ def loads_sbo(data: bytes) -> StackVMObject:
         relocations,
         default_alignment,
         data_alignment,
+        sections,
     )
     _validate_object(obj)
     return obj
