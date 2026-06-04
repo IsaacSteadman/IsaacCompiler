@@ -1,15 +1,19 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import struct
-from typing import BinaryIO, Optional, Union
+from typing import BinaryIO, Iterable, Optional, Tuple, Union
 
 
 SBC_MAGIC = b"\xf7SVE\0\0\0\0"
 SBC_SPARSE_MAGIC = b"\xf7SVE\0\0\0\1"
+SBC_RELOC_MAGIC = b"\xf7SVE\0\0\0\2"
 SBC_HEADER_SIZE = 32
+SBC_RELOC_HEADER_SIZE = 48
 
 _HEADER = struct.Struct("<8sQQQ")
+_RELOC_HEADER = struct.Struct("<8sQQQQQ")
 
 assert _HEADER.size == SBC_HEADER_SIZE
+assert _RELOC_HEADER.size == SBC_RELOC_HEADER_SIZE
 
 
 @dataclass
@@ -18,6 +22,24 @@ class StackVMExecutable:
     code_segment_end: int
     data_segment_start: int
     file_size: Optional[int] = None
+    base_relocations: Tuple[int, ...] = field(default_factory=tuple)
+
+
+def apply_base_fixups(
+    memory: bytearray,
+    base_relocations: Iterable[int],
+    base_delta: int,
+) -> bytearray:
+    if base_delta == 0:
+        return memory
+    mask = (1 << 64) - 1
+    for offset in base_relocations:
+        value = int.from_bytes(memory[offset : offset + 8], "little")
+        memory[offset : offset + 8] = ((value + base_delta) & mask).to_bytes(
+            8,
+            "little",
+        )
+    return memory
 
 
 def _validate_executable(executable: StackVMExecutable) -> None:
@@ -33,12 +55,32 @@ def _validate_executable(executable: StackVMExecutable) -> None:
         raise ValueError("file-backed memory size is outside the memory image")
     if any(executable.memory[file_size:]):
         raise ValueError("omitted executable memory must be zero-initialized")
+    for offset in executable.base_relocations:
+        if offset < 0 or offset + 8 > memory_size:
+            raise ValueError("base relocation offset is outside the memory image")
 
 
 def dumps_sbc(executable: StackVMExecutable) -> bytes:
     _validate_executable(executable)
     memory = bytes(executable.memory)
     file_size = len(memory) if executable.file_size is None else executable.file_size
+    base_relocations = tuple(executable.base_relocations)
+    if base_relocations:
+        relocation_table = bytearray()
+        for offset in base_relocations:
+            relocation_table.extend(offset.to_bytes(8, "little"))
+        return (
+            _RELOC_HEADER.pack(
+                SBC_RELOC_MAGIC,
+                executable.code_segment_end,
+                executable.data_segment_start,
+                len(memory),
+                file_size,
+                len(base_relocations),
+            )
+            + memory[:file_size]
+            + relocation_table
+        )
     return _HEADER.pack(
         SBC_MAGIC if file_size == len(memory) else SBC_SPARSE_MAGIC,
         executable.code_segment_end,
@@ -59,7 +101,45 @@ def write_sbc(executable: StackVMExecutable, target: Union[str, BinaryIO]) -> No
 def loads_sbc(data: bytes) -> StackVMExecutable:
     if len(data) < SBC_HEADER_SIZE:
         raise ValueError("binary file is too short to contain a header")
-    magic, code_segment_end, data_segment_start, memory_size = _HEADER.unpack_from(data)
+    magic = data[:8]
+    if magic == SBC_RELOC_MAGIC:
+        if len(data) < SBC_RELOC_HEADER_SIZE:
+            raise ValueError("binary file is too short to contain a relocation header")
+        (
+            _magic,
+            code_segment_end,
+            data_segment_start,
+            memory_size,
+            file_size,
+            relocation_count,
+        ) = _RELOC_HEADER.unpack_from(data)
+        payload_start = SBC_RELOC_HEADER_SIZE
+        relocation_table_start = payload_start + file_size
+        expected_size = relocation_table_start + relocation_count * 8
+        if len(data) != expected_size:
+            raise ValueError("binary file relocation table size does not match header")
+        if file_size > memory_size:
+            raise ValueError("binary file payload is larger than its memory image")
+        base_relocations = []
+        for index in range(relocation_count):
+            offset = relocation_table_start + index * 8
+            base_relocations.append(
+                int.from_bytes(data[offset : offset + 8], "little")
+            )
+        executable = StackVMExecutable(
+            data[payload_start:relocation_table_start]
+            + b"\0" * (memory_size - file_size),
+            code_segment_end,
+            data_segment_start,
+            file_size,
+            tuple(base_relocations),
+        )
+        _validate_executable(executable)
+        return executable
+
+    magic, code_segment_end, data_segment_start, memory_size = _HEADER.unpack_from(
+        data
+    )
     if magic not in {SBC_MAGIC, SBC_SPARSE_MAGIC}:
         raise ValueError("invalid .sbc magic")
     payload_size = len(data) - SBC_HEADER_SIZE

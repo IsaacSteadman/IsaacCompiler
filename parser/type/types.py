@@ -4698,7 +4698,6 @@ from ...StackVM.PyStackVM import (
     BC_FCMP_16,
     BC_FCMP_2,
     BC_INT128,
-    BC_JMPIF,
     BC_LOAD,
     BC_NE0,
     BC_NOP,
@@ -4716,6 +4715,7 @@ from ...code_gen.LinkRef import LinkRef
 from ...code_gen.Linkage import Linkage
 from ...code_gen.LocalCompileData import LocalCompileData
 from ...code_gen.LocalRef import LocalRef
+from ...code_gen.branch_emit import emit_rel_jumpif
 from ...code_gen.byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
 from ...code_gen.compile_curly import compile_curly
 from ...code_gen.compile_expr import compile_expr
@@ -5286,8 +5286,7 @@ def _emit_guarded_static_local_initializer(
     skip_link = Linkage()
     guard_link.emit_load(cmpl_obj.memory, 1, cmpl_obj, byte_copy_cmpl_intrinsic)
     cmpl_obj.memory.extend([BC_NE0])
-    skip_link.emit_lea(cmpl_obj.memory)
-    cmpl_obj.memory.extend([BC_JMPIF])
+    emit_rel_jumpif(cmpl_obj.memory, skip_link)
     decl_type.compile_var_init(
         cmpl_obj,
         init_args,

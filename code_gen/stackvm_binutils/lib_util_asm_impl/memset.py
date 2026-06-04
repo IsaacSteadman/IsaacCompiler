@@ -20,8 +20,8 @@ STOR-ABS_S8|SZ_8
 @end
 CMP8
 GE0
-lRa*:endLoop
-JMPIF
+lRr[1]*:endLoop
+RJMPIF
 
 
 @value
@@ -33,8 +33,8 @@ STOR-ABS_S8|SZ_1
 ADD8
 lRa*ptr
 STOR-ABS_S8|SZ_8
-lRa*:beginLoop
-JMP
+lRr[1]*:beginLoop
+RJMP
 :endLoop
 ~-end
 RET

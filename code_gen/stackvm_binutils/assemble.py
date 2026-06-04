@@ -138,11 +138,21 @@ def assemble(
                     is_l_rel = True
                 if is_rel is None:
                     is_rel = False
+                rel_off = 0
                 if lnk_rel is not None:
-                    raise SyntaxError("Cannot use rel_spec right now")
+                    if not is_l_rel or not is_rel:
+                        raise SyntaxError(
+                            "rel_spec is only supported for relative-result links"
+                        )
+                    try:
+                        rel_off = int(lnk_rel, 0)
+                    except ValueError as exc:
+                        raise SyntaxError(
+                            "rel_spec must be an integer offset"
+                        ) from exc
                 if is_global or is_code:
                     is_external_code = is_code and name in external_code_links
-                    if is_external_code and (not is_l_rel or is_rel):
+                    if is_external_code and not is_l_rel:
                         raise SyntaxError(
                             "External code labels must be loaded as PC-relative addresses"
                         )
@@ -159,7 +169,7 @@ def assemble(
                     cmpl_unit.memory.extend([BC_LOAD, BCR_SZ_8, 0, 0, 0, 0, 0, 0, 0, 0])
                     lnk_ref = LinkRef(start_pos + 2)
                     if is_l_rel:
-                        lnk_ref.rel_off = 0
+                        lnk_ref.rel_off = rel_off
                         cmpl_unit.memory[start_pos + 1] |= (
                             BCR_ABS_C if is_rel else BCR_EA_R_IP
                         )
@@ -171,6 +181,8 @@ def assemble(
                             cmpl_unit.memory[start_pos + 1] |= BCR_ABS_C
                     lnk.lst_tgt.append(lnk_ref)
                 else:
+                    if lnk_rel is not None:
+                        raise SyntaxError("rel_spec is only supported for code labels")
                     if not is_l_rel:
                         raise SyntaxError("cannot use non-relative link for local")
                     off = local_vars[name][0]

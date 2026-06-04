@@ -15,11 +15,11 @@ STOR-ABS_S8|SZ_8
 CMP8
 LOAD-TOS|SZ_1
 EQ0
-lRa*:end
-JMPIF
+lRr[1]*:end
+RJMPIF
 LT0
-lRa*:setupLoop1
-JMPIF
+lRr[1]*:setupLoop1
+RJMPIF
 @src
 @num
 ADD8
@@ -31,8 +31,8 @@ STOR-ABS_S8|SZ_8
 @srcEnd
 CMP8
 GE0
-lRa*:end
-JMPIF
+lRr[1]*:end
+RJMPIF
 
 @src
 LOAD-ABS_S8|SZ_1
@@ -51,8 +51,8 @@ ADD8
 lRa*dest
 STOR-ABS_S8|SZ_8
 
-lRa*:beginLoop0
-JMP
+lRr[1]*:beginLoop0
+RJMP
 :setupLoop1
 
 @src
@@ -77,8 +77,8 @@ STOR-ABS_S8|SZ_8
 @srcEnd
 CMP8
 LE0
-lRa*:end
-JMPIF
+lRr[1]*:end
+RJMPIF
 
 @src
 8d1
@@ -97,8 +97,8 @@ LOAD-ABS_S8|SZ_1
 @dest
 STOR-ABS_S8|SZ_1
 
-lRa*:beginLoop1
-JMP
+lRr[1]*:beginLoop1
+RJMP
 
 :end
 ~-srcEnd

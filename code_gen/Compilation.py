@@ -292,27 +292,25 @@ class Compilation(BaseCmplObj):
         if not entries:
             return
 
-        from ..StackVM.PyStackVM import BC_CALL
+        from .branch_emit import emit_rel_call
 
         for entry in entries:
-            self.get_link(entry.object_name).emit_load_pot(self.memory, 3)
-            self.memory.append(BC_CALL)
+            emit_rel_call(self.memory, self.get_link(entry.link_name))
 
     def emit_standalone_startup(self, main_link_name: str) -> None:
         if self._standalone_startup_emitted:
             raise ValueError("standalone startup code has already been emitted")
 
-        from ..StackVM.PyStackVM import BC_CALL, BC_HLT
+        from ..StackVM.PyStackVM import BC_HLT
+        from .branch_emit import emit_rel_call
         from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 
         init_obj = self.finalize_global_initializer()
         if init_obj is not None:
-            self.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(self.memory)
-            self.memory.append(BC_CALL)
+            emit_rel_call(self.memory, self.get_link(INIT_GLOBALS_LINK_NAME))
         self._emit_lifecycle_calls("constructor")
         emit_load_i_const(self.memory, 1, True, 2)
-        self.get_link(main_link_name).emit_lea(self.memory)
-        self.memory.append(BC_CALL)
+        emit_rel_call(self.memory, self.get_link(main_link_name))
         self._emit_lifecycle_calls("destructor", reverse=True)
         self.memory.append(BC_HLT)
         self._standalone_startup_emitted = True

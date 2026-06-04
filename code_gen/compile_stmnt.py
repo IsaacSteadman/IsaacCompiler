@@ -127,32 +127,22 @@ def compile_stmnt(
             stmnt.cond.t_anot,
         )
         # assert sz == sizeof(bool)
-        cmpl_obj.memory.extend(
-            [BC_EQ0, BC_LOAD, BCR_EA_R_IP | BCR_SZ_8, 0, 0, 0, 0, 0, 0, 0, 0, BC_JMPIF]
-        )
-        lnk_ref = LinkRef(len(cmpl_obj.memory) - 9, 0)
+        cmpl_obj.memory.append(BC_EQ0)
+        lnk_after_if = Linkage()
+        emit_rel_jumpif(cmpl_obj.memory, lnk_after_if)
         compile_stmnt(cmpl_obj, stmnt.stmnt, context, cmpl_data)
         if stmnt.else_stmnt is not None:
             # jump past the else-statement
-            cmpl_obj.memory.extend(
-                [
-                    BC_LOAD,
-                    BCR_EA_R_IP | BCR_SZ_8,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    BC_JMP,
-                ]
-            )
-            lnk_ref.fill_ref(cmpl_obj.memory, len(cmpl_obj.memory))
-            lnk_ref = LinkRef(len(cmpl_obj.memory) - 9, 0)
+            lnk_after_else = Linkage()
+            emit_rel_jump(cmpl_obj.memory, lnk_after_else)
+            lnk_after_if.src = len(cmpl_obj.memory)
+            lnk_after_if.fill_all(cmpl_obj.memory)
             compile_stmnt(cmpl_obj, stmnt.else_stmnt, context, cmpl_data)
-        lnk_ref.fill_ref(cmpl_obj.memory, len(cmpl_obj.memory))
+            lnk_after_else.src = len(cmpl_obj.memory)
+            lnk_after_else.fill_all(cmpl_obj.memory)
+        else:
+            lnk_after_if.src = len(cmpl_obj.memory)
+            lnk_after_if.fill_all(cmpl_obj.memory)
     elif stmnt.stmnt_type == StmntType.FOR:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, ForLoop)
@@ -169,15 +159,13 @@ def compile_stmnt(
         sz = compile_expr(cmpl_obj, stmnt.cond, stmnt.context, cmpl_data1)
         assert sz == 1
         cmpl_obj.memory.extend([BC_EQ0])
-        lnk_end_loop.emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_JMPIF])
+        emit_rel_jumpif(cmpl_obj.memory, lnk_end_loop)
         compile_stmnt(cmpl_obj, stmnt.stmnt, stmnt.context, cmpl_data1)
         lnk_end_body.src = len(cmpl_obj.memory)
         if stmnt.incr is not None:
             sz = compile_expr(cmpl_obj, stmnt.incr, stmnt.context, cmpl_data1, void_t)
             assert sz == 0
-        lnk_begin_loop.emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_JMP])
+        emit_rel_jump(cmpl_obj.memory, lnk_begin_loop)
         lnk_end_loop.src = len(cmpl_obj.memory)
         sz_cls = emit_load_i_const(cmpl_obj.memory, sz0, False)
         cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
@@ -196,24 +184,20 @@ def compile_stmnt(
         sz = compile_expr(cmpl_obj, stmnt.cond, context, cmpl_data)
         assert sz == 1  # assert sz == sizeof(bool)
         cmpl_obj.memory.extend([BC_EQ0])
-        lnk_end_loop.emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_JMPIF])
+        emit_rel_jumpif(cmpl_obj.memory, lnk_end_loop)
         compile_stmnt(cmpl_obj, stmnt.stmnt, context, cmpl_data1)
-        lnk_begin_loop.emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_JMP])
+        emit_rel_jump(cmpl_obj.memory, lnk_begin_loop)
         lnk_end_loop.src = len(cmpl_obj.memory)
         lnk_begin_loop.fill_all(cmpl_obj.memory)
         lnk_end_loop.fill_all(cmpl_obj.memory)
     elif stmnt.stmnt_type == StmntType.CONTINUE:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert cmpl_data.cur_breakable is not None
-        cmpl_data.cur_breakable[0].emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_JMP])
+        emit_rel_jump(cmpl_obj.memory, cmpl_data.cur_breakable[0])
     elif stmnt.stmnt_type == StmntType.BRK:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert cmpl_data.cur_breakable is not None
-        cmpl_data.cur_breakable[1].emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_JMP])
+        emit_rel_jump(cmpl_obj.memory, cmpl_data.cur_breakable[1])
     elif stmnt.stmnt_type == StmntType.RTN:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, ReturnStmnt)
@@ -310,15 +294,13 @@ def compile_stmnt(
                     else:
                         cmpl_obj.memory.extend([cmp_opcode, BC_EQ0])
                     # Jump to this segment's body if equal (condition == 1).
-                    seg_linkages[seg_idx].emit_lea(cmpl_obj.memory)
-                    cmpl_obj.memory.extend([BC_JMPIF])
+                    emit_rel_jumpif(cmpl_obj.memory, seg_linkages[seg_idx])
 
         # After all comparisons: jump to default (or skip the whole switch).
         if default_lnk is not None:
-            default_lnk.emit_lea(cmpl_obj.memory)
+            emit_rel_jump(cmpl_obj.memory, default_lnk)
         else:
-            lnk_end_switch.emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_JMP])
+            emit_rel_jump(cmpl_obj.memory, lnk_end_switch)
 
         # --- Step 4: emit segment bodies in order (fall-through is automatic) ---
         for seg_idx, (_, seg_stmnts) in enumerate(stmnt.segments):
@@ -339,8 +321,7 @@ def compile_stmnt(
     elif stmnt.stmnt_type == StmntType.GOTO:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, GotoStmnt)
-        cmpl_data.reference_label(stmnt.label_name).emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_JMP])
+        emit_rel_jump(cmpl_obj.memory, cmpl_data.reference_label(stmnt.label_name))
     elif stmnt.stmnt_type == StmntType.LABEL:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, LabelStmnt)
@@ -355,20 +336,18 @@ def compile_stmnt(
 
 from .BaseCmplObj import BaseCmplObj
 from .CompileObject import CompileObject
-from .LinkRef import LinkRef
 from .Linkage import Linkage
 from .LocalCompileData import LocalCompileData
 from .LocalRef import LocalRef
 from .compile_curly import compile_curly
 from .compile_expr import compile_expr
 from .constants import CURRENT_CMPL_CONDITIONS
+from .branch_emit import emit_rel_jump, emit_rel_jumpif
 from .stackvm_binutils.assemble import assemble
 from ..PrettyRepr import format_pretty
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import (
     BC128_CMP128U,
-    BCR_EA_R_IP,
-    BCR_SZ_8,
     BCR_TOS,
     BC_CMP1,
     BC_CMP2,
@@ -376,8 +355,6 @@ from ..StackVM.PyStackVM import (
     BC_CMP8,
     BC_EQ0,
     BC_INT128,
-    BC_JMP,
-    BC_JMPIF,
     BC_LOAD,
     BC_RET,
     BC_RST_SP1,

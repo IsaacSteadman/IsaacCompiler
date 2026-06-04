@@ -4,7 +4,7 @@ import struct
 from typing import Callable, Dict, List, Optional, Set, Union
 from .PrettyRepr import format_pretty
 from .Preprocessing import preprocess as cpp_preprocess
-from .StackVM.runner import add_cmd_argv_vm, run_in_vm
+from .StackVM.runner import add_cmd_argv_vm, load_sbc, run_in_vm
 from .code_gen.Compilation import Compilation
 from .code_gen.CompilerOptions import CompilerOptions
 from .code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
@@ -658,29 +658,8 @@ elif args.subcommand == "link":
 elif args.subcommand == "run":
     input_file = args.input
     print(f"Loading binary: {input_file}")
-    with open(input_file, "rb") as fl:
-        magic = fl.read(8)
-        assert magic in {_SVC_MAGIC, _SVC_SPARSE_MAGIC}, (
-            f"invalid magic in binary file: expected {_SVC_MAGIC!r} or "
-            f"{_SVC_SPARSE_MAGIC!r}, got {magic!r}"
-        )
-        header_bytes = fl.read(24)
-        assert (
-            len(header_bytes) == 24
-        ), "binary file is too short to contain a valid header"
-        code_segment_end, data_segment_start, total_memory_length = struct.unpack(
-            "<QQQ", header_bytes
-        )
-        memory = bytearray(fl.read())
-    assert magic != _SVC_MAGIC or len(memory) == total_memory_length, (
-        f"binary file is truncated: expected {total_memory_length} bytes of memory, "
-        f"got {len(memory)}"
-    )
-    assert len(memory) <= total_memory_length, (
-        f"binary file payload exceeds memory size: expected at most "
-        f"{total_memory_length} bytes, got {len(memory)}"
-    )
-    memory.extend([0] * (total_memory_length - len(memory)))
+    memory, code_segment_end, data_segment_start = load_sbc(input_file)
+    total_memory_length = len(memory)
     print(
         f"  code_segment_end   = {code_segment_end:#010x}\n"
         f"  data_segment_start = {data_segment_start:#010x}\n"

@@ -10,7 +10,17 @@ REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
-from IsaacCompiler.StackVM.PyStackVM import BC_RET
+from IsaacCompiler.StackVM.PyStackVM import (
+    BCR_ABS_C,
+    BCR_EA_R_IP,
+    BCR_TYP_MASK,
+    BC_LOAD,
+    BC_RCALL,
+    BC_RET,
+)
+from IsaacCompiler.code_gen.stackvm_binutils.disassembly_lst_lines import (
+    disassembly_lst_lines,
+)
 from IsaacCompiler.code_gen.stackvm_binutils.linker import link_objects
 from IsaacCompiler.code_gen.stackvm_binutils.object_file import (
     ObjectSegment,
@@ -262,14 +272,65 @@ class SeparateCompilationTests(unittest.TestCase):
         for reloc in obj.relocations:
             segment = obj.code if reloc.segment == ObjectSegment.CODE else obj.data
             self.assertLessEqual(reloc.offset + 8, len(segment))
+            expected_addend = (
+                -1
+                if reloc.segment == ObjectSegment.CODE
+                and segment[reloc.offset + 8] == BC_RCALL
+                else 0
+            )
             self.assertEqual(
                 int.from_bytes(
                     segment[reloc.offset : reloc.offset + 8],
                     "little",
                     signed=True,
                 ),
-                0,
+                expected_addend,
             )
+
+    def test_compiler_emits_pic_code_for_calls_jumps_and_globals(self):
+        source = (
+            "extern int ext; "
+            "int g; "
+            "int callee(void) { return g; } "
+            "int caller(void) { "
+            "    int total = 0; "
+            "    if (g) { total = callee(); } else { total = ext; } "
+            "    while (total) { total = 0; } "
+            "    return total + g; "
+            "}\n"
+        )
+        proc, obj = _compile_object(source)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+
+        instructions = [
+            text for _addr, text in disassembly_lst_lines(obj.code, None, None, {})
+        ]
+        self.assertIn("RCALL", instructions)
+        self.assertTrue(any(text in {"RJMP", "RJMPIF"} for text in instructions))
+        self.assertNotIn("CALL", instructions)
+        self.assertNotIn("JMP", instructions)
+        self.assertNotIn("JMPIF", instructions)
+
+        target_names = {
+            index: symbol.name for index, symbol in enumerate(obj.symbols)
+        }
+        code_relocations = [
+            reloc for reloc in obj.relocations if reloc.segment == ObjectSegment.CODE
+        ]
+        self.assertTrue(code_relocations)
+        self.assertTrue(
+            all(reloc.typ == RelocationType.PCREL8 for reloc in code_relocations)
+        )
+
+        for reloc in code_relocations:
+            target = target_names[reloc.symbol_index]
+            self.assertEqual(obj.code[reloc.offset - 2], BC_LOAD)
+            load_kind = obj.code[reloc.offset - 1] & BCR_TYP_MASK
+            if target == "callee":
+                self.assertEqual(load_kind, BCR_ABS_C)
+                self.assertEqual(obj.code[reloc.offset + 8], BC_RCALL)
+            elif target in {"g", "ext"}:
+                self.assertEqual(load_kind, BCR_EA_R_IP)
 
     def test_compiler_emits_named_rodata_and_nobits_sections(self):
         source = (

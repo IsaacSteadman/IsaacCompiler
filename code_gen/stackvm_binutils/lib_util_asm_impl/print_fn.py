@@ -13,8 +13,8 @@ def add_print(compilation, link_name, syscall_link_name):
 8d0
 @str
 8x21
-gRa*{syscall_link_name}
-CALL
+gRr[1]*{syscall_link_name}
+RCALL
 1d40
 RST_SP1
 

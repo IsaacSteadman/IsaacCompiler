@@ -223,6 +223,7 @@ class LinkResult:
     included_objects: List[str]
     object_layouts: List[ObjectLayout]
     section_layouts: List[SectionLayout]
+    base_relocations: List[int] = field(default_factory=list)
 
     @property
     def symbol_addresses(self) -> Dict[str, int]:
@@ -243,6 +244,7 @@ class LinkResult:
             self.code_segment_end,
             self.data_segment_start,
             file_size,
+            tuple(self.base_relocations),
         )
 
     def to_sbc(self) -> bytes:
@@ -699,6 +701,7 @@ class _ObjectLinker:
             }
         )
 
+        base_relocations = []
         for object_index, obj_input in enumerate(self.included):
             for relocation in obj_input.obj.relocations:
                 symbol = obj_input.obj.symbols[relocation.symbol_index]
@@ -713,6 +716,7 @@ class _ObjectLinker:
                     + relocation.offset
                     - section.object_offset
                 )
+                resolved_undefined_weak = False
                 if symbol.binding == SymbolBinding.LOCAL:
                     target_address = (
                         None
@@ -728,11 +732,17 @@ class _ObjectLinker:
                         and _is_undefined_weak(symbol)
                     ):
                         target_address = 0
+                        resolved_undefined_weak = True
                 if target_address is None:
                     continue
                 addend = _read_addend(memory, patch_address)
                 if relocation.typ == RelocationType.ABS8:
                     value = target_address + addend
+                    if (
+                        relocation.segment == ObjectSegment.DATA
+                        and not resolved_undefined_weak
+                    ):
+                        base_relocations.append(patch_address)
                 elif relocation.typ == RelocationType.PCREL8:
                     value = target_address + addend - (patch_address + 8)
                 else:
@@ -804,6 +814,7 @@ class _ObjectLinker:
             [obj_input.display_name for obj_input in self.included],
             layouts,
             section_layouts,
+            sorted(base_relocations),
         )
 
 

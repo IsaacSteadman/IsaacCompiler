@@ -11,8 +11,8 @@ ADD_SP1
 @size
 @src
 @dest
-gRa*{memmove_link_name}
-CALL
+gRr[1]*{memmove_link_name}
+RCALL
 1d32
 RST_SP1
 @dest

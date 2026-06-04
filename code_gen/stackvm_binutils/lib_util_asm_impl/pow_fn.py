@@ -24,15 +24,15 @@ STOR-ABS_S8|SZ_8
 8d0
 CMP8
 EQ0
-lRa*:done
-JMPIF
+lRr[1]*:done
+RJMPIF
 
 @n
 8d0
 CMP8S
 GE0
-lRa*:abs_done
-JMPIF
+lRr[1]*:abs_done
+RJMPIF
 
 8d0
 @n
@@ -47,8 +47,8 @@ STOR-ABS_S8|SZ_8
 8d0
 CMP8
 EQ0
-lRa*:end_loop
-JMPIF
+lRr[1]*:end_loop
+RJMPIF
 
 @result
 @base
@@ -62,8 +62,8 @@ SUB8
 lRa*n
 STOR-ABS_S8|SZ_8
 
-lRa*:loop
-JMP
+lRr[1]*:loop
+RJMP
 
 :end_loop
 
@@ -72,8 +72,8 @@ CONV-BCC(SI_4_I|SI_8_O)
 8d0
 CMP8S
 GE0
-lRa*:done
-JMPIF
+lRr[1]*:done
+RJMPIF
 
 8f1.0
 @result

@@ -20,7 +20,9 @@ from IsaacCompiler.code_gen.stackvm_binutils.archive_file import (
 )
 from IsaacCompiler.code_gen.stackvm_binutils.executable_file import (
     SBC_HEADER_SIZE,
+    SBC_RELOC_MAGIC,
     SBC_SPARSE_MAGIC,
+    apply_base_fixups,
     loads_sbc,
 )
 from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.names import (
@@ -137,11 +139,23 @@ class LinkerTests(unittest.TestCase):
             int.from_bytes(result.memory[0x1000 : 0x1008], "little"),
             0x1010 + 3,
         )
+        self.assertEqual(result.base_relocations, [0x1000])
 
         executable = loads_sbc(result.to_sbc())
+        self.assertEqual(result.to_sbc()[:8], SBC_RELOC_MAGIC)
         self.assertEqual(executable.memory, result.memory)
+        self.assertEqual(executable.base_relocations, (0x1000,))
         self.assertEqual(executable.code_segment_end, result.code_segment_end)
         self.assertEqual(executable.data_segment_start, result.data_segment_start)
+        loaded = apply_base_fixups(
+            bytearray(executable.memory),
+            executable.base_relocations,
+            0x400000,
+        )
+        self.assertEqual(
+            int.from_bytes(loaded[0x1000 : 0x1008], "little"),
+            0x401010 + 3,
+        )
 
         map_text = format_map(result)
         self.assertIn("target_fn [defs.sbo]", map_text)

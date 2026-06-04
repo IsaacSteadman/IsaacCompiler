@@ -32,8 +32,7 @@ def _compile_direct_helper_call(
         sz = compile_expr(cmpl_obj, arg, context, cmpl_data, arg.t_anot, temp_links)
         cmpl_data.bp_off += sz
         sz_args += sz
-    cmpl_obj.get_link(helper_link_name).emit_lea(cmpl_obj.memory)
-    cmpl_obj.memory.extend([BC_CALL])
+    emit_rel_call(cmpl_obj.memory, cmpl_obj.get_link(helper_link_name))
     sz_cls = emit_load_i_const(cmpl_obj.memory, sz_args, False)
     cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
     cmpl_data.bp_off -= sz_args
@@ -361,9 +360,26 @@ def compile_expr(
             lnk_ret.emit_lea(cmpl_obj.memory)
             cmpl_data.bp_off += 8
             sz0 += 8
-        sz_addr = compile_expr(cmpl_obj, expr.fn, context, cmpl_data, None, temp_links)
-        assert sz_addr == 8
-        cmpl_obj.memory.extend([BC_CALL])
+        if (
+            isinstance(fn_type, QualType)
+            and fn_type.qual_id == QualType.QUAL_FN
+            and not expr.fn.ctx_var.uses_stack_storage()
+        ):
+            emit_rel_call(
+                cmpl_obj.memory,
+                cmpl_obj.get_link(expr.fn.ctx_var.get_link_name()),
+            )
+        else:
+            sz_addr = compile_expr(
+                cmpl_obj,
+                expr.fn,
+                context,
+                cmpl_data,
+                None,
+                temp_links,
+            )
+            assert sz_addr == 8
+            cmpl_obj.memory.extend([BC_CALL])
         sz_cls = emit_load_i_const(cmpl_obj.memory, sz0, False)
         cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
         cmpl_data.bp_off -= sz0
@@ -933,10 +949,10 @@ def compile_expr(
 from .BaseCmplObj import BaseCmplObj
 from .BaseLink import BaseLink
 from .CompileExprException import CompileExprException
-from .LinkRef import LinkRef
 from .LocalCompileData import LocalCompileData
 from .LocalRef import LocalRef
 from .byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
+from .branch_emit import emit_rel_call
 from .compile_bin_op_expr import compile_bin_op_expr
 from .compile_conv_general import compile_conv_general
 from .compile_expr import compile_expr
@@ -969,7 +985,6 @@ from ..StackVM.PyStackVM import (
     BCR_ATOMIC_LOAD,
     BCR_ATOMIC_XCHG,
     BCR_ABS_S8,
-    BCR_EA_R_IP,
     BCR_SZ_8,
     BCR_TOS,
     BCS_SZ8_A,
@@ -983,8 +998,6 @@ from ..StackVM.PyStackVM import (
     BC_FSUB_16,
     BC_FSUB_2,
     BC_INT128,
-    BC_JMP,
-    BC_JMPIF,
     BC_LOAD,
     BC_MUL8,
     BC_NOT1,

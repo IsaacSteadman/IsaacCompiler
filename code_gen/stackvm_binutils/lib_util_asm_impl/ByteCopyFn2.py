@@ -15,8 +15,8 @@ def add_byte_copy_fn2(compilation):
 CMP8
 LT0
 EQ0
-lRa*:endFor
-JMPIF
+lRr[1]*:endFor
+RJMPIF
 
 
 LOAD-REG_BP|SZ_8
@@ -38,8 +38,8 @@ ADD8
 lRa*c
 STOR-ABS_S8|SZ_8
 
-lRa*:checkFor
-JMP
+lRr[1]*:checkFor
+RJMP
 
 :endFor
 ~-c
