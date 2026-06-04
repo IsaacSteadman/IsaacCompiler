@@ -14,6 +14,43 @@ from ..util import try_catch_wrapper0
 # TODO: find out why MyGetExprPart(..from LangTest.py, 107, 391, ..context) returns ?, 2
 
 
+_GROUP_OPEN_TO_CLOSE = {"(": ")", "[": "]", "{": "}"}
+_GROUP_CLOSES = set(_GROUP_OPEN_TO_CLOSE.values())
+
+
+def _scan_group_end_and_top_level_commas(tokens, c, end):
+    open_tok = tokens[c].str
+    if open_tok not in _GROUP_OPEN_TO_CLOSE:
+        raise ParsingError(tokens, c, "Expected an opening group token")
+    expected_close = _GROUP_OPEN_TO_CLOSE[open_tok]
+    depth = 1
+    ternary_depth = 0
+    comma_count = 0
+    c += 1
+    while c < end:
+        s = tokens[c].str
+        if s in _GROUP_OPEN_TO_CLOSE:
+            depth += 1
+        elif s in _GROUP_CLOSES:
+            depth -= 1
+            if depth == 0:
+                if s != expected_close:
+                    raise ParsingError(
+                        tokens,
+                        c,
+                        "Expected '%s' to close '%s'" % (expected_close, open_tok),
+                    )
+                return c + 1, comma_count
+        elif s == "?" and depth == 1:
+            ternary_depth += 1
+        elif s == ":" and depth == 1 and ternary_depth > 0:
+            ternary_depth -= 1
+        elif s == "," and depth == 1 and ternary_depth == 0:
+            comma_count += 1
+        c += 1
+    raise ParsingError(tokens, c - 1, "Expected '%s'" % expected_close)
+
+
 @try_catch_wrapper0
 def my_get_expr_part(
     tokens: List["Token"],
@@ -47,19 +84,8 @@ def my_get_expr_part(
         c += 1
         return rtn, c
     elif s == "(":
-        lvl = 1
         start = c
-        c += 1
-        comma_count = 0
-        while lvl > 0:
-            s = tokens[c].str
-            if s in OPEN_GROUPS:
-                lvl += 1
-            elif s in CLOSE_GROUPS:
-                lvl -= 1
-            elif s == "," and lvl == 1:
-                comma_count += 1
-            c += 1
+        c, comma_count = _scan_group_end_and_top_level_commas(tokens, c, end)
         end_t = c
         end_p = end_t - 1
         c = start + 1
@@ -73,7 +99,7 @@ def my_get_expr_part(
             # c is now at ')'; advance past it
             c = end_t
             return ExprOpPart(stmnt_expr), c
-        if comma_count == 0:
+        if comma_count == 0 and tokens[c].str != "_Generic":
             type_name, type_c = proc_typed_decl(tokens, c, end_p, context)
             if type_c > start + 1 and type_name is not None:
                 type_name.typ, type_c = _consume_abstract_decl_suffixes(
@@ -130,6 +156,9 @@ def my_get_expr_part(
     ):
         expr, c = _build_builtin_types_compatible_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
+    elif s == "_Generic" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_generic_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif s == "__builtin_offsetof" and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_offsetof_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
@@ -184,7 +213,6 @@ from .expr_part.InlineIfOpPart import InlineIfOpPart
 from .expr_part.ParentOpPart import ParenthOpPart
 from .expr_part.SParenthOpPart import SParenthOpPart
 from .expr_part.SimpleOpPart import SimpleOpPart
-from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
 from ..type.types import (
     ClassType,
     CompileContext,
@@ -432,9 +460,9 @@ def _parse_builtin_type_arg(tokens, c, end, context, arg_name):
 def _find_call_paren_end(tokens, c, end):
     lvl = 1
     while c < end:
-        if tokens[c].str in OPEN_GROUPS:
+        if tokens[c].str in _GROUP_OPEN_TO_CLOSE:
             lvl += 1
-        elif tokens[c].str in CLOSE_GROUPS:
+        elif tokens[c].str in _GROUP_CLOSES:
             lvl -= 1
             if lvl == 0:
                 return c
@@ -696,16 +724,141 @@ def _build_builtin_types_compatible_expr(tokens, c, end, context):
 
 
 def _find_top_level_call_comma(tokens, c, end):
-    lvl = 1
+    lvl = 0
+    ternary_lvl = 0
     while c < end:
-        if tokens[c].str in OPEN_GROUPS:
+        s = tokens[c].str
+        if s in _GROUP_OPEN_TO_CLOSE:
             lvl += 1
-        elif tokens[c].str in CLOSE_GROUPS:
+        elif s in _GROUP_CLOSES:
             lvl -= 1
-        elif tokens[c].str == "," and lvl == 1:
+        elif s == "?" and lvl == 0:
+            ternary_lvl += 1
+        elif s == ":" and lvl == 0 and ternary_lvl > 0:
+            ternary_lvl -= 1
+        elif s == "," and lvl == 0 and ternary_lvl == 0:
             return c
         c += 1
     return None
+
+
+def _find_top_level_colon(tokens, c, end):
+    lvl = 0
+    while c < end:
+        s = tokens[c].str
+        if s in _GROUP_OPEN_TO_CLOSE:
+            lvl += 1
+        elif s in _GROUP_CLOSES:
+            lvl -= 1
+        elif s == ":" and lvl == 0:
+            return c
+        c += 1
+    return None
+
+
+def _find_next_generic_assoc_comma(tokens, c, end):
+    lvl = 0
+    ternary_lvl = 0
+    while c < end:
+        s = tokens[c].str
+        if s in _GROUP_OPEN_TO_CLOSE:
+            lvl += 1
+        elif s in _GROUP_CLOSES:
+            lvl -= 1
+        elif s == "?" and lvl == 0:
+            ternary_lvl += 1
+        elif s == ":" and lvl == 0 and ternary_lvl > 0:
+            ternary_lvl -= 1
+        elif s == "," and lvl == 0 and ternary_lvl == 0:
+            return c
+        c += 1
+    return end
+
+
+def _parse_generic_association_type(tokens, c, end, context):
+    type_decl, type_c = proc_typed_decl(tokens, c, end, context)
+    if type_decl is not None and type_c > c:
+        type_decl.typ, type_c = _consume_abstract_decl_suffixes(
+            tokens, type_c, end, context, type_decl.typ
+        )
+    if (
+        type_decl is None
+        or type_c != end
+        or not isinstance(type_decl, IdentifiedQualType)
+        or type_decl.name is not None
+    ):
+        raise ParsingError(tokens, c, "_Generic association must start with a type")
+    return type_decl.typ
+
+
+def _get_generic_control_type(expr):
+    if expr is None or expr.t_anot is None:
+        return None
+    control_type = get_value_type(expr.t_anot)
+    if isinstance(control_type, QualType):
+        if control_type.qual_id == QualType.QUAL_ARR:
+            return QualType(QualType.QUAL_PTR, control_type.tgt_type)
+        if control_type.qual_id == QualType.QUAL_FN:
+            return QualType(QualType.QUAL_PTR, control_type)
+    return control_type
+
+
+def _build_generic_expr(tokens, c, end, context):
+    paren_end = _find_call_paren_end(tokens, c, end)
+    controlling_expr, c = get_expr(tokens, c, ",", paren_end, context)
+    if controlling_expr is None or c >= paren_end or tokens[c].str != ",":
+        raise ParsingError(
+            tokens,
+            c,
+            "_Generic expects a controlling expression followed by associations",
+        )
+    control_type = _get_generic_control_type(controlling_expr)
+    if control_type is None:
+        raise ParsingError(tokens, c, "_Generic controlling expression has no type")
+
+    c += 1
+    default_range = None
+    selected_range = None
+    while c < paren_end:
+        assoc_end = _find_next_generic_assoc_comma(tokens, c, paren_end)
+        if c == assoc_end:
+            raise ParsingError(tokens, c, "Expected _Generic association")
+        colon_pos = _find_top_level_colon(tokens, c, assoc_end)
+        if colon_pos is None:
+            raise ParsingError(tokens, c, "Expected ':' in _Generic association")
+        expr_start = colon_pos + 1
+        if expr_start >= assoc_end:
+            raise ParsingError(tokens, expr_start, "Expected _Generic result expression")
+
+        if tokens[c].str == "default" and c + 1 == colon_pos:
+            if default_range is not None:
+                raise ParsingError(tokens, c, "_Generic has more than one default")
+            default_range = (expr_start, assoc_end)
+        else:
+            assoc_type = _parse_generic_association_type(tokens, c, colon_pos, context)
+            if compare_no_cvr(control_type, assoc_type):
+                if selected_range is not None:
+                    raise ParsingError(
+                        tokens,
+                        c,
+                        "_Generic has multiple associations compatible with the "
+                        "controlling expression",
+                    )
+                selected_range = (expr_start, assoc_end)
+
+        c = assoc_end + 1
+
+    branch_range = selected_range if selected_range is not None else default_range
+    if branch_range is None:
+        raise ParsingError(
+            tokens, paren_end, "No _Generic association matches the controlling type"
+        )
+    expr, expr_c = get_expr(tokens, branch_range[0], None, branch_range[1], context)
+    if expr is None:
+        raise ParsingError(tokens, branch_range[0], "Expected _Generic result expression")
+    if expr_c != branch_range[1]:
+        raise ParsingError(tokens, expr_c, "Unexpected tokens in _Generic result")
+    return expr, paren_end + 1
 
 
 def _build_builtin_offsetof_expr(tokens, c, end, context):
