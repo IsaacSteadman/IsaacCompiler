@@ -4765,15 +4765,17 @@ def _register_context_symbol(
         and not compare_no_cvr(previous.typ, decl_type)
     ):
         raise TypeError("Conflicting declarations for '%s'" % ctx_var.name)
+    if not ctx_var.has_external_linkage():
+        binding = SymbolBinding.LOCAL
+    elif any(attr.name == "weak" for attr in ctx_var.attributes):
+        binding = SymbolBinding.WEAK
+    else:
+        binding = SymbolBinding.GLOBAL
     compilation.register_symbol(
         link_name,
         ctx_var.name,
         decl_type,
-        (
-            SymbolBinding.GLOBAL
-            if ctx_var.has_external_linkage()
-            else SymbolBinding.LOCAL
-        ),
+        binding,
         ObjectSegment.CODE if is_function else ObjectSegment.DATA,
         SymbolType.FUNCTION if is_function else SymbolType.OBJECT,
         True,

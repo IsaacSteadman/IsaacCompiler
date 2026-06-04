@@ -91,7 +91,13 @@ class Compilation(BaseCmplObj):
             self.symbol_registry[link_name] = cur
             return cur
         if cur.binding != binding:
-            raise TypeError("Conflicting binding for symbol '%s'" % link_name)
+            if {cur.binding, binding} <= {
+                SymbolBinding.GLOBAL,
+                SymbolBinding.WEAK,
+            }:
+                cur.binding = SymbolBinding.WEAK
+            else:
+                raise TypeError("Conflicting binding for symbol '%s'" % link_name)
         if cur.segment != segment or cur.symbol_type != symbol_type:
             raise TypeError("Conflicting type for symbol '%s'" % link_name)
         cur.declared = cur.declared or declared

@@ -127,6 +127,10 @@ def _validate_object(obj: StackVMObject) -> None:
             raise ValueError("relocation patch is outside its segment")
 
 
+def validate_object(obj: StackVMObject) -> None:
+    _validate_object(obj)
+
+
 def dumps_sbo(obj: StackVMObject) -> bytes:
     _validate_object(obj)
     code = bytes(obj.code)

@@ -1,0 +1,422 @@
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
+REPO_PARENT = os.path.dirname(REPO_ROOT)
+if REPO_PARENT not in sys.path:
+    sys.path.insert(0, REPO_PARENT)
+
+from IsaacCompiler.StackVM.runner import load_sbc as load_runtime_sbc
+from IsaacCompiler.code_gen.stackvm_binutils.archive_file import (
+    ArchiveMember,
+    StackVMArchive,
+    dumps_sba,
+    loads_sba,
+    write_sba,
+)
+from IsaacCompiler.code_gen.stackvm_binutils.executable_file import loads_sbc
+from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.names import (
+    ISAAC_RUNTIME_LINK_NAMES,
+)
+from IsaacCompiler.code_gen.stackvm_binutils.linker import (
+    DuplicateSymbolError,
+    UndefinedSymbolError,
+    format_map,
+    link,
+    link_objects,
+)
+from IsaacCompiler.code_gen.stackvm_binutils.object_file import (
+    ObjectRelocation,
+    ObjectSegment,
+    ObjectSymbol,
+    RelocationType,
+    StackVMObject,
+    SymbolBinding,
+    SymbolFlags,
+    SymbolType,
+    load_sbo,
+    write_sbo,
+)
+
+
+def _patch(value=0):
+    return (value & ((1 << 64) - 1)).to_bytes(8, "little")
+
+
+def _undefined(name, segment=ObjectSegment.CODE, typ=SymbolType.FUNCTION):
+    return ObjectSymbol(
+        name,
+        0,
+        0,
+        segment,
+        SymbolBinding.GLOBAL,
+        typ,
+        SymbolFlags.UNDEFINED,
+    )
+
+
+def _definition(
+    name,
+    size,
+    segment=ObjectSegment.CODE,
+    binding=SymbolBinding.GLOBAL,
+    typ=SymbolType.FUNCTION,
+):
+    return ObjectSymbol(name, 0, size, segment, binding, typ)
+
+
+def _referencing_object(name, relocation_type=RelocationType.PCREL8, addend=0):
+    return StackVMObject(
+        _patch(addend),
+        b"",
+        [_undefined(name)],
+        [ObjectRelocation(0, 0, ObjectSegment.CODE, relocation_type)],
+    )
+
+
+class LinkerTests(unittest.TestCase):
+    def test_layout_abs8_pcrel8_addends_map_and_sbc_output(self):
+        caller_code = bytearray(16)
+        caller_code[0:8] = _patch(2)
+        caller_data = bytearray(_patch(3))
+        caller = StackVMObject(
+            bytes(caller_code),
+            bytes(caller_data),
+            [
+                _undefined("target_fn"),
+                _undefined("target_data", ObjectSegment.DATA, SymbolType.OBJECT),
+            ],
+            [
+                ObjectRelocation(0, 0, ObjectSegment.CODE, RelocationType.PCREL8),
+                ObjectRelocation(0, 1, ObjectSegment.DATA, RelocationType.ABS8),
+            ],
+        )
+        definitions = StackVMObject(
+            b"\xAA" * 4,
+            b"\xBB" * 4,
+            [
+                _definition("target_fn", 4),
+                _definition(
+                    "target_data",
+                    4,
+                    ObjectSegment.DATA,
+                    typ=SymbolType.OBJECT,
+                ),
+            ],
+            data_alignment=16,
+        )
+
+        result = link_objects([("caller.sbo", caller), ("defs.sbo", definitions)])
+
+        self.assertEqual(result.code_segment_end, 20)
+        self.assertEqual(result.data_segment_start, 0x1000)
+        self.assertEqual(result.global_symbols["target_fn"], 16)
+        self.assertEqual(result.global_symbols["target_data"], 0x1010)
+        self.assertEqual(
+            int.from_bytes(result.memory[0:8], "little", signed=True),
+            16 + 2 - 8,
+        )
+        self.assertEqual(
+            int.from_bytes(result.memory[0x1000 : 0x1008], "little"),
+            0x1010 + 3,
+        )
+
+        executable = loads_sbc(result.to_sbc())
+        self.assertEqual(executable.memory, result.memory)
+        self.assertEqual(executable.code_segment_end, result.code_segment_end)
+        self.assertEqual(executable.data_segment_start, result.data_segment_start)
+
+        map_text = format_map(result)
+        self.assertIn("target_fn [defs.sbo]", map_text)
+        self.assertIn("target_data [defs.sbo]", map_text)
+        self.assertIn("DATA 0x0000000000001000", map_text)
+
+    def test_strong_definitions_override_weak_and_duplicates_error(self):
+        reference = _referencing_object("chosen")
+        weak = StackVMObject(
+            b"W" * 8,
+            b"",
+            [_definition("chosen", 8, binding=SymbolBinding.WEAK)],
+        )
+        second_weak = StackVMObject(
+            b"V" * 8,
+            b"",
+            [_definition("chosen", 8, binding=SymbolBinding.WEAK)],
+        )
+        strong = StackVMObject(b"S" * 8, b"", [_definition("chosen", 8)])
+
+        weak_result = link_objects([reference, weak, second_weak])
+        self.assertEqual(weak_result.global_symbols["chosen"], 8)
+
+        strong_result = link_objects([reference, weak, strong])
+        self.assertEqual(strong_result.global_symbols["chosen"], 16)
+        self.assertEqual(
+            int.from_bytes(strong_result.memory[0:8], "little", signed=True),
+            8,
+        )
+        weak_symbol = next(
+            symbol
+            for symbol in strong_result.symbols
+            if symbol.binding == SymbolBinding.WEAK
+        )
+        self.assertFalse(weak_symbol.selected)
+
+        with self.assertRaisesRegex(DuplicateSymbolError, "multiple strong"):
+            link_objects([strong, StackVMObject(b"X" * 8, b"", [_definition("chosen", 8)])])
+
+    def test_non_default_bases_and_local_symbol_relocations(self):
+        obj = StackVMObject(
+            b"C" * 8,
+            _patch() + b"D" * 8,
+            [
+                _definition("entry", 8),
+                ObjectSymbol(
+                    ".local",
+                    8,
+                    8,
+                    ObjectSegment.DATA,
+                    SymbolBinding.LOCAL,
+                    SymbolType.OBJECT,
+                ),
+            ],
+            [ObjectRelocation(0, 1, ObjectSegment.DATA, RelocationType.ABS8)],
+            data_alignment=16,
+        )
+        result = link_objects(
+            [obj],
+            code_base=0x20,
+            data_base=0x10,
+            data_alignment=0x10,
+        )
+        self.assertEqual(result.global_symbols["entry"], 0x20)
+        self.assertEqual(result.code_segment_end, 0x28)
+        self.assertEqual(result.data_segment_start, 0x30)
+        self.assertEqual(
+            int.from_bytes(result.memory[0x30:0x38], "little"),
+            0x38,
+        )
+
+    def test_unresolved_symbols_error_or_remain_unmodified(self):
+        obj = _referencing_object("missing", RelocationType.ABS8, addend=7)
+        with self.assertRaisesRegex(UndefinedSymbolError, "missing"):
+            link_objects([obj])
+
+        result = link_objects([obj], allow_undefined=True)
+        self.assertEqual(result.unresolved_symbols, ["missing"])
+        self.assertEqual(int.from_bytes(result.memory[0:8], "little"), 7)
+        self.assertIn("Unresolved symbols:", format_map(result))
+
+    def test_archive_extracts_only_needed_members_and_follows_dependencies(self):
+        root = _referencing_object("foo")
+        foo = StackVMObject(
+            _patch(),
+            b"",
+            [_definition("foo", 8), _undefined("bar")],
+            [ObjectRelocation(0, 1, ObjectSegment.CODE, RelocationType.PCREL8)],
+        )
+        bar = StackVMObject(b"B" * 8, b"", [_definition("bar", 8)])
+        unused = StackVMObject(b"U" * 64, b"", [_definition("unused", 64)])
+        archive = StackVMArchive(
+            [
+                ArchiveMember("unused.sbo", unused),
+                ArchiveMember("foo.sbo", foo),
+                ArchiveMember("bar.sbo", bar),
+            ]
+        )
+
+        result = link([("root.sbo", root), ("lib.sba", archive)])
+        self.assertEqual(
+            result.included_objects,
+            ["root.sbo", "lib.sba(foo.sbo)", "lib.sba(bar.sbo)"],
+        )
+        self.assertEqual(result.code_segment_end, 24)
+        self.assertNotIn("unused", result.global_symbols)
+        self.assertEqual(result.global_symbols["foo"], 8)
+        self.assertEqual(result.global_symbols["bar"], 16)
+
+        with self.assertRaisesRegex(UndefinedSymbolError, "foo"):
+            link([("lib.sba", archive), ("root.sbo", root)])
+
+    def test_archive_format_round_trip_and_runtime_symbol_aliases(self):
+        archive = StackVMArchive(
+            [
+                ArchiveMember(
+                    raw_name + ".sbo",
+                    StackVMObject(
+                        b"M" * 8,
+                        b"",
+                        [_definition(ISAAC_RUNTIME_LINK_NAMES[raw_name], 8)],
+                    ),
+                )
+                for raw_name in ("memset", "strlen")
+            ]
+        )
+        self.assertEqual(loads_sba(dumps_sba(archive)), archive)
+        with self.assertRaisesRegex(ValueError, "trailing"):
+            loads_sba(dumps_sba(archive) + b"x")
+
+        for raw_name in ("memset", "strlen"):
+            with self.subTest(raw_name=raw_name):
+                result = link([_referencing_object(raw_name), archive])
+                self.assertEqual(result.global_symbols[raw_name], 8)
+                self.assertEqual(
+                    result.global_symbols[ISAAC_RUNTIME_LINK_NAMES[raw_name]],
+                    8,
+                )
+                self.assertEqual(
+                    result.included_objects[-1],
+                    "<archive 1>(%s.sbo)" % raw_name,
+                )
+
+        with self.assertRaisesRegex(UndefinedSymbolError, "memset"):
+            link_objects(
+                [_referencing_object("memset")],
+                [archive],
+                runtime_aliases=False,
+            )
+
+    def test_cli_links_objects_and_archive_and_writes_map(self):
+        root = _referencing_object("foo")
+        definition = StackVMObject(b"F" * 8, b"", [_definition("foo", 8)])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root_path = os.path.join(tmpdir, "root.sbo")
+            archive_path = os.path.join(tmpdir, "lib.sba")
+            output_path = os.path.join(tmpdir, "out.sbc")
+            map_path = os.path.join(tmpdir, "out.map")
+            write_sbo(root, root_path)
+            write_sba(
+                StackVMArchive([ArchiveMember("foo.sbo", definition)]),
+                archive_path,
+            )
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "IsaacCompiler",
+                    "link",
+                    "-o",
+                    output_path,
+                    "--map",
+                    map_path,
+                    root_path,
+                    archive_path,
+                ],
+                cwd=REPO_PARENT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+            memory, code_end, data_start = load_runtime_sbc(output_path)
+            self.assertEqual(code_end, 16)
+            self.assertEqual(data_start, 0x1000)
+            self.assertEqual(
+                int.from_bytes(memory[0:8], "little", signed=True),
+                0,
+            )
+            with open(map_path, "r") as fl:
+                map_text = fl.read()
+            self.assertIn("foo", map_text)
+            self.assertIn("lib.sba(foo.sbo)", map_text)
+
+    def test_compiler_produced_objects_link_across_translation_units(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            caller_source = os.path.join(tmpdir, "caller.c")
+            definition_source = os.path.join(tmpdir, "definition.c")
+            caller_path = os.path.join(tmpdir, "caller.sbo")
+            definition_path = os.path.join(tmpdir, "definition.sbo")
+            with open(caller_source, "w") as fl:
+                fl.write(
+                    "extern int other(void); "
+                    "int caller(void) { return other(); }\n"
+                )
+            with open(definition_source, "w") as fl:
+                fl.write("int other(void) { return 7; }\n")
+            for source_path, output_path in (
+                (caller_source, caller_path),
+                (definition_source, definition_path),
+            ):
+                proc = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "IsaacCompiler",
+                        "compile",
+                        "-c",
+                        "-o",
+                        output_path,
+                        source_path,
+                    ],
+                    cwd=REPO_PARENT,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+
+            caller = load_sbo(caller_path)
+            definition = load_sbo(definition_path)
+            result = link_objects(
+                [("caller.sbo", caller), ("definition.sbo", definition)]
+            )
+            relocation = next(
+                relocation
+                for relocation in caller.relocations
+                if caller.symbols[relocation.symbol_index].name == "other"
+            )
+            addend = int.from_bytes(
+                caller.code[relocation.offset : relocation.offset + 8],
+                "little",
+                signed=True,
+            )
+            expected = (
+                result.global_symbols["other"]
+                + addend
+                - (relocation.offset + 8)
+            )
+            self.assertEqual(
+                int.from_bytes(
+                    result.memory[relocation.offset : relocation.offset + 8],
+                    "little",
+                    signed=True,
+                ),
+                expected,
+            )
+
+    def test_compiler_emits_weak_bindings_for_weak_declarations(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "weak.c")
+            output_path = os.path.join(tmpdir, "weak.sbo")
+            with open(source_path, "w") as fl:
+                fl.write(
+                    "extern int value; "
+                    "int __attribute__((weak)) value = 3;\n"
+                )
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "IsaacCompiler",
+                    "compile",
+                    "-c",
+                    "-o",
+                    output_path,
+                    source_path,
+                ],
+                cwd=REPO_PARENT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+            symbol = next(
+                symbol
+                for symbol in load_sbo(output_path).symbols
+                if symbol.name == "value"
+            )
+            self.assertEqual(symbol.binding, SymbolBinding.WEAK)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -16,6 +16,7 @@ from .code_gen.get_dict_links import get_dict_links
 from .lexer.lexer import get_list_tokens
 from .code_gen.stackvm_binutils.disassemble import disassemble
 from .code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
+from .code_gen.stackvm_binutils.linker import LinkerError, link_files
 from .code_gen.stackvm_binutils.object_file import write_sbo
 from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
@@ -88,6 +89,13 @@ def _parse_alignment_arg(value: str) -> int:
     if align & (align - 1):
         raise argparse.ArgumentTypeError("alignment must be a power of two")
     return align
+
+
+def _parse_nonnegative_int_arg(value: str) -> int:
+    number = int(value, 0)
+    if number < 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
+    return number
 
 
 def _token_line_col(tokens, index):
@@ -267,6 +275,70 @@ compile_parser.add_argument(
 )
 
 # ---------------------------------------------------------------------------
+# 'link' subcommand
+# ---------------------------------------------------------------------------
+link_parser = subparsers.add_parser(
+    "link",
+    help="link StackVM object and archive files into a .sbc binary",
+)
+link_parser.add_argument(
+    "inputs",
+    nargs="+",
+    metavar="input",
+    help="input .sbo object or .sba archive files, processed from left to right",
+)
+link_parser.add_argument(
+    "-o",
+    "--output-binary",
+    metavar="output_binary",
+    default="a.sbc",
+    dest="output_binary",
+    help="output .sbc file (default: a.sbc)",
+)
+link_parser.add_argument(
+    "-M",
+    "-Map",
+    "--map",
+    "--map-file",
+    metavar="map_file",
+    default=None,
+    dest="map_file",
+    help="write a linker map showing final object and symbol addresses",
+)
+link_parser.add_argument(
+    "--allow-undefined",
+    action="store_true",
+    help="allow unresolved relocations and leave their addends unmodified",
+)
+link_parser.add_argument(
+    "--code-base",
+    type=_parse_nonnegative_int_arg,
+    default=0,
+    help="virtual address at which code begins (default: 0)",
+)
+link_parser.add_argument(
+    "--data-base",
+    type=_parse_nonnegative_int_arg,
+    default=0x1000,
+    help="minimum virtual address at which data begins (default: 0x1000)",
+)
+link_parser.add_argument(
+    "-a",
+    "--data-seg-align",
+    type=_parse_alignment_arg,
+    default=0x1000,
+    dest="data_seg_align",
+    help="align the data segment start to this power of two (default: 4096)",
+)
+link_parser.add_argument(
+    "--no-runtime-aliases",
+    action="store_false",
+    default=True,
+    dest="runtime_aliases",
+    help="do not treat known mangled and unmangled runtime names as aliases",
+)
+
+# ---------------------------------------------------------------------------
 # 'run' subcommand
 # ---------------------------------------------------------------------------
 run_parser = subparsers.add_parser(
@@ -292,7 +364,7 @@ run_parser.add_argument(
 # ---------------------------------------------------------------------------
 args = argparser.parse_args()
 
-program_args: List[str] = args.program_args
+program_args: List[str] = getattr(args, "program_args", [])
 if program_args and program_args[0] == "--":
     program_args = program_args[1:]
 
@@ -535,6 +607,38 @@ if args.subcommand == "compile":
                     }
                 )
             )
+
+# ---------------------------------------------------------------------------
+# 'link' subcommand logic
+# ---------------------------------------------------------------------------
+elif args.subcommand == "link":
+    for target in (args.output_binary, args.map_file):
+        if target is not None and not os.path.isdir(
+            os.path.dirname(os.path.abspath(target))
+        ):
+            link_parser.error("parent directory does not exist: %s" % target)
+    try:
+        result = link_files(
+            args.inputs,
+            args.output_binary,
+            args.map_file,
+            allow_undefined=args.allow_undefined,
+            code_base=args.code_base,
+            data_base=args.data_base,
+            data_alignment=args.data_seg_align,
+            runtime_aliases=args.runtime_aliases,
+        )
+    except (LinkerError, OSError, ValueError) as exc:
+        link_parser.error(str(exc))
+    print(
+        "Linked %u object(s): code end %#x, data start %#x, image size %#x"
+        % (
+            len(result.included_objects),
+            result.code_segment_end,
+            result.data_segment_start,
+            len(result.memory),
+        )
+    )
 
 # ---------------------------------------------------------------------------
 # 'run' subcommand logic
