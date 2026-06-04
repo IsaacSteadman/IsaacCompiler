@@ -299,6 +299,10 @@ def _write_value(memory: bytearray, offset: int, value: int) -> None:
     memory[offset : offset + 8] = (value & ((1 << 64) - 1)).to_bytes(8, "little")
 
 
+def _is_undefined_weak(symbol: ObjectSymbol) -> bool:
+    return symbol.is_undefined and symbol.binding == SymbolBinding.WEAK
+
+
 class _ObjectLinker:
     def __init__(self, options: LinkOptions):
         self.options = options
@@ -364,6 +368,8 @@ class _ObjectLinker:
                 symbol = obj_input.obj.symbols[relocation.symbol_index]
                 if symbol.binding == SymbolBinding.LOCAL:
                     continue
+                if _is_undefined_weak(symbol):
+                    continue
                 key = self.aliases.canonical(symbol.name)
                 if key not in self.selected and key not in self.linker_defined_keys:
                     unresolved.add(key)
@@ -377,6 +383,8 @@ class _ObjectLinker:
                 if symbol.binding == SymbolBinding.LOCAL:
                     if symbol.is_undefined:
                         unresolved.add(symbol.name)
+                    continue
+                if _is_undefined_weak(symbol):
                     continue
                 key = self.aliases.canonical(symbol.name)
                 if key not in self.selected and key not in self.linker_defined_keys:
@@ -671,6 +679,11 @@ class _ObjectLinker:
                     target_address = selected_addresses.get(
                         self.aliases.canonical(symbol.name)
                     )
+                    if (
+                        target_address is None
+                        and _is_undefined_weak(symbol)
+                    ):
+                        target_address = 0
                 if target_address is None:
                     continue
                 addend = _read_addend(memory, patch_address)

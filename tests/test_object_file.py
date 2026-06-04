@@ -145,6 +145,27 @@ class ObjectFileFormatTests(unittest.TestCase):
             write_sbo(obj, path)
             self.assertEqual(load_sbo(path), obj)
 
+    def test_weak_symbol_binding_round_trip(self):
+        obj = StackVMObject(
+            b"W",
+            b"",
+            [
+                ObjectSymbol(
+                    "default_hook",
+                    0,
+                    1,
+                    ObjectSegment.CODE,
+                    SymbolBinding.WEAK,
+                    SymbolType.FUNCTION,
+                )
+            ],
+        )
+
+        blob = dumps_sbo(obj)
+        symbol_offset = struct.unpack_from("<Q", blob, 48)[0]
+        self.assertEqual(blob[symbol_offset + 25], int(SymbolBinding.WEAK))
+        self.assertEqual(loads_sbo(blob).symbols[0].binding, SymbolBinding.WEAK)
+
     def test_writer_rejects_invalid_metadata_and_patch_bounds(self):
         obj = _sample_object()
         obj.default_alignment = 3

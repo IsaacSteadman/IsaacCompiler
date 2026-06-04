@@ -188,6 +188,24 @@ class SeparateCompilationTests(unittest.TestCase):
         self.assertTrue(all(not symbol.is_undefined for symbol in local_objects))
         self.assertTrue(all(symbol.binding != SymbolBinding.WEAK for symbol in obj.symbols))
 
+    def test_weak_definitions_and_references_have_weak_binding(self):
+        source = (
+            "extern int optional_hook(void) __attribute__((weak)); "
+            "void __attribute__((weak)) arch_setup_dma_ops(void) {} "
+            "int call_optional(void) { return optional_hook(); }\n"
+        )
+        proc, obj = _compile_object(source)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+        symbols = _symbols_by_name(obj)
+
+        self.assertEqual(
+            symbols["arch_setup_dma_ops"].binding,
+            SymbolBinding.WEAK,
+        )
+        self.assertFalse(symbols["arch_setup_dma_ops"].is_undefined)
+        self.assertEqual(symbols["optional_hook"].binding, SymbolBinding.WEAK)
+        self.assertTrue(symbols["optional_hook"].is_undefined)
+
     def test_relocations_alignment_and_string_symbols(self):
         source = (
             "extern int ext; "

@@ -55,13 +55,18 @@ def _patch(value=0):
     return (value & ((1 << 64) - 1)).to_bytes(8, "little")
 
 
-def _undefined(name, segment=ObjectSegment.CODE, typ=SymbolType.FUNCTION):
+def _undefined(
+    name,
+    segment=ObjectSegment.CODE,
+    typ=SymbolType.FUNCTION,
+    binding=SymbolBinding.GLOBAL,
+):
     return ObjectSymbol(
         name,
         0,
         0,
         segment,
-        SymbolBinding.GLOBAL,
+        binding,
         typ,
         SymbolFlags.UNDEFINED,
     )
@@ -172,6 +177,26 @@ class LinkerTests(unittest.TestCase):
             if symbol.binding == SymbolBinding.WEAK
         )
         self.assertFalse(weak_symbol.selected)
+
+        reverse_result = link_objects([reference, strong, weak])
+        self.assertEqual(reverse_result.global_symbols["chosen"], 8)
+        reverse_symbols = [
+            symbol for symbol in reverse_result.symbols if symbol.name == "chosen"
+        ]
+        self.assertTrue(
+            next(
+                symbol
+                for symbol in reverse_symbols
+                if symbol.binding == SymbolBinding.GLOBAL
+            ).selected
+        )
+        self.assertFalse(
+            next(
+                symbol
+                for symbol in reverse_symbols
+                if symbol.binding == SymbolBinding.WEAK
+            ).selected
+        )
 
         with self.assertRaisesRegex(DuplicateSymbolError, "multiple strong"):
             link_objects([strong, StackVMObject(b"X" * 8, b"", [_definition("chosen", 8)])])
@@ -364,6 +389,67 @@ class LinkerTests(unittest.TestCase):
         self.assertEqual(result.unresolved_symbols, ["missing"])
         self.assertEqual(int.from_bytes(result.memory[0:8], "little"), 7)
         self.assertIn("Unresolved symbols:", format_map(result))
+
+    def test_undefined_weak_references_resolve_to_zero_without_extracting_archive(self):
+        optional_reference = StackVMObject(
+            _patch(7) + _patch(3),
+            b"",
+            [
+                _undefined(
+                    "optional_hook",
+                    binding=SymbolBinding.WEAK,
+                )
+            ],
+            [
+                ObjectRelocation(0, 0, ObjectSegment.CODE, RelocationType.ABS8),
+                ObjectRelocation(8, 0, ObjectSegment.CODE, RelocationType.PCREL8),
+            ],
+        )
+        default_archive = StackVMArchive(
+            [
+                ArchiveMember(
+                    "optional_hook.sbo",
+                    StackVMObject(
+                        b"D" * 8,
+                        b"",
+                        [
+                            _definition(
+                                "optional_hook",
+                                8,
+                                binding=SymbolBinding.WEAK,
+                            )
+                        ],
+                    ),
+                )
+            ]
+        )
+
+        result = link(
+            [
+                ("root.sbo", optional_reference),
+                ("defaults.sba", default_archive),
+            ]
+        )
+        self.assertEqual(result.unresolved_symbols, [])
+        self.assertEqual(result.included_objects, ["root.sbo"])
+        self.assertEqual(int.from_bytes(result.memory[0:8], "little"), 7)
+        self.assertEqual(
+            int.from_bytes(result.memory[8:16], "little", signed=True),
+            -13,
+        )
+
+        strong = StackVMObject(
+            b"S" * 8,
+            b"",
+            [_definition("optional_hook", 8)],
+        )
+        strong_result = link_objects([optional_reference, strong])
+        self.assertEqual(strong_result.global_symbols["optional_hook"], 16)
+        self.assertEqual(int.from_bytes(strong_result.memory[0:8], "little"), 23)
+        self.assertEqual(
+            int.from_bytes(strong_result.memory[8:16], "little", signed=True),
+            3,
+        )
 
     def test_archive_extracts_only_needed_members_and_follows_dependencies(self):
         root = _referencing_object("foo")
@@ -618,7 +704,8 @@ class LinkerTests(unittest.TestCase):
             with open(source_path, "w") as fl:
                 fl.write(
                     "extern int value; "
-                    "int __attribute__((weak)) value = 3;\n"
+                    "int __attribute__((weak)) value = 3; "
+                    "void __attribute__((weak)) arch_setup_dma_ops(void) {}\n"
                 )
             proc = subprocess.run(
                 [
@@ -636,12 +723,77 @@ class LinkerTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
-            symbol = next(
-                symbol
-                for symbol in load_sbo(output_path).symbols
-                if symbol.name == "value"
+            symbols = {symbol.name: symbol for symbol in load_sbo(output_path).symbols}
+            self.assertEqual(symbols["value"].binding, SymbolBinding.WEAK)
+            self.assertEqual(
+                symbols["arch_setup_dma_ops"].binding,
+                SymbolBinding.WEAK,
             )
-            self.assertEqual(symbol.binding, SymbolBinding.WEAK)
+
+    def test_compiler_produced_strong_function_overrides_weak_default(self):
+        sources = {
+            "caller": (
+                "extern void arch_setup_dma_ops(void); "
+                "void configure_device(void) { arch_setup_dma_ops(); }\n"
+            ),
+            "default": (
+                "void __attribute__((weak)) arch_setup_dma_ops(void) {}\n"
+            ),
+            "override": "void arch_setup_dma_ops(void) {}\n",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            objects = {}
+            for name, source in sources.items():
+                source_path = os.path.join(tmpdir, name + ".c")
+                object_path = os.path.join(tmpdir, name + ".sbo")
+                with open(source_path, "w") as fl:
+                    fl.write(source)
+                proc = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "IsaacCompiler",
+                        "compile",
+                        "-c",
+                        "-o",
+                        object_path,
+                        source_path,
+                    ],
+                    cwd=REPO_PARENT,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+                objects[name] = load_sbo(object_path)
+
+        result = link_objects(
+            [
+                ("caller.sbo", objects["caller"]),
+                ("default.sbo", objects["default"]),
+                ("override.sbo", objects["override"]),
+            ]
+        )
+        definitions = [
+            symbol
+            for symbol in result.symbols
+            if symbol.name == "arch_setup_dma_ops"
+        ]
+        weak = next(
+            symbol
+            for symbol in definitions
+            if symbol.binding == SymbolBinding.WEAK
+        )
+        strong = next(
+            symbol
+            for symbol in definitions
+            if symbol.binding == SymbolBinding.GLOBAL
+        )
+        self.assertFalse(weak.selected)
+        self.assertTrue(strong.selected)
+        self.assertEqual(
+            result.global_symbols["arch_setup_dma_ops"],
+            strong.address,
+        )
 
 
 if __name__ == "__main__":
