@@ -11,6 +11,7 @@ if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
 from IsaacCompiler.StackVM.PyStackVM import BC_RET
+from IsaacCompiler.code_gen.stackvm_binutils.linker import link_objects
 from IsaacCompiler.code_gen.stackvm_binutils.object_file import (
     ObjectSegment,
     RelocationType,
@@ -295,6 +296,80 @@ class SeparateCompilationTests(unittest.TestCase):
         self.assertEqual(bss.size, symbols["zeroes"].size)
         self.assertGreaterEqual(bss.offset, len(obj.data))
         self.assertEqual(symbols["cache"].value % 16, 0)
+
+    def test_lifecycle_attributes_emit_arrays_and_link_by_priority(self):
+        sources = [
+            (
+                "late.c",
+                "void __attribute__((constructor(200))) ctor_late(void) {} "
+                "void __attribute__((destructor(200))) dtor_first(void) {}\n",
+            ),
+            (
+                "early.c",
+                "void __attribute__((constructor(101))) ctor_early(void) {} "
+                "void __attribute__((destructor(101))) dtor_last(void) {}\n",
+            ),
+        ]
+        objects = []
+        for filename, source in sources:
+            proc, obj = _compile_object(source, filename=filename)
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+            objects.append(obj)
+            relocation_sections = {
+                obj.sections[relocation.section_index].name
+                for relocation in obj.relocations
+            }
+            self.assertTrue(
+                any(name.startswith(".init_array.") for name in relocation_sections)
+            )
+            self.assertTrue(
+                any(name.startswith(".fini_array.") for name in relocation_sections)
+            )
+
+        result = link_objects(
+            [("late.sbo", objects[0]), ("early.sbo", objects[1])]
+        )
+
+        def array_targets(start_name, end_name):
+            start = result.global_symbols[start_name]
+            end = result.global_symbols[end_name]
+            return [
+                int.from_bytes(result.memory[offset : offset + 8], "little")
+                for offset in range(start, end, 8)
+            ]
+
+        self.assertEqual(
+            array_targets("__init_array_start", "__init_array_end"),
+            [
+                result.global_symbols["ctor_early"],
+                result.global_symbols["ctor_late"],
+            ],
+        )
+        self.assertEqual(
+            array_targets("__fini_array_start", "__fini_array_end"),
+            [
+                result.global_symbols["dtor_last"],
+                result.global_symbols["dtor_first"],
+            ],
+        )
+
+    def test_lifecycle_attributes_on_redeclarations_register_defined_functions(self):
+        source = (
+            "void before(void) __attribute__((constructor)); "
+            "void before(void) {} "
+            "void after(void) {} "
+            "void after(void) __attribute__((constructor)); "
+            "extern void missing(void) __attribute__((constructor));\n"
+        )
+        proc, obj = _compile_object(source)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+        targets = {
+            obj.symbols[relocation.symbol_index].name
+            for relocation in obj.relocations
+            if obj.sections[relocation.section_index].name == ".init_array"
+        }
+        self.assertEqual(targets, {"before", "after"})
+        self.assertNotIn("missing", _symbols_by_name(obj))
 
     def test_runtime_helpers_remain_undefined(self):
         source = (

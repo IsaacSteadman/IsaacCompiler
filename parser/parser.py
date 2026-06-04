@@ -2,7 +2,6 @@ from Lexing import *
 from PrettyRepr import *
 from CompilingUtils import *
 from typing import List
-from ..code_gen.Compilation import INIT_GLOBALS_LINK_NAME
 
 
 # TODO: fix function overloading (CodeGen and Parse-time resolution)
@@ -184,17 +183,10 @@ def compile_lang1(tokens: List["Token"], cmpl_opts: "CompilerOptions"):
             raise
         lst_stmnt.append(stmnt)
     if run_method == LNK_RUN_STANDALONE:
-        init_obj = cmpl_obj.finalize_global_initializer()
-        if init_obj is not None:
-            cmpl_obj.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(cmpl_obj.memory)
-            cmpl_obj.memory.extend([BC_CALL])
         main_var = global_ctx.var_name_strict("main")
         if main_var is None:
             raise NameError("Standalone output requires a definition of main")
-        main_fn = cmpl_obj.get_link(main_var.get_link_name())
-        emit_load_i_const(cmpl_obj.memory, 1, True, 2)
-        main_fn.emit_lea(cmpl_obj.memory)
-        cmpl_obj.memory.extend([BC_CALL, BC_HLT])
+        cmpl_obj.emit_standalone_startup(main_var.get_link_name())
     dep_tree = [("", sorted(cmpl_obj.linkages))]
     for k in cmpl_obj.objects:
         cur = cmpl_obj.objects[k]

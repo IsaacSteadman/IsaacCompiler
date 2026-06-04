@@ -4,9 +4,8 @@ import struct
 from typing import Callable, Dict, List, Optional, Set, Union
 from .PrettyRepr import format_pretty
 from .Preprocessing import preprocess as cpp_preprocess
-from .StackVM.PyStackVM import BC_CALL, BC_HLT
 from .StackVM.runner import add_cmd_argv_vm, run_in_vm
-from .code_gen.Compilation import Compilation, INIT_GLOBALS_LINK_NAME
+from .code_gen.Compilation import Compilation
 from .code_gen.CompilerOptions import CompilerOptions
 from .code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
 from .code_gen.NameMangling import NameManglingMode
@@ -15,7 +14,6 @@ from .code_gen.get_dict_link_src import get_dict_link_src
 from .code_gen.get_dict_links import get_dict_links
 from .lexer.lexer import get_list_tokens
 from .code_gen.stackvm_binutils.disassemble import disassemble
-from .code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
 from .code_gen.stackvm_binutils.linker import (
     LinkerError,
     link_files,
@@ -318,7 +316,8 @@ link_parser.add_argument(
     metavar="linker_script",
     default=None,
     dest="linker_script",
-    help="use a linker script defining .text, .init.text, .data, .rodata, and .bss",
+    help="use a linker script defining .text, .init.text, .init_array, "
+    ".fini_array, .data, .rodata, and .bss",
 )
 link_parser.add_argument(
     "--allow-undefined",
@@ -515,17 +514,10 @@ if args.subcommand == "compile":
         if args.compile_only:
             cmpl_obj.finalize_global_initializer()
         elif link_opts.run_method == LNK_RUN_STANDALONE:
-            init_obj = cmpl_obj.finalize_global_initializer()
-            if init_obj is not None:
-                cmpl_obj.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(cmpl_obj.memory)
-                cmpl_obj.memory.extend([BC_CALL])
             main_var = global_ctx.var_name_strict("main")
             if main_var is None:
                 raise NameError("Standalone output requires a definition of main")
-            main_fn = cmpl_obj.get_link(main_var.get_link_name())
-            emit_load_i_const(cmpl_obj.memory, 1, True, 2)
-            main_fn.emit_lea(cmpl_obj.memory)
-            cmpl_obj.memory.extend([BC_CALL, BC_HLT])
+            cmpl_obj.emit_standalone_startup(main_var.get_link_name())
         if not args.compile_only:
             print("building dependency tree")
             dep_tree = [("", sorted(cmpl_obj.linkages))]

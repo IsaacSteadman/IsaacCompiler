@@ -368,6 +368,8 @@ class LinkerTests(unittest.TestCase):
             "SECTIONS { "
             ".text : { *(.text) } "
             ".init.text : { *(.init.text) } "
+            ".init_array : { *(.init_array) } "
+            ".fini_array : { *(.fini_array) } "
             ".rodata : { *(.rodata) } "
             ".data : { *(.data) } "
             ".bss : { *(.bss) } "
@@ -539,6 +541,8 @@ class LinkerTests(unittest.TestCase):
                     "SECTIONS { "
                     ".text : { *(.text) } "
                     ".init.text : { *(.init.text) } "
+                    ".init_array : { *(.init_array) } "
+                    ".fini_array : { *(.fini_array) } "
                     ".data : { *(.data) } "
                     ".rodata : { *(.rodata) } "
                     ".bss : { *(.bss) } "
@@ -643,10 +647,14 @@ class LinkerTests(unittest.TestCase):
     def test_compiler_sections_and_linker_boundaries_end_to_end(self):
         source = (
             "extern char __init_begin[], __init_end[], "
+            "__init_array_start[], __init_array_end[], "
+            "__fini_array_start[], __fini_array_end[], "
             "__bss_start[], __bss_end[], _start[], _end[]; "
             'void __attribute__((section(".init.text"))) kernel_init(void) {} '
             "int zero; "
             "char *a = __init_begin; char *b = __init_end; "
+            "char *ia = __init_array_start; char *ib = __init_array_end; "
+            "char *fa = __fini_array_start; char *fb = __fini_array_end; "
             "char *c = __bss_start; char *d = __bss_end; "
             "char *e = _start; char *f = _end;\n"
         )

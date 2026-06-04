@@ -416,6 +416,9 @@ class Preprocessor:
             "noinline",
             "warn_unused_result",
             "weak",
+            "section",
+            "constructor",
+            "destructor",
         }
     )
     _SUPPORTED_BUILTINS: FrozenSet[str] = frozenset(

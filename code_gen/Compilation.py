@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set
 
 from .BaseCmplObj import BaseCmplObj
 from .NameMangling import NameManglingMode, normalize_name_mangling_mode
@@ -18,6 +18,9 @@ from .stackvm_binutils.object_file import (
 )
 
 INIT_GLOBALS_LINK_NAME = "?Fz__init_globals"
+INIT_ARRAY_SECTION = ".init_array"
+FINI_ARRAY_SECTION = ".fini_array"
+DEFAULT_LIFECYCLE_PRIORITY = 65535
 
 
 class CompileObjectType(Enum):
@@ -40,6 +43,15 @@ class TranslationUnitSymbol:
     section_name: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class LifecycleFunction:
+    kind: str
+    link_name: str
+    priority: int
+    sequence: int
+    object_name: str
+
+
 def _align_up(x: int, align: int) -> int:
     return (x + align - 1) & ~(align - 1)
 
@@ -58,6 +70,9 @@ class Compilation(BaseCmplObj):
         self.objects: Dict[str, CompileObject] = {}
         self.symbol_registry: Dict[str, TranslationUnitSymbol] = {}
         self._global_initializer_finalized = False
+        self.lifecycle_functions: List[LifecycleFunction] = []
+        self._registered_lifecycle_functions = set()
+        self._standalone_startup_emitted = False
         self.code_segment_end = None
         self.data_segment_start = None
 
@@ -161,6 +176,146 @@ class Compilation(BaseCmplObj):
             len(init_obj.memory),
         )
         return init_obj
+
+    @staticmethod
+    def _lifecycle_priority(attribute) -> int:
+        args = attribute.args
+        if len(args) == 0:
+            return DEFAULT_LIFECYCLE_PRIORITY
+        if len(args) != 1:
+            raise TypeError(
+                "%s attribute accepts at most one priority" % attribute.name
+            )
+        try:
+            priority = int(args[0], 0)
+        except ValueError as exc:
+            raise TypeError(
+                "%s attribute priority must be an integer constant"
+                % attribute.name
+            ) from exc
+        if priority < 0 or priority > DEFAULT_LIFECYCLE_PRIORITY:
+            raise ValueError(
+                "%s attribute priority must be between 0 and %u"
+                % (attribute.name, DEFAULT_LIFECYCLE_PRIORITY)
+            )
+        return priority
+
+    def register_lifecycle_function(
+        self,
+        link_name: str,
+        typ: object,
+        attributes,
+    ) -> None:
+        lifecycle_attrs = [
+            attribute
+            for attribute in attributes
+            if attribute.name in {"constructor", "destructor"}
+        ]
+        if not lifecycle_attrs:
+            return
+        registry_symbol = self.symbol_registry.get(link_name)
+        if registry_symbol is None or not registry_symbol.defined:
+            return
+
+        from ..parser.type.types import QualType, compare_no_cvr, void_t
+
+        if not isinstance(typ, QualType) or typ.qual_id != QualType.QUAL_FN:
+            raise TypeError("constructor and destructor attributes require a function")
+        if typ.ext_inf:
+            raise TypeError(
+                "constructor and destructor functions cannot accept arguments"
+            )
+        if not compare_no_cvr(typ.tgt_type, void_t):
+            raise TypeError("constructor and destructor functions must return void")
+
+        by_kind = {}
+        for attribute in lifecycle_attrs:
+            priority = self._lifecycle_priority(attribute)
+            previous = by_kind.get(attribute.name)
+            if previous is not None and previous != priority:
+                raise TypeError(
+                    "conflicting %s priorities for '%s'"
+                    % (attribute.name, link_name)
+                )
+            by_kind[attribute.name] = priority
+
+        for kind, priority in by_kind.items():
+            registration_key = kind, link_name
+            if registration_key in self._registered_lifecycle_functions:
+                continue
+            self._registered_lifecycle_functions.add(registration_key)
+
+            sequence = len(self.lifecycle_functions)
+            object_name = "?__svm.%s_array.%08u" % (kind, sequence)
+            section_base = (
+                INIT_ARRAY_SECTION if kind == "constructor" else FINI_ARRAY_SECTION
+            )
+            section_name = (
+                section_base
+                if priority == DEFAULT_LIFECYCLE_PRIORITY
+                else "%s.%05u" % (section_base, priority)
+            )
+            entry_obj = self.spawn_compile_object(CompileObjectType.GLOBAL, object_name)
+            entry_obj.alignment = 8
+            entry_obj.section_name = section_name
+            entry_obj.memory.extend([0] * 8)
+            entry_obj.get_link(link_name).lst_tgt.append(
+                LinkRef(0, relocation_type=RelocationType.ABS8)
+            )
+            self.register_symbol(
+                object_name,
+                object_name,
+                None,
+                SymbolBinding.LOCAL,
+                ObjectSegment.DATA,
+                SymbolType.OBJECT,
+                True,
+                True,
+                8,
+                8,
+                section_name,
+            )
+            self.lifecycle_functions.append(
+                LifecycleFunction(kind, link_name, priority, sequence, object_name)
+            )
+
+    def _emit_lifecycle_calls(self, kind: str, reverse: bool = False) -> None:
+        entries = sorted(
+            (
+                entry
+                for entry in self.lifecycle_functions
+                if entry.kind == kind
+            ),
+            key=lambda entry: (entry.priority, entry.sequence),
+            reverse=reverse,
+        )
+        if not entries:
+            return
+
+        from ..StackVM.PyStackVM import BC_CALL
+
+        for entry in entries:
+            self.get_link(entry.object_name).emit_load_pot(self.memory, 3)
+            self.memory.append(BC_CALL)
+
+    def emit_standalone_startup(self, main_link_name: str) -> None:
+        if self._standalone_startup_emitted:
+            raise ValueError("standalone startup code has already been emitted")
+
+        from ..StackVM.PyStackVM import BC_CALL, BC_HLT
+        from .stackvm_binutils.emit_load_i_const import emit_load_i_const
+
+        init_obj = self.finalize_global_initializer()
+        if init_obj is not None:
+            self.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(self.memory)
+            self.memory.append(BC_CALL)
+        self._emit_lifecycle_calls("constructor")
+        emit_load_i_const(self.memory, 1, True, 2)
+        self.get_link(main_link_name).emit_lea(self.memory)
+        self.memory.append(BC_CALL)
+        self._emit_lifecycle_calls("destructor", reverse=True)
+        self.memory.append(BC_HLT)
+        self._standalone_startup_emitted = True
 
     def merge_all(
         self,
@@ -455,9 +610,11 @@ class Compilation(BaseCmplObj):
         section_priority = {
             ".text": 0,
             ".init.text": 1,
-            ".rodata": 2,
-            ".data": 3,
-            ".bss": 4,
+            INIT_ARRAY_SECTION: 2,
+            FINI_ARRAY_SECTION: 3,
+            ".data": 4,
+            ".rodata": 5,
+            ".bss": 6,
         }
 
         def section_sort_key(builder):
@@ -704,5 +861,6 @@ class Compilation(BaseCmplObj):
 
 
 from .CompileObject import CompileObject
+from .LinkRef import LinkRef
 from .Linkage import Linkage
 from .LinkerOptions import LinkerOptions

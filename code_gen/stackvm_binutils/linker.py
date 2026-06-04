@@ -27,12 +27,24 @@ from .object_file import (
 DEFAULT_CODE_BASE = 0
 DEFAULT_DATA_BASE = 0x1000
 DEFAULT_DATA_ALIGNMENT = 0x1000
-DEFAULT_SECTION_ORDER = (".text", ".init.text", ".data", ".rodata", ".bss")
+DEFAULT_SECTION_ORDER = (
+    ".text",
+    ".init.text",
+    ".init_array",
+    ".fini_array",
+    ".data",
+    ".rodata",
+    ".bss",
+)
 CODE_SECTIONS = {".text", ".init.text"}
-DATA_SECTIONS = {".data", ".rodata", ".bss"}
+DATA_SECTIONS = {".init_array", ".fini_array", ".data", ".rodata", ".bss"}
 LINKER_DEFINED_SYMBOLS = {
     "__init_begin",
     "__init_end",
+    "__init_array_start",
+    "__init_array_end",
+    "__fini_array_start",
+    "__fini_array_end",
     "__bss_start",
     "__bss_end",
     "_start",
@@ -56,6 +68,16 @@ class UndefinedSymbolError(LinkerError):
 
 def _matches_section(name: str, base: str) -> bool:
     return name == base or name.startswith(base + ".")
+
+
+def _init_priority_section_key(name: str, base: str) -> int:
+    if name == base:
+        return 65535
+    suffix = name[len(base) + 1 :]
+    try:
+        return int(suffix, 10)
+    except ValueError:
+        return 65535
 
 
 @dataclass(frozen=True)
@@ -515,6 +537,12 @@ class _ObjectLinker:
                     "NOBITS section %s must be placed in .bss" % section.name
                 )
             members_by_output[output_name].append(section)
+        for name in (".init_array", ".fini_array"):
+            members_by_output[name].sort(
+                key=lambda section, base=name: _init_priority_section_key(
+                    section.name, base
+                )
+            )
 
         memory = bytearray(self.options.code_base)
         input_section_addresses = {}
@@ -639,10 +667,26 @@ class _ObjectLinker:
             )
             for key, definition in self.selected.items()
         }
+        linker_symbol_sections = {
+            "_start": ".text",
+            "__init_begin": ".init.text",
+            "__init_end": ".init.text",
+            "__init_array_start": ".init_array",
+            "__init_array_end": ".init_array",
+            "__fini_array_start": ".fini_array",
+            "__fini_array_end": ".fini_array",
+            "__bss_start": ".bss",
+            "__bss_end": ".bss",
+            "_end": ".bss",
+        }
         linker_addresses = {
             "_start": layout_by_name[".text"].address,
             "__init_begin": layout_by_name[".init.text"].address,
             "__init_end": layout_by_name[".init.text"].end,
+            "__init_array_start": layout_by_name[".init_array"].address,
+            "__init_array_end": layout_by_name[".init_array"].end,
+            "__fini_array_start": layout_by_name[".fini_array"].address,
+            "__fini_array_end": layout_by_name[".fini_array"].end,
             "__bss_start": layout_by_name[".bss"].address,
             "__bss_end": layout_by_name[".bss"].end,
             "_end": len(memory),
@@ -734,12 +778,8 @@ class _ObjectLinker:
             global_symbols[name] = address
             for alias in self.aliases.names_for(self.aliases.canonical(name)):
                 global_symbols[alias] = address
-            if name in {"_start", "__init_begin", "__init_end"}:
-                segment = ObjectSegment.CODE
-                section_name = ".text" if name == "_start" else ".init.text"
-            else:
-                segment = ObjectSegment.DATA
-                section_name = ".bss"
+            section_name = linker_symbol_sections[name]
+            segment = layout_by_name[section_name].segment
             linked_symbols.append(
                 LinkedSymbol(
                     name,

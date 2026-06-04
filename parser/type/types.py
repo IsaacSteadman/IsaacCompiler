@@ -3564,6 +3564,11 @@ class QualType(BaseType):
                     bool(init_args),
                     0,
                 )
+                cmpl_obj.register_lifecycle_function(
+                    decl_ctx_var.get_link_name(),
+                    self,
+                    decl_ctx_var.attributes,
+                )
                 if len(init_args) == 0:
                     return 0
                 err0 = "Redefinition of function %s is not allowed"
