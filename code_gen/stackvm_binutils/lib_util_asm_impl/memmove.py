@@ -1,11 +1,11 @@
 from ...Compilation import CompileObjectType
-from .lib_utils import lib_utils_abi
 from ..assemble import assemble
 
 
 # declared as `void *memmove(void *dest, void *src, unsigned long long num)`
-mem_move = lib_utils_abi.spawn_compile_object(CompileObjectType.FUNCTION, "?FPvPvyzmemmove")
-assemble(mem_move, {"dest": (0x10, 8), "src": (0x18, 8), "num": (0x20, 8), "res": (0x28, 8)}, """
+def add_memmove(compilation, link_name):
+    mem_move = compilation.spawn_compile_object(CompileObjectType.FUNCTION, link_name)
+    assemble(mem_move, {"dest": (0x10, 8), "src": (0x18, 8), "num": (0x20, 8), "res": (0x28, 8)}, """
 ~+srcEnd,8d0
 @dest
 lRa*res
@@ -104,6 +104,7 @@ JMP
 ~-srcEnd
 RET
 """)
+    return mem_move
 
 
 """

@@ -71,7 +71,7 @@ def _compile_source(source, remove_unused_deps=True, default_alignment=None):
         cmpl_obj.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(cmpl_obj.memory)
         cmpl_obj.memory.extend([BC_CALL])
 
-    main_fn = cmpl_obj.get_link("?FiPPczmain")
+    main_fn = cmpl_obj.get_link(global_ctx.vars["main"].get_link_name())
     emit_load_i_const(cmpl_obj.memory, 1, True, 2)
     main_fn.emit_lea(cmpl_obj.memory)
     cmpl_obj.memory.extend([BC_CALL, BC_HLT])

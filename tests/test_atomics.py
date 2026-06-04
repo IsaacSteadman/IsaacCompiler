@@ -27,9 +27,6 @@ from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
 from IsaacCompiler.parser.type.types import CompileContext
 
 
-MAIN_LINK_NAME = "?FiPPczmain"
-
-
 def _flatify_dep_desc(dep_dct, start_key):
     result = set()
     pending = {start_key}
@@ -69,7 +66,7 @@ def _compile_source(source, remove_unused_deps=True):
         cmpl_obj.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(cmpl_obj.memory)
         cmpl_obj.memory.extend([BC_CALL])
 
-    main_fn = cmpl_obj.get_link(MAIN_LINK_NAME)
+    main_fn = cmpl_obj.get_link(global_ctx.vars["main"].get_link_name())
     emit_load_i_const(cmpl_obj.memory, 1, True, 2)
     main_fn.emit_lea(cmpl_obj.memory)
     cmpl_obj.memory.extend([BC_CALL, BC_HLT])

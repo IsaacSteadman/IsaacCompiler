@@ -216,16 +216,15 @@ _builtin_ret_u64_t = size_l_t
 
 class _BuiltinUnarySpec(NamedTuple):
     helper_name: str
-    helper_link_name: str
     arg_type: "BaseType"
     result_type: "BaseType"
 
 
 class _BuiltinForwardSpec(NamedTuple):
     helper_name: str
-    helper_link_name: str
     arg_types: List["BaseType"]
     result_type: "BaseType"
+    link_arg_types: List["BaseType"]
 
 
 class _AtomicIntrinsicSpec(NamedTuple):
@@ -233,8 +232,13 @@ class _AtomicIntrinsicSpec(NamedTuple):
     arg_count: int
 
 
-def _get_builtin_helper_link_name(helper_name, arg_types, result_type):
-    helper_ctx = CompileContext("", None, None)
+def _get_builtin_helper_link_name(helper_name, arg_types, result_type, context):
+    helper_ctx = CompileContext(
+        "",
+        None,
+        None,
+        name_mangling_mode=context.name_mangling_mode,
+    )
     helper_type = QualType(QualType.QUAL_FN, result_type, list(arg_types))
     helper_var = ContextVariable(helper_name, helper_type)
     helper_ctx.new_var(helper_name, helper_var)
@@ -244,7 +248,6 @@ def _get_builtin_helper_link_name(helper_name, arg_types, result_type):
 def _make_builtin_unary_spec(helper_name, arg_type, result_type):
     return _BuiltinUnarySpec(
         helper_name,
-        _get_builtin_helper_link_name(helper_name, [arg_type], result_type),
         arg_type,
         result_type,
     )
@@ -261,9 +264,9 @@ def _make_builtin_forward_spec_with_link_types(
 ):
     return _BuiltinForwardSpec(
         helper_name,
-        _get_builtin_helper_link_name(helper_name, link_arg_types, result_type),
         list(arg_types),
         result_type,
+        list(link_arg_types),
     )
 
 
@@ -457,7 +460,17 @@ def _build_builtin_unary_expr(name, tokens, c, end, context):
         )
     expr, _ = converted
     return (
-        BuiltinCallExpr(name, [expr], spec.helper_link_name, spec.result_type),
+        BuiltinCallExpr(
+            name,
+            [expr],
+            _get_builtin_helper_link_name(
+                spec.helper_name,
+                [spec.arg_type],
+                spec.result_type,
+                context,
+            ),
+            spec.result_type,
+        ),
         paren_end + 1,
     )
 
@@ -494,7 +507,17 @@ def _build_builtin_forward_expr(name, tokens, c, end, context):
             )
         converted_args.append(converted[0])
     return (
-        BuiltinCallExpr(name, converted_args, spec.helper_link_name, spec.result_type),
+        BuiltinCallExpr(
+            name,
+            converted_args,
+            _get_builtin_helper_link_name(
+                spec.helper_name,
+                spec.link_arg_types,
+                spec.result_type,
+                context,
+            ),
+            spec.result_type,
+        ),
         paren_end + 1,
     )
 

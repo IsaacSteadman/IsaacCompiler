@@ -137,7 +137,7 @@ if __name__ == "__main__" and run_opt == 5:
         Tmp0Lvl, Tmp0LOC = MyDbg.calc_loc_from_ip(Tmp0Start)
         assert Tmp0Lvl == 0, "Tmp0Lvl = %u, must be zero for no errors" % Tmp0Lvl
         # MyDbg.AddBrkPoint(Tmp0LOC)
-    lnk_main = CmplObj.get_link("?FiPPczmain")
+    lnk_main = CmplObj.get_link(Global.vars["main"].get_link_name())
     print("Stepping until main")
     while vm.ip < lnk_main.src:
         vm.step()

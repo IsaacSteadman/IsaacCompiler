@@ -5,6 +5,11 @@ from typing import Dict, List, Optional, Tuple, TypeVar, Union
 from .BaseType import BaseType, TypeClass
 from ..constants import BASE_TYPE_MODS
 from ...PrettyRepr import PrettyRepr, format_pretty, get_pretty_repr
+from ...code_gen.NameMangling import (
+    NameManglingMode,
+    normalize_name_mangling_mode,
+    select_external_link_name,
+)
 from ..stmnt.BaseStmnt import BaseStmnt, STMNT_KEY_TO_ID, StmntType
 
 
@@ -66,11 +71,15 @@ class CompileContext(ContextMember, PrettyRepr):
         types: Optional[Dict[str, "BaseType"]] = None,
         namespaces: Optional[Dict[str, "CompileContext"]] = None,
         vars: Optional[Dict[str, "ContextVariable"]] = None,
+        name_mangling_mode: NameManglingMode = NameManglingMode.NONE,
     ):
         super(CompileContext, self).__init__(name, parent)
         if default_alignment is None and parent is not None:
             default_alignment = parent.default_alignment
+        if parent is not None:
+            name_mangling_mode = parent.name_mangling_mode
         self.default_alignment: Optional[int] = default_alignment
+        self.name_mangling_mode = normalize_name_mangling_mode(name_mangling_mode)
         self.scopes: List["LocalScope"] = [] if scopes is None else scopes
         self.types: Dict[str, "BaseType"] = {} if types is None else types
         self.namespaces: Dict[str, "CompileContext"] = (
@@ -105,6 +114,7 @@ class CompileContext(ContextMember, PrettyRepr):
             scope = other.scopes[c]
             scope.set_parent(other, c)
         other.default_alignment = self.default_alignment
+        other.name_mangling_mode = self.name_mangling_mode
 
     def has_type(self, t: str) -> bool:
         return t in self.types or (self.parent is not None and self.parent.has_type(t))
@@ -139,10 +149,17 @@ class CompileContext(ContextMember, PrettyRepr):
             # print "AbsScopeGet(%r).NewVar(%r, %r)" % (self.GetFullName(), V, inst)
         else:
             if not is_fn_type(inst.typ):
-                # raise NameError("Cannot have a function share the same name as a variable")
-                return var
+                if is_fn_type(var.typ):
+                    raise NameError(
+                        "Cannot have a variable share the same name as a function"
+                    )
+                return self._merge_compatible_decl(var, inst)
             if var.typ.type_class_id == TypeClass.MULTI:
                 assert isinstance(var, OverloadedCtxVar)
+                for specific in var.specific_ctx_vars:
+                    if compare_no_cvr(specific.typ, inst.typ):
+                        return self._merge_compatible_decl(specific, inst)
+                self._check_external_overload(v, var.specific_ctx_vars[0], inst)
                 var.add_ctx_var(inst)
                 # print "AbsScopeGet(%r).NewVar(%r, %r) # OVERLOAD" % (self.GetFullName(), V, inst)
             else:
@@ -150,6 +167,9 @@ class CompileContext(ContextMember, PrettyRepr):
                     raise NameError(
                         "Cannot have a variable share the same name as a function"
                     )
+                if compare_no_cvr(var.typ, inst.typ):
+                    return self._merge_compatible_decl(var, inst)
+                self._check_external_overload(v, var, inst)
                 var = OverloadedCtxVar(v, [var, inst])
                 var.parent = self
                 self.vars[v] = var
@@ -157,10 +177,51 @@ class CompileContext(ContextMember, PrettyRepr):
         inst.parent = self
         return inst
 
+    def _check_external_overload(
+        self,
+        name: str,
+        previous: "ContextVariable",
+        current: "ContextVariable",
+    ) -> None:
+        if (
+            self.name_mangling_mode == NameManglingMode.NONE
+            and previous.has_external_linkage()
+            and current.has_external_linkage()
+        ):
+            raise NameError(
+                "External overload '%s' requires name mangling; compile with --mangle"
+                % name
+            )
+
+    @staticmethod
+    def _merge_compatible_decl(
+        previous: "ContextVariable", current: "ContextVariable"
+    ) -> "ContextVariable":
+        if not compare_no_cvr(previous.typ, current.typ):
+            raise TypeError("Conflicting declarations for '%s'" % previous.name)
+        if (
+            previous.mods == VarDeclMods.STATIC
+            and current.mods != VarDeclMods.STATIC
+        ) or (
+            previous.mods != VarDeclMods.STATIC
+            and current.mods == VarDeclMods.STATIC
+        ):
+            raise TypeError("Conflicting linkage for '%s'" % previous.name)
+        if previous.mods == VarDeclMods.EXTERN and current.mods != VarDeclMods.EXTERN:
+            previous.mods = current.mods
+        if current.align_override is not None:
+            previous.align_override = max(
+                previous.align_override or 1, current.align_override
+            )
+        previous.attributes.extend(current.attributes)
+        return previous
+
     def new_ns(self, ns: str, inst: "CompileContext") -> "CompileContext":
         self.namespaces[ns] = inst
         # TODO: change to using set_parent like `new_scope` defined below
         inst.parent = self
+        inst.default_alignment = self.default_alignment
+        inst.name_mangling_mode = self.name_mangling_mode
         return inst
 
     def new_scope(self, inst: "LocalScope") -> "LocalScope":
@@ -291,6 +352,7 @@ class CompileContext(ContextMember, PrettyRepr):
                 self.name,
                 self.parent,
                 self.default_alignment,
+                self.name_mangling_mode,
                 self.scopes,
                 self.types,
                 self.namespaces,
@@ -3434,6 +3496,7 @@ class QualType(BaseType):
         _maybe_deduce_array_extent(self, init_args)
         sz_var = size_of(self)
         ctx_var = None
+        decl_ctx_var = None
         link = None
         name = None
         is_local = True
@@ -3448,7 +3511,7 @@ class QualType(BaseType):
                     assert isinstance(ctx_var, OverloadedCtxVar)
                     assert ctx_var.specific_ctx_vars is not None
                     for var in ctx_var.specific_ctx_vars:
-                        if var.typ is self:
+                        if var.typ is self or compare_no_cvr(var.typ, self):
                             ctx_var = var
                             break
                     else:
@@ -3457,6 +3520,7 @@ class QualType(BaseType):
                         )
                     ref = VarRefTosNamed(ctx_var)
                 assert isinstance(ctx_var, ContextVariable)
+                decl_ctx_var = ctx_var
                 name = ctx_var.get_link_name()
                 is_local = ctx_var.uses_stack_storage()
                 if not is_local:
@@ -3465,6 +3529,14 @@ class QualType(BaseType):
                 if is_local:
                     raise TypeError("Functions must be GLOBAL")
                 assert isinstance(cmpl_obj, Compilation)
+                assert decl_ctx_var is not None
+                _register_context_symbol(
+                    cmpl_obj,
+                    decl_ctx_var,
+                    self,
+                    bool(init_args),
+                    0,
+                )
                 if len(init_args) == 0:
                     return 0
                 err0 = "Redefinition of function %s is not allowed"
@@ -3625,6 +3697,14 @@ class QualType(BaseType):
                 else:
                     _lnk.fill_all(cmpl_obj1.memory)
             cmpl_obj1.memory.extend([BC_RET])
+            assert decl_ctx_var is not None
+            _register_context_symbol(
+                cmpl_obj,
+                decl_ctx_var,
+                self,
+                True,
+                len(cmpl_obj1.memory),
+            )
             return len(cmpl_obj1.memory)
         else:
             raise TypeError("Unrecognized type: %s" % get_user_str_from_type(self))
@@ -4296,8 +4376,27 @@ class ContextVariable(ContextMember, PrettyRepr):
             pretty_repr_ctx,
         )
 
-    def get_link_name(self):
+    def has_external_linkage(self) -> bool:
+        if self.parent is None:
+            return False
         if self.parent.is_local_scope():
+            return self.mods == VarDeclMods.EXTERN
+        if self.mods == VarDeclMods.STATIC:
+            return False
+        return self.parent.is_namespace() or is_fn_type(self.typ)
+
+    def _get_linkage_scope(self) -> "CompileContext":
+        assert self.parent is not None
+        if self.parent.is_local_scope() and self.mods == VarDeclMods.EXTERN:
+            scope = self.parent
+            assert isinstance(scope, LocalScope)
+            assert scope.host_scopeable is not None
+            return scope.host_scopeable
+        return self.parent
+
+    def _get_isaac_link_name(self) -> str:
+        assert self.parent is not None
+        if self.parent.is_local_scope() and self.mods != VarDeclMods.EXTERN:
             scope: "LocalScope" = self.parent
             lst_rtn = [0] * scope.lvl
             c = 0
@@ -4316,7 +4415,7 @@ class ContextVariable(ContextMember, PrettyRepr):
                 + self.name
             )
         else:
-            ns = self.parent
+            ns = self._get_linkage_scope()
             lst_rtn = [""]
             while ns.parent is not None:
                 lst_rtn.append(ns.name)
@@ -4330,11 +4429,24 @@ class ContextVariable(ContextMember, PrettyRepr):
                     "@".join(lst_rtn) + "?" + self.typ.to_mangle_str(True) + self.name
                 )
 
+    def get_link_name(self):
+        isaac_name = self._get_isaac_link_name()
+        if not self.has_external_linkage():
+            return isaac_name
+        scope = self._get_linkage_scope()
+        mode = scope.name_mangling_mode
+        if mode == NameManglingMode.NONE and (scope.parent is not None or scope.name):
+            raise NameError(
+                "External namespace or member symbol '%s' requires name mangling; "
+                "compile with --mangle" % self.get_full_name()
+            )
+        return select_external_link_name(self.name, isaac_name, mode)
+
     def uses_stack_storage(self) -> bool:
         return (
             self.parent is not None
             and self.parent.is_local_scope()
-            and self.mods != VarDeclMods.STATIC
+            and self.mods not in {VarDeclMods.STATIC, VarDeclMods.EXTERN}
         )
 
     def has_static_storage(self) -> bool:
@@ -4409,6 +4521,7 @@ class LocalScope(CompileContext):
         if self.parent is not parent:
             self.parent = parent
             self.default_alignment = parent.default_alignment
+            self.name_mangling_mode = parent.name_mangling_mode
             lvl = 0
             self.host_scopeable = parent
             if parent.is_local_scope():
@@ -4435,6 +4548,12 @@ class LocalScope(CompileContext):
                 )
         var = self.vars.get(v, None)
         if var is not None:
+            if (
+                var.mods == VarDeclMods.EXTERN
+                and inst.mods == VarDeclMods.EXTERN
+                and compare_no_cvr(var.typ, inst.typ)
+            ):
+                return var
             raise NameError(
                 "Redefinition of Variable '%s' not allowed in LocalScope" % v
             )
@@ -4564,6 +4683,11 @@ from ...code_gen.byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
 from ...code_gen.compile_curly import compile_curly
 from ...code_gen.compile_expr import compile_expr
 from ...code_gen.memory_access import emit_tracked_abs_s8_load
+from ...code_gen.stackvm_binutils.object_file import (
+    ObjectSegment,
+    SymbolBinding,
+    SymbolType,
+)
 from ...lexer.lexer import Token, TokenType, tok_to_str
 from ..stmnt.helpers.SingleVarDecl import SingleVarDecl
 from ...code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
@@ -4621,6 +4745,42 @@ def _get_compilation(cmpl_obj: "BaseCmplObj") -> "Compilation":
     if isinstance(parent, Compilation):
         return parent
     raise TypeError("Expected a Compilation-backed compile object")
+
+
+def _register_context_symbol(
+    cmpl_obj: "BaseCmplObj",
+    ctx_var: "ContextVariable",
+    decl_type: "BaseType",
+    defined: bool,
+    size: int,
+    alignment: int = 1,
+) -> None:
+    compilation = _get_compilation(cmpl_obj)
+    is_function = is_fn_type(decl_type)
+    link_name = ctx_var.get_link_name()
+    previous = compilation.symbol_registry.get(link_name)
+    if (
+        previous is not None
+        and previous.typ is not None
+        and not compare_no_cvr(previous.typ, decl_type)
+    ):
+        raise TypeError("Conflicting declarations for '%s'" % ctx_var.name)
+    compilation.register_symbol(
+        link_name,
+        ctx_var.name,
+        decl_type,
+        (
+            SymbolBinding.GLOBAL
+            if ctx_var.has_external_linkage()
+            else SymbolBinding.LOCAL
+        ),
+        ObjectSegment.CODE if is_function else ObjectSegment.DATA,
+        SymbolType.FUNCTION if is_function else SymbolType.OBJECT,
+        True,
+        defined,
+        size if defined else 0,
+        alignment,
+    )
 
 
 def _ensure_static_storage_object(
@@ -4871,10 +5031,10 @@ def _write_symbol_relocation(
 
 
 def _write_string_relocation(
-    storage_obj: "CompileObject", offset: int, byts: bytes
+    storage_obj: "CompileObject", offset: int, byts: bytes, alignment: int = 1
 ) -> None:
     storage_obj.memory[offset : offset + 8] = b"\0" * 8
-    storage_obj.get_string_link(byts).lst_tgt.append(LinkRef(offset, None))
+    storage_obj.get_string_link(byts, alignment).lst_tgt.append(LinkRef(offset, None))
 
 
 def _try_encode_static_initializer(
@@ -4966,7 +5126,12 @@ def _try_encode_static_initializer(
                     lit_bytes[index * elem_size : (index + 1) * elem_size] = int(
                         elem_val
                     ).to_bytes(elem_size, "little")
-                _write_string_relocation(storage_obj, base_offset, bytes(lit_bytes))
+                _write_string_relocation(
+                    storage_obj,
+                    base_offset,
+                    bytes(lit_bytes),
+                    elem_size,
+                )
                 return True
             value = _eval_const_expr(expr)
             if isinstance(value, _StaticAddress):
@@ -5027,6 +5192,16 @@ def _emit_global_runtime_initializer(
     init_obj = compilation.ensure_compile_object(
         CompileObjectType.FUNCTION, INIT_GLOBALS_LINK_NAME
     )
+    compilation.register_symbol(
+        INIT_GLOBALS_LINK_NAME,
+        "__init_globals",
+        None,
+        SymbolBinding.LOCAL,
+        ObjectSegment.CODE,
+        SymbolType.FUNCTION,
+        True,
+        True,
+    )
     init_cmpl_data = LocalCompileData()
     decl_type.compile_var_init(
         init_obj,
@@ -5049,6 +5224,18 @@ def _emit_guarded_static_local_initializer(
 ) -> None:
     guard_name = link_name + "$init_guard"
     _ensure_static_storage_object(cmpl_obj, guard_name, 1)
+    _get_compilation(cmpl_obj).register_symbol(
+        guard_name,
+        guard_name,
+        None,
+        SymbolBinding.LOCAL,
+        ObjectSegment.DATA,
+        SymbolType.OBJECT,
+        True,
+        True,
+        1,
+        1,
+    )
     guard_link = cmpl_obj.get_link(guard_name)
     skip_link = Linkage()
     guard_link.emit_load(cmpl_obj.memory, 1, cmpl_obj, byte_copy_cmpl_intrinsic)
@@ -5089,8 +5276,16 @@ def _compile_static_storage_decl(
         return None
     _maybe_deduce_array_extent(decl_type, init_args)
     size = size_of(decl_type)
+    _register_context_symbol(
+        cmpl_obj,
+        ctx_var,
+        decl_type,
+        ctx_var.mods != VarDeclMods.EXTERN or bool(init_args),
+        size,
+        ctx_var.effective_alignment(),
+    )
     if ctx_var.mods == VarDeclMods.EXTERN and not init_args:
-        return 0 if ctx_var.is_static_local() else size
+        return 0
     link_name = ctx_var.get_link_name()
     storage_obj = _ensure_static_storage_object(
         cmpl_obj, link_name, size, ctx_var.effective_alignment()

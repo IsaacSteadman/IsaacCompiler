@@ -253,7 +253,7 @@ def compile_expr(
                 v_lit_bytes[c * sz_elem : (c + 1) * sz_elem] = expr.l_val[c].to_bytes(
                     sz_elem, "little"
                 )
-            link = cmpl_obj.get_string_link(bytes(v_lit_bytes))
+            link = cmpl_obj.get_string_link(bytes(v_lit_bytes), sz_elem)
             if prim_type_coerce is not None and isinstance(prim_type_coerce, QualType):
                 if prim_type_coerce.qual_id == QualType.QUAL_ARR:
                     sz = len(v_lit_bytes)

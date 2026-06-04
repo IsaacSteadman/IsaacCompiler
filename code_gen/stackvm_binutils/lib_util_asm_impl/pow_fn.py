@@ -1,5 +1,4 @@
 from ...Compilation import CompileObjectType
-from .lib_utils import lib_utils_abi
 from ..assemble import assemble
 
 # declared as `double pow(double base, int exponent);`
@@ -7,11 +6,12 @@ from ..assemble import assemble
 #   bp+0x10 (16): base     — 8-byte double
 #   bp+0x18 (24): exponent — 4-byte signed int
 #   bp+0x1C (28): res      — 8-byte double (return slot)
-pow_fn = lib_utils_abi.spawn_compile_object(CompileObjectType.FUNCTION, "?Fdizpow")
-assemble(
-    pow_fn,
-    {"base": (0x10, 8), "exponent": (0x18, 4), "res": (0x1C, 8)},
-    """
+def add_pow(compilation, link_name):
+    pow_fn = compilation.spawn_compile_object(CompileObjectType.FUNCTION, link_name)
+    assemble(
+        pow_fn,
+        {"base": (0x10, 8), "exponent": (0x18, 4), "res": (0x1C, 8)},
+        """
 ~+result,8f1.0
 ~+n,8d0
 
@@ -90,4 +90,5 @@ STOR-ABS_S8|SZ_8
 ~-result
 RET
 """,
-)
+    )
+    return pow_fn

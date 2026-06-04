@@ -8,6 +8,7 @@ class Linkage(BaseLink):
         self.lst_tgt: List[LinkRef] = []
         self.src: Optional[int] = None
         self.is_extern: bool = False
+        self.alignment: int = 1
 
     def get_offset_link(self, offset):
         return OffsetLinkage(self, offset)
@@ -108,6 +109,7 @@ class Linkage(BaseLink):
             raise NameError("Link Error on merge: source ('src') is defined in 'self' and 'other'")
         if other.src is not None:
             self.src = other.src + mem_off
+        self.alignment = max(self.alignment, other.alignment)
         start = len(self.lst_tgt)
         self.lst_tgt.extend([None] * len(other.lst_tgt))
         for c in range(start, len(self.lst_tgt)):

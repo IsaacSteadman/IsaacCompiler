@@ -160,10 +160,19 @@ def compile_lang1(tokens: List["Token"], cmpl_opts: "CompilerOptions"):
     link_opts = cmpl_opts.link_opts
     extern_deps = link_opts.extern_deps
     end = len(tokens)
-    global_ctx = CompileContext("", None, link_opts.default_alignment)
+    global_ctx = CompileContext(
+        "",
+        None,
+        link_opts.default_alignment,
+        name_mangling_mode=cmpl_opts.name_mangling_mode,
+    )
     c = 0
     lst_stmnt = []
-    cmpl_obj = Compilation(cmpl_opts.keep_local_syms)
+    cmpl_obj = Compilation(
+        cmpl_opts.keep_local_syms,
+        cmpl_opts.name_mangling_mode,
+        link_opts.default_alignment,
+    )
     run_method = link_opts.run_method
     while c < end:
         stmnt, c = get_stmnt(tokens, c, end, global_ctx)
@@ -175,12 +184,14 @@ def compile_lang1(tokens: List["Token"], cmpl_opts: "CompilerOptions"):
             raise
         lst_stmnt.append(stmnt)
     if run_method == LNK_RUN_STANDALONE:
-        init_obj = cmpl_obj.objects.get(INIT_GLOBALS_LINK_NAME)
+        init_obj = cmpl_obj.finalize_global_initializer()
         if init_obj is not None:
-            init_obj.memory.append(BC_RET)
             cmpl_obj.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(cmpl_obj.memory)
             cmpl_obj.memory.extend([BC_CALL])
-        main_fn = cmpl_obj.get_link("?FiPPczmain")
+        main_var = global_ctx.var_name_strict("main")
+        if main_var is None:
+            raise NameError("Standalone output requires a definition of main")
+        main_fn = cmpl_obj.get_link(main_var.get_link_name())
         emit_load_i_const(cmpl_obj.memory, 1, True, 2)
         main_fn.emit_lea(cmpl_obj.memory)
         cmpl_obj.memory.extend([BC_CALL, BC_HLT])

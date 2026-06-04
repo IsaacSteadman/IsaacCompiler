@@ -1,12 +1,13 @@
 from ...Compilation import CompileObjectType
-from .lib_utils import lib_utils_abi
 from ..assemble import assemble
 
 
-byte_copy_fn2 = lib_utils_abi.spawn_compile_object(CompileObjectType.FUNCTION, "@@ByteCopyFn2")
-# reference to value at src is replaced with a load from register BP offset by 16
-#   (since bp represents the previous stack pointer)
-assemble(byte_copy_fn2, {"Sz": (0x10, 8), "dest": (0x18, 8)}, """\
+def add_byte_copy_fn2(compilation):
+    byte_copy_fn2 = compilation.spawn_compile_object(
+        CompileObjectType.FUNCTION, "@@ByteCopyFn2"
+    )
+    # The source is the value at BP + 16.
+    assemble(byte_copy_fn2, {"Sz": (0x10, 8), "dest": (0x18, 8)}, """\
 ~+c,8d0
 :checkFor
 @c
@@ -44,3 +45,4 @@ JMP
 ~-c
 RET
 """)
+    return byte_copy_fn2

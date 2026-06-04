@@ -1,10 +1,12 @@
 from ...Compilation import CompileObjectType
-from .lib_utils import lib_utils_abi
 from ..assemble import assemble
 
 
-ByteCopyFn = lib_utils_abi.spawn_compile_object(CompileObjectType.FUNCTION, "@@ByteCopyFn")
-assemble(ByteCopyFn, {"Sz": (0x10, 8), "src": (0x18, 8), "dest": (0x20, 8)}, """
+def add_byte_copy_fn(compilation):
+    byte_copy_fn = compilation.spawn_compile_object(
+        CompileObjectType.FUNCTION, "@@ByteCopyFn"
+    )
+    assemble(byte_copy_fn, {"Sz": (0x10, 8), "src": (0x18, 8), "dest": (0x20, 8)}, """
 ~+c,8d0
 :checkFor
 @c
@@ -40,3 +42,4 @@ JMP
 ~-c
 RET
 """)
+    return byte_copy_fn

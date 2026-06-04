@@ -4,17 +4,19 @@ import struct
 from typing import Callable, Dict, List, Optional, Set, Union
 from .PrettyRepr import format_pretty
 from .Preprocessing import preprocess as cpp_preprocess
-from .StackVM.PyStackVM import BC_CALL, BC_HLT, BC_RET
+from .StackVM.PyStackVM import BC_CALL, BC_HLT
 from .StackVM.runner import add_cmd_argv_vm, run_in_vm
 from .code_gen.Compilation import Compilation, INIT_GLOBALS_LINK_NAME
 from .code_gen.CompilerOptions import CompilerOptions
 from .code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
+from .code_gen.NameMangling import NameManglingMode
 from .code_gen.compile_stmnt import compile_stmnt
 from .code_gen.get_dict_link_src import get_dict_link_src
 from .code_gen.get_dict_links import get_dict_links
 from .lexer.lexer import get_list_tokens
 from .code_gen.stackvm_binutils.disassemble import disassemble
 from .code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
+from .code_gen.stackvm_binutils.object_file import write_sbo
 from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
 from .parser.type.types import (
@@ -23,7 +25,7 @@ from .parser.type.types import (
     PrimitiveType,
     TypeDefCtxMember,
 )
-from .lib.runtime_support import runtime_extern_deps
+from .lib.runtime_support import get_runtime_extern_deps
 
 
 def flatify_dep_desc(dep_dct: Dict[str, List[str]], start_k: str) -> Set[str]:
@@ -86,6 +88,11 @@ def _parse_alignment_arg(value: str) -> int:
     if align & (align - 1):
         raise argparse.ArgumentTypeError("alignment must be a power of two")
     return align
+
+
+def _token_line_col(tokens, index):
+    token = tokens[min(max(index, 0), len(tokens) - 1)]
+    return token.line, token.col
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +158,29 @@ compile_parser.add_argument(
     help="input CPP file",
 )
 compile_parser.add_argument(
+    "-c",
+    "--compile-only",
+    action="store_true",
+    help="compile to a relocatable StackVM object file (.sbo)",
+    dest="compile_only",
+)
+name_mangling_group = compile_parser.add_mutually_exclusive_group()
+name_mangling_group.add_argument(
+    "--mangle",
+    action="store_const",
+    const=NameManglingMode.ISAAC,
+    dest="name_mangling_mode",
+    help="use Isaac/C++ external symbol name mangling",
+)
+name_mangling_group.add_argument(
+    "--no-mangle",
+    action="store_const",
+    const=NameManglingMode.NONE,
+    dest="name_mangling_mode",
+    help="use raw C external symbol names (default)",
+)
+compile_parser.set_defaults(name_mangling_mode=NameManglingMode.NONE)
+compile_parser.add_argument(
     "-a",
     "--data-seg-align",
     metavar="data_seg_align",
@@ -173,7 +203,7 @@ compile_parser.add_argument(
     "--output-binary",
     metavar="output_binary",
     type=str,
-    help="output file, usually with a .sbc extension for Stackvm ByteCode",
+    help="output file, usually .sbc or .sbo",
     default=None,
 )
 compile_parser.add_argument(
@@ -231,7 +261,7 @@ compile_parser.add_argument(
 )
 compile_parser.add_argument(
     "program_args",
-    nargs=argparse.REMAINDER,
+    nargs="*",
     help="arguments forwarded to the compiled program; separate with '--' "
     "(e.g. compile input.cpp --run -- MyProg arg1 arg2)",
 )
@@ -252,7 +282,7 @@ run_parser.add_argument(
 )
 run_parser.add_argument(
     "program_args",
-    nargs=argparse.REMAINDER,
+    nargs="*",
     help="arguments forwarded to the program; separate with '--' "
     "(e.g. run input.sbc -- MyProg arg1 arg2)",
 )
@@ -270,6 +300,15 @@ if program_args and program_args[0] == "--":
 # 'compile' subcommand logic
 # ---------------------------------------------------------------------------
 if args.subcommand == "compile":
+    if args.compile_only and args.run:
+        compile_parser.error("-c/--compile-only cannot be combined with --run")
+    if args.compile_only and args.output_disassembly is not None:
+        compile_parser.error(
+            "-c/--compile-only cannot be combined with disassembly output"
+        )
+    if args.compile_only and args.output_binary is None:
+        base_name = os.path.splitext(os.path.basename(args.input))[0]
+        args.output_binary = os.path.join(".", base_name + ".sbo")
     if args.output_disassembly is not None:
         assert (
             args.output_disassembly[1].lower() in no_addr_options | incl_addr_options
@@ -308,6 +347,7 @@ if args.subcommand == "compile":
         and args.output_ast is None
         and args.output_disassembly is None
         and not args.run
+        and not args.compile_only
     ):
         print("No output specified. Use -o, -s, -d, or --run to specify output.")
         raise SystemExit(1)
@@ -321,7 +361,12 @@ if args.subcommand == "compile":
     _source = cpp_preprocess(_source, _include_dirs)
     tokens = get_list_tokens(_source)
 
-    global_ctx = CompileContext("", None, args.default_alignment)
+    global_ctx = CompileContext(
+        "",
+        None,
+        args.default_alignment,
+        name_mangling_mode=args.name_mangling_mode,
+    )
     # Register built-in type alias: typedef unsigned char *va_list
     _va_list_base = PrimitiveType.from_str_name(["unsigned", "char"])
     _va_list_t = QualType(QualType.QUAL_PTR, _va_list_base)
@@ -334,25 +379,40 @@ if args.subcommand == "compile":
         args.output_binary is not None
         or args.output_disassembly is not None
         or args.run
+        or args.compile_only
     ):
         link_style = args.link_style
+        runtime_extern_deps = get_runtime_extern_deps(args.name_mangling_mode)
         link_opts = LinkerOptions(
             True,
             args.data_seg_align,
             runtime_extern_deps,
-            LNK_RUN_STANDALONE if link_style == "standalone" else 0,
+            (
+                0
+                if args.compile_only
+                else (LNK_RUN_STANDALONE if link_style == "standalone" else 0)
+            ),
+            args.default_alignment,
+            args.name_mangling_mode,
+        )
+        cmpl_opts = CompilerOptions(
+            link_opts,
+            not args.compile_only,
+            args.debugging_symbols,
+            args.name_mangling_mode,
+        )
+        cmpl_obj = Compilation(
+            cmpl_opts.keep_local_syms,
+            args.name_mangling_mode,
             args.default_alignment,
         )
-        cmpl_opts = CompilerOptions(link_opts, True, args.debugging_symbols)
-        cmpl_obj = Compilation(cmpl_opts.keep_local_syms)
         print("Generating AST and binary inline")
         while c < end:
             prev_c = c
             try:
                 stmnt, c = get_stmnt(tokens, c, end, global_ctx)
             except Exception as exc:
-                ln = tokens[c].line
-                col = tokens[c].col
+                ln, col = _token_line_col(tokens, c)
                 raise SyntaxError(
                     f"error when attempting to parse statement after {input_file}:{ln}:{col}"
                 ) from exc
@@ -360,42 +420,45 @@ if args.subcommand == "compile":
             try:
                 compile_stmnt(cmpl_obj, stmnt, global_ctx, None)
             except Exception as exc:
-                lnA = tokens[prev_c].line
-                colA = tokens[prev_c].col
-                lnB = tokens[c].line
-                colB = tokens[c].col
+                lnA, colA = _token_line_col(tokens, prev_c)
+                lnB, colB = _token_line_col(tokens, c)
                 raise RuntimeError(
                     f"compile error when compiling statement between {input_file}:{lnA}:{colA} and {input_file}:{lnB}:{colB}"
                 ) from exc
-        if link_opts.run_method == LNK_RUN_STANDALONE:
-            init_obj = cmpl_obj.objects.get(INIT_GLOBALS_LINK_NAME)
+        if args.compile_only:
+            cmpl_obj.finalize_global_initializer()
+        elif link_opts.run_method == LNK_RUN_STANDALONE:
+            init_obj = cmpl_obj.finalize_global_initializer()
             if init_obj is not None:
-                init_obj.memory.append(BC_RET)
                 cmpl_obj.get_link(INIT_GLOBALS_LINK_NAME).emit_lea(cmpl_obj.memory)
                 cmpl_obj.memory.extend([BC_CALL])
-            main_fn = cmpl_obj.get_link("?FiPPczmain")
+            main_var = global_ctx.var_name_strict("main")
+            if main_var is None:
+                raise NameError("Standalone output requires a definition of main")
+            main_fn = cmpl_obj.get_link(main_var.get_link_name())
             emit_load_i_const(cmpl_obj.memory, 1, True, 2)
             main_fn.emit_lea(cmpl_obj.memory)
             cmpl_obj.memory.extend([BC_CALL, BC_HLT])
-        print("building dependency tree")
-        dep_tree = [("", sorted(cmpl_obj.linkages))]
-        for k in cmpl_obj.objects:
-            cur = cmpl_obj.objects[k]
-            dep_tree.append((k, sorted(cur.linkages)))
-        if link_opts.extern_deps is not None:
-            for k in link_opts.extern_deps:
-                cur = link_opts.extern_deps[k]
+        if not args.compile_only:
+            print("building dependency tree")
+            dep_tree = [("", sorted(cmpl_obj.linkages))]
+            for k in cmpl_obj.objects:
+                cur = cmpl_obj.objects[k]
                 dep_tree.append((k, sorted(cur.linkages)))
-        dep_dct: Dict[str, List[str]] = dict(dep_tree)
-        used_deps = flatify_dep_desc(dep_dct, "")
-        def_deps = {k for k, _ in dep_tree if k}
-        unused_deps = def_deps - used_deps
-        if len(unused_deps):
-            print("UNUSED: " + ", ".join(sorted(unused_deps)))
-        if cmpl_opts.merge_and_link:
-            excl = unused_deps if link_opts.remove_unused_deps else None
-            cmpl_obj.merge_all(link_opts, link_opts.extern_deps, excl)
-            cmpl_obj.link_all()
+            if link_opts.extern_deps is not None:
+                for k in link_opts.extern_deps:
+                    cur = link_opts.extern_deps[k]
+                    dep_tree.append((k, sorted(cur.linkages)))
+            dep_dct: Dict[str, List[str]] = dict(dep_tree)
+            used_deps = flatify_dep_desc(dep_dct, "")
+            def_deps = {k for k, _ in dep_tree if k}
+            unused_deps = def_deps - used_deps
+            if len(unused_deps):
+                print("UNUSED: " + ", ".join(sorted(unused_deps)))
+            if cmpl_opts.merge_and_link:
+                excl = unused_deps if link_opts.remove_unused_deps else None
+                cmpl_obj.merge_all(link_opts, link_opts.extern_deps, excl)
+                cmpl_obj.link_all()
         if args.output_disassembly is not None:
             outf, incl_addr_str, incl_sym_str = args.output_disassembly
             incl_addr = incl_addr_str.lower() in incl_addr_options
@@ -415,17 +478,26 @@ if args.subcommand == "compile":
                     )
                 )
         if args.output_binary is not None:
-            with open(args.output_binary, "wb") as fl:
-                fl.write(_SVC_MAGIC)
-                fl.write(
-                    struct.pack(
-                        "<QQQ",
-                        cmpl_obj.code_segment_end,
-                        cmpl_obj.data_segment_start,
-                        len(cmpl_obj.memory),
-                    )
+            if args.compile_only:
+                write_sbo(
+                    cmpl_obj.to_stackvm_object(
+                        link_opts.extern_deps,
+                        args.default_alignment,
+                    ),
+                    args.output_binary,
                 )
-                fl.write(cmpl_obj.memory)
+            else:
+                with open(args.output_binary, "wb") as fl:
+                    fl.write(_SVC_MAGIC)
+                    fl.write(
+                        struct.pack(
+                            "<QQQ",
+                            cmpl_obj.code_segment_end,
+                            cmpl_obj.data_segment_start,
+                            len(cmpl_obj.memory),
+                        )
+                    )
+                    fl.write(cmpl_obj.memory)
         if args.run:
             print("Running in StackVM")
             syscall_sets = args.syscalls or []
@@ -448,8 +520,7 @@ if args.subcommand == "compile":
             try:
                 stmnt, c = get_stmnt(tokens, c, end, global_ctx)
             except Exception as exc:
-                ln = tokens[c].line
-                col = tokens[c].col
+                ln, col = _token_line_col(tokens, c)
                 raise SyntaxError(
                     f"error when attempting to parse statement after {input_file}:{ln}:{col}"
                 ) from exc

@@ -10,10 +10,11 @@ class BaseCmplObj(object):
         self.data_segment_start: Optional[int] = None
         self.code_segment_end: Optional[int] = None
 
-    def get_string_link(self, byts: bytes):
+    def get_string_link(self, byts: bytes, alignment: int = 1):
         link = self.string_pool.get(byts, None)
         if link is None:
             link = self.string_pool[byts] = Linkage()
+        link.alignment = max(link.alignment, alignment)
         return link
 
     def get_link(self, name: str):
