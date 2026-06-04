@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 
 class StackDict(object):
@@ -42,11 +42,18 @@ class StackDict(object):
 
 
 def assemble(
-    cmpl_unit: "BaseCmplObj", rel_bp_names: Dict[str, Tuple[int, int]], str_asm: str
+    cmpl_unit: "BaseCmplObj",
+    rel_bp_names: Dict[str, Tuple[int, int]],
+    str_asm: str,
+    external_code_links: Optional[Dict[str, "Linkage"]] = None,
 ) -> Dict[str, "Linkage"]:
     """
     rel_bp_names: a dictionary mapping variable names to 2-tuples of (base pointer offset, variable size)
+    external_code_links: code labels owned by the caller, such as C labels used
+        by asm goto. References are recorded here but resolved by the caller.
     """
+    if external_code_links is None:
+        external_code_links = {}
     lines = str_asm.split("\n")
     lines = [remove_comment_asm(line) for line in lines]
     code_links = {}
@@ -134,7 +141,16 @@ def assemble(
                 if lnk_rel is not None:
                     raise SyntaxError("Cannot use rel_spec right now")
                 if is_global or is_code:
-                    lnk = None if is_code else cmpl_unit.get_link(name)
+                    is_external_code = is_code and name in external_code_links
+                    if is_external_code and (not is_l_rel or is_rel):
+                        raise SyntaxError(
+                            "External code labels must be loaded as PC-relative addresses"
+                        )
+                    lnk = (
+                        external_code_links.get(name, None)
+                        if is_code
+                        else cmpl_unit.get_link(name)
+                    )
                     if lnk is None:
                         lnk = code_links.get(name, None)
                         if lnk is None:

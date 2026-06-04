@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, TYPE_CHECKING, Tuple, TypeVar, Union
+from typing import Dict, List, Optional, Set, TYPE_CHECKING, Tuple, TypeVar, Union
 
 
 def _align_up(x: int, align: int) -> int:
@@ -15,6 +15,9 @@ class LocalCompileData(object):
         self.parent = parent
         self.local_labels: Dict[str, "Linkage"] = (
             {} if parent is None else parent.local_labels
+        )
+        self.local_label_references: Set[str] = (
+            set() if parent is None else parent.local_label_references
         )
         self.cur_breakable: Optional[Tuple["Linkage", "Linkage"]] = (
             None if parent is None else parent.cur_breakable
@@ -56,6 +59,10 @@ class LocalCompileData(object):
         if link is None:
             link = self.local_labels[k] = Linkage()
         return link
+
+    def reference_label(self, k: str) -> "Linkage":
+        self.local_label_references.add(k)
+        return self.get_label(k)
 
     def get_local(self, k: str) -> "LocalRef":
         return self[k][1]

@@ -1,4 +1,49 @@
-from typing import List, Optional, Tuple
+import re
+from typing import Dict, List, Optional, Tuple
+
+
+_ASM_GOTO_LABEL_RE = re.compile(r"%l(?:\[([A-Za-z_$][A-Za-z0-9_$]*)\]|([0-9]+))")
+
+
+def _prepare_asm_goto(
+    stmnt: "AsmStmnt", cmpl_data: "LocalCompileData", asm_text: str
+) -> Tuple[str, Dict[str, "Linkage"]]:
+    labels_by_name = {
+        name: cmpl_data.reference_label(name) for name in stmnt.goto_labels
+    }
+    external_code_links = {}
+    for match in _ASM_GOTO_LABEL_RE.finditer(asm_text):
+        named_label, operand_number = match.groups()
+        if named_label is not None:
+            if named_label not in labels_by_name:
+                raise ValueError(
+                    "asm goto template references label '%s' not present in its label list"
+                    % named_label
+                )
+            link = labels_by_name[named_label]
+        else:
+            label_index = int(operand_number) - stmnt.goto_label_operand_base
+            if label_index < 0 or label_index >= len(stmnt.goto_labels):
+                raise ValueError(
+                    "asm goto label operand %s is outside its label list"
+                    % match.group(0)
+                )
+            link = labels_by_name[stmnt.goto_labels[label_index]]
+        external_code_links[match.group(0)] = link
+
+    # A bare label operand is useful StackVM shorthand for loading its address.
+    # The explicit native form, lRa*:%l[label], is left unchanged.
+    lines = []
+    for line in asm_text.split("\n"):
+        stripped = line.strip()
+        if stripped in external_code_links:
+            line = "lRa*:" + stripped
+        else:
+            load_match = re.fullmatch(r"LOAD\s+(%l(?:\[[^\]]+\]|[0-9]+))", stripped)
+            if load_match is not None and load_match.group(1) in external_code_links:
+                line = "lRa*:" + load_match.group(1)
+        lines.append(line)
+    return "\n".join(lines), external_code_links
 
 
 def get_vars_from_compile_data(
@@ -40,7 +85,13 @@ def compile_stmnt(
                         format_pretty(rel_bp_names),
                     )
                 )
-            assemble(cmpl_obj, rel_bp_names, "\n".join(stmnt.inner_asm))
+            asm_text = "\n".join(stmnt.inner_asm)
+            external_code_links = None
+            if stmnt.is_goto:
+                asm_text, external_code_links = _prepare_asm_goto(
+                    stmnt, cmpl_data, asm_text
+                )
+            assemble(cmpl_obj, rel_bp_names, asm_text, external_code_links)
     elif stmnt.stmnt_type == StmntType.CURLY_STMNT:
         assert isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, CurlyStmnt)
@@ -288,7 +339,7 @@ def compile_stmnt(
     elif stmnt.stmnt_type == StmntType.GOTO:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, GotoStmnt)
-        cmpl_data.get_label(stmnt.label_name).emit_lea(cmpl_obj.memory)
+        cmpl_data.reference_label(stmnt.label_name).emit_lea(cmpl_obj.memory)
         cmpl_obj.memory.extend([BC_JMP])
     elif stmnt.stmnt_type == StmntType.LABEL:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
@@ -311,7 +362,7 @@ from .LocalRef import LocalRef
 from .compile_curly import compile_curly
 from .compile_expr import compile_expr
 from .constants import CURRENT_CMPL_CONDITIONS
-from .stackvm_binutils import assemble
+from .stackvm_binutils.assemble import assemble
 from ..PrettyRepr import format_pretty
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import (
