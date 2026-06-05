@@ -16,6 +16,15 @@ from .stackvm_binutils.object_file import (
     SymbolFlags,
     SymbolType,
 )
+from .stackvm_binutils.debug_info import (
+    DEBUG_SECTION_NAME,
+    DEFAULT_PREVIOUS_BP_OFFSET,
+    DEFAULT_RETURN_ADDRESS_OFFSET,
+    DebugFunctionRecord,
+    DebugLineRecord,
+    StackVMDebugInfo,
+    dumps_debug,
+)
 
 INIT_GLOBALS_LINK_NAME = "?Fz__init_globals"
 INIT_ARRAY_SECTION = ".init_array"
@@ -75,6 +84,7 @@ class Compilation(BaseCmplObj):
         self._standalone_startup_emitted = False
         self.code_segment_end = None
         self.data_segment_start = None
+        self.source_path = None
 
     def register_symbol(
         self,
@@ -136,6 +146,7 @@ class Compilation(BaseCmplObj):
         self, typ: CompileObjectType, name: str
     ) -> "CompileObject":
         rtn = CompileObject(typ, name)
+        rtn.debug_source_file = self.source_path
         registry_symbol = self.symbol_registry.get(name)
         if registry_symbol is not None:
             rtn.section_name = registry_symbol.section_name
@@ -605,6 +616,55 @@ class Compilation(BaseCmplObj):
             rodata_builder["size"] = offset + len(value)
             string_positions[value] = (".L.str.%u" % index, offset, len(value))
 
+        if self.keep_local_syms:
+            line_records = []
+            function_records = []
+            for obj in funcs:
+                section_name, base_offset, size = object_positions[obj.name]
+                for offset, source_file, line, column in obj.debug_line_records:
+                    if offset < 0 or offset > len(obj.memory):
+                        continue
+                    line_records.append(
+                        DebugLineRecord(
+                            base_offset + offset,
+                            source_file,
+                            line,
+                            column,
+                            section_name,
+                        )
+                    )
+                function_records.append(
+                    DebugFunctionRecord(
+                        obj.name,
+                        base_offset,
+                        size,
+                        getattr(obj, "debug_frame_size", 0),
+                        getattr(
+                            obj,
+                            "debug_return_address_offset",
+                            DEFAULT_RETURN_ADDRESS_OFFSET,
+                        ),
+                        getattr(
+                            obj,
+                            "debug_previous_bp_offset",
+                            DEFAULT_PREVIOUS_BP_OFFSET,
+                        ),
+                        section_name,
+                    )
+                )
+            if line_records or function_records:
+                debug_bytes = dumps_debug(
+                    StackVMDebugInfo(line_records, function_records)
+                )
+                debug_builder = get_section_builder(
+                    DEBUG_SECTION_NAME,
+                    ObjectSegment.DATA,
+                    1,
+                    SectionFlags.READ_ONLY,
+                )
+                debug_builder["memory"].extend(debug_bytes)
+                debug_builder["size"] = len(debug_bytes)
+
         section_priority = {
             ".text": 0,
             ".init.text": 1,
@@ -613,6 +673,7 @@ class Compilation(BaseCmplObj):
             ".data": 4,
             ".rodata": 5,
             ".bss": 6,
+            DEBUG_SECTION_NAME: 7,
         }
 
         def section_sort_key(builder):

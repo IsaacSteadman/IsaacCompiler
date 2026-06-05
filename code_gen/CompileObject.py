@@ -11,6 +11,11 @@ class CompileObject(BaseCmplObj):
         self.local_links = {}
         self.alignment = 1
         self.section_name = None
+        self.debug_source_file = None
+        self.debug_line_records = []
+        self.debug_frame_size = 0
+        self.debug_return_address_offset = 0
+        self.debug_previous_bp_offset = 8
 
     def get_local_link(self, name):
         """
@@ -27,3 +32,8 @@ class CompileObject(BaseCmplObj):
         """
         self.parent = parent
         return self
+
+    def add_debug_line(self, offset, source_file, line, column):
+        if source_file is None or line < 0 or column < 0:
+            return
+        self.debug_line_records.append((offset, source_file, line, column))

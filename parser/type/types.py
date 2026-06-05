@@ -3719,6 +3719,9 @@ class QualType(BaseType):
             assert res_link is not None
             cmpl_data1.res_data = (res_type, res_link)
             compile_curly(cmpl_obj1, init_args[0], fn_ctx, cmpl_data1)
+            cmpl_obj1.debug_frame_size = cmpl_data1.max_frame_size
+            cmpl_obj1.debug_return_address_offset = 0
+            cmpl_obj1.debug_previous_bp_offset = 8
             # Backpatch goto and asm-goto labels after the full body is emitted.
             for _label_name, _lnk in cmpl_data1.local_labels.items():
                 if _lnk.src is None:

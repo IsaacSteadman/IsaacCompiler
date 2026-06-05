@@ -353,6 +353,31 @@ link_parser.add_argument(
 )
 
 # ---------------------------------------------------------------------------
+# 'addr2line' subcommand
+# ---------------------------------------------------------------------------
+addr2line_parser = subparsers.add_parser(
+    "addr2line",
+    help="resolve StackVM code addresses to source file and line",
+)
+addr2line_parser.add_argument(
+    "binary",
+    metavar="binary",
+    help="input .sbc executable or .sbo object with a .debug section",
+)
+addr2line_parser.add_argument(
+    "addresses",
+    nargs="+",
+    metavar="address",
+    help="code address to resolve, decimal or 0x-prefixed",
+)
+addr2line_parser.add_argument(
+    "-f",
+    "--functions",
+    action="store_true",
+    help="print the containing function name before each source location",
+)
+
+# ---------------------------------------------------------------------------
 # 'run' subcommand
 # ---------------------------------------------------------------------------
 run_parser = subparsers.add_parser(
@@ -492,6 +517,7 @@ if args.subcommand == "compile":
             args.name_mangling_mode,
             args.default_alignment,
         )
+        cmpl_obj.source_path = os.path.abspath(input_file)
         print("Generating AST and binary inline")
         while c < end:
             prev_c = c
@@ -651,6 +677,25 @@ elif args.subcommand == "link":
             len(result.memory),
         )
     )
+
+# ---------------------------------------------------------------------------
+# 'addr2line' subcommand logic
+# ---------------------------------------------------------------------------
+elif args.subcommand == "addr2line":
+    from .code_gen.stackvm_binutils.addr2line import (
+        Addr2LineError,
+        load_debug_info,
+        parse_address,
+        resolve_addresses,
+    )
+
+    try:
+        addresses = [parse_address(value) for value in args.addresses]
+        info = load_debug_info(args.binary)
+    except (Addr2LineError, OSError, ValueError, argparse.ArgumentTypeError) as exc:
+        addr2line_parser.error(str(exc))
+    for line in resolve_addresses(info, addresses, args.functions):
+        print(line)
 
 # ---------------------------------------------------------------------------
 # 'run' subcommand logic

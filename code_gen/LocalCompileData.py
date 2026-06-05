@@ -7,8 +7,12 @@ def _align_up(x: int, align: int) -> int:
 
 class LocalCompileData(object):
     def __init__(self, parent: Optional["LocalCompileData"] = None):
-        self.bp_off: int = 0 if parent is None else parent.bp_off
-        self.scope_bp_off_start: int = 0 if parent is None else parent.bp_off
+        initial_bp_off = 0 if parent is None else parent.bp_off
+        self._bp_off: int = initial_bp_off
+        self._frame_max_ref: List[int] = (
+            [initial_bp_off] if parent is None else parent._frame_max_ref
+        )
+        self.scope_bp_off_start: int = initial_bp_off
         self.vars: List[Tuple["ContextVariable", "LocalRef"]] = []
         self.local_links: Dict[str, int] = {}
         self.sizes = {}  # TODO: appears unused
@@ -23,6 +27,20 @@ class LocalCompileData(object):
             None if parent is None else parent.cur_breakable
         )
         self.res_data: Optional[Tuple["BaseType", "BaseLink"]] = None
+
+    @property
+    def bp_off(self) -> int:
+        return self._bp_off
+
+    @bp_off.setter
+    def bp_off(self, value: int) -> None:
+        self._bp_off = value
+        if value > self._frame_max_ref[0]:
+            self._frame_max_ref[0] = value
+
+    @property
+    def max_frame_size(self) -> int:
+        return self._frame_max_ref[0]
 
     def compile_leave_scope(self, cmpl_obj: "BaseCmplObj", context: "CompileContext"):
         stack_sz = self.bp_off - self.scope_bp_off_start

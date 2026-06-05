@@ -6,14 +6,18 @@ from typing import BinaryIO, Iterable, Optional, Tuple, Union
 SBC_MAGIC = b"\xf7SVE\0\0\0\0"
 SBC_SPARSE_MAGIC = b"\xf7SVE\0\0\0\1"
 SBC_RELOC_MAGIC = b"\xf7SVE\0\0\0\2"
+SBC_DEBUG_MAGIC = b"\xf7SVE\0\0\0\3"
 SBC_HEADER_SIZE = 32
 SBC_RELOC_HEADER_SIZE = 48
+SBC_DEBUG_HEADER_SIZE = 64
 
 _HEADER = struct.Struct("<8sQQQ")
 _RELOC_HEADER = struct.Struct("<8sQQQQQ")
+_DEBUG_HEADER = struct.Struct("<8sQQQQQQQ")
 
 assert _HEADER.size == SBC_HEADER_SIZE
 assert _RELOC_HEADER.size == SBC_RELOC_HEADER_SIZE
+assert _DEBUG_HEADER.size == SBC_DEBUG_HEADER_SIZE
 
 
 @dataclass
@@ -23,6 +27,7 @@ class StackVMExecutable:
     data_segment_start: int
     file_size: Optional[int] = None
     base_relocations: Tuple[int, ...] = field(default_factory=tuple)
+    debug_info: bytes = b""
 
 
 def apply_base_fixups(
@@ -58,6 +63,7 @@ def _validate_executable(executable: StackVMExecutable) -> None:
     for offset in executable.base_relocations:
         if offset < 0 or offset + 8 > memory_size:
             raise ValueError("base relocation offset is outside the memory image")
+    bytes(executable.debug_info)
 
 
 def dumps_sbc(executable: StackVMExecutable) -> bytes:
@@ -65,6 +71,26 @@ def dumps_sbc(executable: StackVMExecutable) -> bytes:
     memory = bytes(executable.memory)
     file_size = len(memory) if executable.file_size is None else executable.file_size
     base_relocations = tuple(executable.base_relocations)
+    debug_info = bytes(executable.debug_info)
+    if debug_info:
+        relocation_table = bytearray()
+        for offset in base_relocations:
+            relocation_table.extend(offset.to_bytes(8, "little"))
+        return (
+            _DEBUG_HEADER.pack(
+                SBC_DEBUG_MAGIC,
+                executable.code_segment_end,
+                executable.data_segment_start,
+                len(memory),
+                file_size,
+                len(base_relocations),
+                len(debug_info),
+                0,
+            )
+            + memory[:file_size]
+            + relocation_table
+            + debug_info
+        )
     if base_relocations:
         relocation_table = bytearray()
         for offset in base_relocations:
@@ -133,6 +159,47 @@ def loads_sbc(data: bytes) -> StackVMExecutable:
             data_segment_start,
             file_size,
             tuple(base_relocations),
+        )
+        _validate_executable(executable)
+        return executable
+
+    if magic == SBC_DEBUG_MAGIC:
+        if len(data) < SBC_DEBUG_HEADER_SIZE:
+            raise ValueError("binary file is too short to contain a debug header")
+        (
+            _magic,
+            code_segment_end,
+            data_segment_start,
+            memory_size,
+            file_size,
+            relocation_count,
+            debug_size,
+            reserved,
+        ) = _DEBUG_HEADER.unpack_from(data)
+        if reserved != 0:
+            raise ValueError("binary file debug header reserved field must be zero")
+        payload_start = SBC_DEBUG_HEADER_SIZE
+        relocation_table_start = payload_start + file_size
+        debug_start = relocation_table_start + relocation_count * 8
+        expected_size = debug_start + debug_size
+        if len(data) != expected_size:
+            raise ValueError("binary file debug payload size does not match header")
+        if file_size > memory_size:
+            raise ValueError("binary file payload is larger than its memory image")
+        base_relocations = []
+        for index in range(relocation_count):
+            offset = relocation_table_start + index * 8
+            base_relocations.append(
+                int.from_bytes(data[offset : offset + 8], "little")
+            )
+        executable = StackVMExecutable(
+            data[payload_start:relocation_table_start]
+            + b"\0" * (memory_size - file_size),
+            code_segment_end,
+            data_segment_start,
+            file_size,
+            tuple(base_relocations),
+            data[debug_start:expected_size],
         )
         _validate_executable(executable)
         return executable

@@ -9,6 +9,14 @@ from .archive_file import (
     load_sba,
 )
 from .executable_file import StackVMExecutable, dumps_sbc, write_sbc
+from .debug_info import (
+    DEBUG_SECTION_NAME,
+    DebugFunctionRecord,
+    DebugLineRecord,
+    StackVMDebugInfo,
+    dumps_debug,
+    loads_debug,
+)
 from .lib_util_asm_impl.names import ISAAC_RUNTIME_LINK_NAMES
 from .object_file import (
     SBO_MAGIC,
@@ -38,6 +46,7 @@ DEFAULT_SECTION_ORDER = (
 )
 CODE_SECTIONS = {".text", ".init.text"}
 DATA_SECTIONS = {".init_array", ".fini_array", ".data", ".rodata", ".bss"}
+DEBUG_SECTIONS = {DEBUG_SECTION_NAME}
 LINKER_DEFINED_SYMBOLS = {
     "__init_begin",
     "__init_end",
@@ -68,6 +77,10 @@ class UndefinedSymbolError(LinkerError):
 
 def _matches_section(name: str, base: str) -> bool:
     return name == base or name.startswith(base + ".")
+
+
+def _is_debug_section(name: str) -> bool:
+    return any(_matches_section(name, base) for base in DEBUG_SECTIONS)
 
 
 def _init_priority_section_key(name: str, base: str) -> int:
@@ -224,6 +237,7 @@ class LinkResult:
     object_layouts: List[ObjectLayout]
     section_layouts: List[SectionLayout]
     base_relocations: List[int] = field(default_factory=list)
+    debug_info: bytes = b""
 
     @property
     def symbol_addresses(self) -> Dict[str, int]:
@@ -245,6 +259,7 @@ class LinkResult:
             self.data_segment_start,
             file_size,
             tuple(self.base_relocations),
+            self.debug_info,
         )
 
     def to_sbc(self) -> bytes:
@@ -519,8 +534,39 @@ class _ObjectLinker:
                         )
 
         section_lookup = {section.key: section for section in input_sections}
+        debug_sections = [
+            section for section in input_sections if _is_debug_section(section.name)
+        ]
+        debug_section_keys = {section.key for section in debug_sections}
+        for section in debug_sections:
+            if section.segment != ObjectSegment.DATA:
+                raise LinkerError(".debug sections must use the DATA segment")
+            if section.is_nobits:
+                raise LinkerError(".debug sections cannot be NOBITS")
+        for object_index, obj_input in enumerate(self.included):
+            obj = obj_input.obj
+            for symbol in obj.symbols:
+                if symbol.is_undefined:
+                    continue
+                section_key = (
+                    symbol.section_index
+                    if obj.sections
+                    else (-1 if symbol.segment == ObjectSegment.CODE else -2)
+                )
+                if (object_index, section_key) in debug_section_keys:
+                    raise LinkerError(".debug sections cannot define ordinary symbols")
+            for relocation in obj.relocations:
+                section_key = (
+                    relocation.section_index
+                    if obj.sections
+                    else (-1 if relocation.segment == ObjectSegment.CODE else -2)
+                )
+                if (object_index, section_key) in debug_section_keys:
+                    raise LinkerError(".debug sections cannot contain relocations")
         members_by_output = {name: [] for name in self.options.script.sections}
         for section in input_sections:
+            if section.key in debug_section_keys:
+                continue
             output_name = self.options.script.output_section_for(section.name)
             expected_segment = (
                 ObjectSegment.CODE
@@ -629,6 +675,7 @@ class _ObjectLinker:
                 section
                 for section in input_sections
                 if section.object_index == object_index
+                and section.key not in debug_section_keys
             ]
 
             def segment_layout(segment: ObjectSegment, fallback: int) -> Tuple[int, int]:
@@ -804,6 +851,88 @@ class _ObjectLinker:
                 )
             )
 
+        merged_debug_lines = []
+        merged_debug_functions = []
+        if debug_sections:
+            sections_by_object_and_name: Dict[Tuple[int, str], List[_InputSection]] = {}
+            for section in input_sections:
+                if section.key in debug_section_keys:
+                    continue
+                sections_by_object_and_name.setdefault(
+                    (section.object_index, section.name),
+                    [],
+                ).append(section)
+
+            def relocate_debug_address(
+                object_index: int,
+                source_section_name: str,
+                section_relative_address: int,
+            ) -> int:
+                if not source_section_name:
+                    return section_relative_address
+                candidates = sections_by_object_and_name.get(
+                    (object_index, source_section_name),
+                    [],
+                )
+                if len(candidates) != 1:
+                    raise LinkerError(
+                        "debug record references unknown or ambiguous section %s in %s"
+                        % (
+                            source_section_name,
+                            self.included[object_index].display_name,
+                        )
+                    )
+                section = candidates[0]
+                return input_section_addresses[section.key] + section_relative_address
+
+            for section in debug_sections:
+                if not section.data:
+                    continue
+                try:
+                    debug_info = loads_debug(section.data)
+                except ValueError as exc:
+                    raise LinkerError(
+                        "invalid debug section in %s: %s"
+                        % (self.included[section.object_index].display_name, exc)
+                    ) from exc
+                for record in debug_info.lines:
+                    merged_debug_lines.append(
+                        DebugLineRecord(
+                            relocate_debug_address(
+                                section.object_index,
+                                record.section,
+                                record.address,
+                            ),
+                            record.file,
+                            record.line,
+                            record.column,
+                            "",
+                        )
+                    )
+                for record in debug_info.functions:
+                    merged_debug_functions.append(
+                        DebugFunctionRecord(
+                            record.name,
+                            relocate_debug_address(
+                                section.object_index,
+                                record.section,
+                                record.address,
+                            ),
+                            record.size,
+                            record.frame_size,
+                            record.return_address_offset,
+                            record.previous_bp_offset,
+                            "",
+                        )
+                    )
+        merged_debug_lines.sort(key=lambda record: record.address)
+        merged_debug_functions.sort(key=lambda record: record.address)
+        debug_info = (
+            dumps_debug(StackVMDebugInfo(merged_debug_lines, merged_debug_functions))
+            if merged_debug_lines or merged_debug_functions
+            else b""
+        )
+
         return LinkResult(
             bytes(memory),
             code_segment_end,
@@ -815,6 +944,7 @@ class _ObjectLinker:
             layouts,
             section_layouts,
             sorted(base_relocations),
+            debug_info,
         )
 
 

@@ -55,12 +55,36 @@ def get_vars_from_compile_data(
         return get_vars_from_compile_data(cmpl_data.parent) + cmpl_data.vars
 
 
+def _record_statement_debug_line(
+    cmpl_obj: "BaseCmplObj",
+    stmnt: "BaseStmnt",
+    start_offset: int,
+) -> None:
+    if not isinstance(cmpl_obj, CompileObject):
+        return
+    parent = getattr(cmpl_obj, "parent", None)
+    if parent is None or not getattr(parent, "keep_local_syms", False):
+        return
+    if stmnt.stmnt_type not in _DEBUG_STMNT_TYPES:
+        return
+    if len(cmpl_obj.memory) <= start_offset:
+        return
+    line, column = getattr(stmnt, "position", (-1, -1))
+    source_file = getattr(cmpl_obj, "debug_source_file", None)
+    if source_file is None:
+        source_file = getattr(parent, "source_path", None)
+    cmpl_obj.add_debug_line(start_offset, source_file, line, column)
+
+
 def compile_stmnt(
     cmpl_obj: "BaseCmplObj",
     stmnt: "BaseStmnt",
     context: "CompileContext",
     cmpl_data: Optional["LocalCompileData"] = None,
 ):
+    debug_start_offset = (
+        len(cmpl_obj.memory) if isinstance(cmpl_obj, CompileObject) else None
+    )
     if stmnt.stmnt_type == StmntType.ASM:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, AsmStmnt)
@@ -95,7 +119,9 @@ def compile_stmnt(
     elif stmnt.stmnt_type == StmntType.CURLY_STMNT:
         assert isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, CurlyStmnt)
-        return compile_curly(cmpl_obj, stmnt, context, cmpl_data)
+        result = compile_curly(cmpl_obj, stmnt, context, cmpl_data)
+        _record_statement_debug_line(cmpl_obj, stmnt, debug_start_offset)
+        return result
     elif stmnt.stmnt_type == StmntType.DECL:
         assert isinstance(stmnt, DeclStmnt)
         assert stmnt.decl_lst is not None
@@ -110,6 +136,7 @@ def compile_stmnt(
                 VarRefTosNamed(ctx_var),
                 cmpl_data,
             )
+        _record_statement_debug_line(cmpl_obj, stmnt, debug_start_offset)
         return sz_off
     elif stmnt.stmnt_type == StmntType.IF:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
@@ -331,6 +358,7 @@ def compile_stmnt(
         lnk.src = len(cmpl_obj.memory)
     else:
         raise ValueError("Unrecognized Statement Type")
+    _record_statement_debug_line(cmpl_obj, stmnt, debug_start_offset)
     return 0
 
 
@@ -382,3 +410,18 @@ from ..parser.type.types import (
 )
 from ..parser.stmnt.helpers.SingleVarDecl import SingleVarDecl
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc, VarRefTosNamed
+
+
+_DEBUG_STMNT_TYPES = {
+    StmntType.ASM,
+    StmntType.IF,
+    StmntType.WHILE,
+    StmntType.FOR,
+    StmntType.RTN,
+    StmntType.BRK,
+    StmntType.CONTINUE,
+    StmntType.DECL,
+    StmntType.SEMI_COLON,
+    StmntType.GOTO,
+    StmntType.SWITCH,
+}
