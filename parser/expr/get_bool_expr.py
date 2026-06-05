@@ -35,4 +35,6 @@ from .get_implicit_conv_expr import get_implicit_conv_expr
 from ...PrettyRepr import format_pretty
 from ..type.BaseType import TypeClass
 from ..type.get_user_str_from_type import get_user_str_from_type
-from ..type.types import bool_t, compare_no_cvr, get_tgt_ref_type, QualType
+from ..type.QualType import QualType
+from ..type.PrimitiveType import bool_t
+from ..type.qual_atomic_type_util import compare_no_cvr, get_tgt_ref_type

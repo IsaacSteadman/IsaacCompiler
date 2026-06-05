@@ -67,6 +67,4 @@ from ...expr.OperatorType import OperatorType
 from ...type.BaseType import BaseType, TypeClass
 from ...expr.abstract_overload_resolver import abstract_overload_resolver
 from ...type.get_user_str_from_type import get_user_str_from_type
-
-if TYPE_CHECKING:
-    from ...type.types import Attribute
+from ...type.Attribute import Attribute

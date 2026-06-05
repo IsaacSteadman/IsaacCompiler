@@ -53,5 +53,6 @@ class CastOpExpr(BaseExpr):
 
 from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import BaseType
-from ..type.types import CompileContext, compare_no_cvr, get_tgt_ref_type
+from ..type.CompileContext import CompileContext
+from ..type.qual_atomic_type_util import compare_no_cvr, get_tgt_ref_type
 from ...lexer.lexer import Token

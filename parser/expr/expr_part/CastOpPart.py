@@ -40,6 +40,7 @@ class CastOpPart(BaseOpPart):
 
 
 from ..CastOpExpr import CastOpExpr
-from ...type.types import get_tgt_ref_type, QualType
+from ...type.QualType import QualType
+from ...type.qual_atomic_type_util import get_tgt_ref_type
 from ...type.get_user_str_from_type import get_user_str_from_type
 from ..get_standard_conv_expr import get_standard_conv_expr

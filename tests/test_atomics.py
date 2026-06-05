@@ -2,7 +2,6 @@ import os
 import sys
 import unittest
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
@@ -24,7 +23,7 @@ from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import 
 )
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
-from IsaacCompiler.parser.type.types import CompileContext
+from IsaacCompiler.parser.type.CompileContext import CompileContext
 
 
 def _flatify_dep_desc(dep_dct, start_key):
@@ -108,7 +107,9 @@ def _read_global(vm, global_ctx, cmpl_obj, name, size, signed=False):
 
 
 def _disasm_lines(cmpl_obj):
-    return [text for _addr, text in disassembly_lst_lines(cmpl_obj.memory, None, None, {})]
+    return [
+        text for _addr, text in disassembly_lst_lines(cmpl_obj.memory, None, None, {})
+    ]
 
 
 class AtomicCodegenTests(unittest.TestCase):
@@ -130,7 +131,9 @@ class AtomicCodegenTests(unittest.TestCase):
             remove_unused_deps=False,
         )
 
-        self.assertEqual(_get_global_addr(global_ctx, cmpl_obj, "global_counter") % 4, 0)
+        self.assertEqual(
+            _get_global_addr(global_ctx, cmpl_obj, "global_counter") % 4, 0
+        )
 
         lines = _disasm_lines(cmpl_obj)
         self.assertTrue(any("STOR-ATOMIC_STORE|SZ_4|SEQ_CST" in line for line in lines))
@@ -177,14 +180,28 @@ class AtomicCodegenTests(unittest.TestCase):
         )
 
         vm = _run_program(cmpl_obj)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "value", 4, signed=True), 20)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "loaded", 4, signed=True), 4)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "exchanged", 4, signed=True), 4)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "fetched", 4, signed=True), 9)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "cas_ok", 4, signed=True), 1)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "cas_fail", 4, signed=True), 0)
         self.assertEqual(
-            _read_global(vm, global_ctx, cmpl_obj, "expected_after_fail", 4, signed=True),
+            _read_global(vm, global_ctx, cmpl_obj, "value", 4, signed=True), 20
+        )
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "loaded", 4, signed=True), 4
+        )
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "exchanged", 4, signed=True), 4
+        )
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "fetched", 4, signed=True), 9
+        )
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "cas_ok", 4, signed=True), 1
+        )
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "cas_fail", 4, signed=True), 0
+        )
+        self.assertEqual(
+            _read_global(
+                vm, global_ctx, cmpl_obj, "expected_after_fail", 4, signed=True
+            ),
             20,
         )
 

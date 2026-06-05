@@ -1,6 +1,5 @@
 from ...PrettyRepr import get_pretty_repr
 from .BaseExpr import BaseExpr, ExprType
-from ..type.types import QualType
 
 
 class CompoundLiteralExpr(BaseExpr):
@@ -22,3 +21,6 @@ class CompoundLiteralExpr(BaseExpr):
             + get_pretty_repr((self.obj_type, self.init_expr), pretty_repr_ctx)
             + [")"]
         )
+
+
+from ..type.QualType import QualType

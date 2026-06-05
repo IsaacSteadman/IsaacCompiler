@@ -50,5 +50,5 @@ from ...PrettyRepr import get_pretty_repr
 from ..expr.BaseExpr import BaseExpr
 from ..expr.get_bool_expr import get_bool_expr
 from ..expr.get_expr import get_expr
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext
 from ...lexer.lexer import Token

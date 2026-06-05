@@ -15,9 +15,7 @@ class PerCpuAddrExpr(BaseExpr):
         return self.arg.init_temps(main_temps)
 
     def pretty_repr(self, pretty_repr_ctx=None):
-        return [self.__class__.__name__] + get_pretty_repr(
-            (self.arg,), pretty_repr_ctx
-        )
+        return [self.__class__.__name__] + get_pretty_repr((self.arg,), pretty_repr_ctx)
 
     def build(
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
@@ -27,5 +25,5 @@ class PerCpuAddrExpr(BaseExpr):
 
 from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import BaseType
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext
 from ...lexer.lexer import Token

@@ -7,4 +7,5 @@ def get_asgn_sh_fn_type(typ: "BaseType", is_const_ref: bool = False):
 
 
 from .BaseType import BaseType
-from .types import PrimitiveType, PrimitiveTypeId, QualType
+from .PrimitiveType import PrimitiveType, PrimitiveTypeId
+from .QualType import QualType

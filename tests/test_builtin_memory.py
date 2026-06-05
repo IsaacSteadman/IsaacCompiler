@@ -2,7 +2,6 @@ import os
 import sys
 import unittest
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
@@ -19,12 +18,10 @@ from IsaacCompiler.code_gen.stackvm_binutils.emit_load_i_const import emit_load_
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.lib.runtime_support import runtime_extern_deps
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
-from IsaacCompiler.parser.type.types import (
-    CompileContext,
-    PrimitiveType,
-    QualType,
-    TypeDefCtxMember,
-)
+from IsaacCompiler.parser.type.CompileContext import CompileContext
+from IsaacCompiler.parser.type.PrimitiveType import PrimitiveType
+from IsaacCompiler.parser.type.QualType import QualType
+from IsaacCompiler.parser.type.TypeDefCtxMember import TypeDefCtxMember
 
 
 def _flatify_dep_desc(dep_dct, start_key):
@@ -115,7 +112,7 @@ class BuiltinMemoryTests(unittest.TestCase):
         global_ctx, cmpl_obj = _compile_source(
             "char filled[8]; "
             "char copied[8]; "
-            "char src[] = \"abc\"; "
+            'char src[] = "abc"; '
             "unsigned long long copied_len = 0; "
             "int main(int argc, char **argv) { "
             "    __builtin_memset(filled, 'x', 3); "
@@ -145,7 +142,9 @@ class BuiltinMemoryTests(unittest.TestCase):
 
         flags_addr = _get_global_addr(global_ctx, cmpl_obj, "flags")
         self.assertEqual(
-            int.from_bytes(cmpl_obj.memory[flags_addr : flags_addr + 4], "little", signed=True),
+            int.from_bytes(
+                cmpl_obj.memory[flags_addr : flags_addr + 4], "little", signed=True
+            ),
             7,
         )
 

@@ -6,8 +6,7 @@ from ..type.get_asgn_fn_type import get_asgn_fn_type
 from ..type.get_asgn_sh_fn_type import get_asgn_sh_fn_type
 from ..type.get_cmp_op_fn_type import get_cmp_op_fn_type
 from ..type.get_sh_fn_type import get_sh_fn_type
-from ..type.types import (
-    QualType,
+from ..type.PrimitiveType import (
     bool_t,
     int_types,
     prim_types,
@@ -288,5 +287,7 @@ from .get_implicit_conv_expr import get_implicit_conv_expr
 from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import TypeClass
 from ..type.get_user_str_from_type import get_user_str_from_type
-from ..type.types import CompileContext, get_tgt_ref_type
+from ..type.CompileContext import CompileContext
+from ..type.qual_atomic_type_util import get_tgt_ref_type
 from ...lexer.lexer import Token
+from ..type.QualType import QualType

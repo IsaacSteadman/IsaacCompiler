@@ -112,5 +112,5 @@ from .LiteralExpr import LiteralExpr
 from .get_expr import get_expr
 from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
 from ...PrettyRepr import get_pretty_repr
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext
 from ...lexer.lexer import Token, TokenType

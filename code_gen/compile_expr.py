@@ -138,11 +138,15 @@ def _compile_atomic_intrinsic_expr(
             temp_links,
         )
         cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | BCR_SZ_8])
-        expected_ptr_link.emit_stor(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        expected_ptr_link.emit_stor(
+            cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic
+        )
         sz_cls_addr = emit_load_i_const(cmpl_obj.memory, 8, False)
         cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls_addr])
 
-        expected_ptr_link.emit_load(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        expected_ptr_link.emit_load(
+            cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic
+        )
         emit_tracked_abs_s8_load(cmpl_obj, size)
         cmpl_obj.memory.extend([BC_LOAD, BCR_TOS | (sz_cls << 5)])
         expected_value_link.emit_stor(
@@ -175,7 +179,9 @@ def _compile_atomic_intrinsic_expr(
         expected_value_link.emit_stor(
             cmpl_obj.memory, 1, cmpl_obj, byte_copy_cmpl_intrinsic
         )
-        expected_ptr_link.emit_load(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        expected_ptr_link.emit_load(
+            cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic
+        )
         emit_tracked_abs_s8_stor(cmpl_obj, size)
         expected_value_link.emit_load(
             cmpl_obj.memory, 1, cmpl_obj, byte_copy_cmpl_intrinsic
@@ -640,7 +646,10 @@ def compile_expr(
                 typ_bits = get_bc_conv_bits(expr.a.t_anot)
                 sz_cls = (typ_bits & 0x7) >> (0 if typ_bits & 0x8 else 1)
                 sub_code = (BC_FSUB_2 if typ_bits & 0x8 else BC_SUB1) + sz_cls
-                assert BC_FSUB_2 <= sub_code <= BC_FSUB_16 or BC_SUB1 <= sub_code <= BC_SUB8
+                assert (
+                    BC_FSUB_2 <= sub_code <= BC_FSUB_16
+                    or BC_SUB1 <= sub_code <= BC_SUB8
+                )
                 emit_load_i_const(cmpl_obj.memory, 0, False, 0)
                 cmpl_obj.memory.extend(
                     [
@@ -749,7 +758,9 @@ def compile_expr(
                         is_volatile_access,
                         atomic_access=is_atomic_access,
                     )
-                    cmpl_obj.memory.extend([BC_SWAP, swap_byte, BC_LOAD, BCR_TOS | BCR_SZ_8])
+                    cmpl_obj.memory.extend(
+                        [BC_SWAP, swap_byte, BC_LOAD, BCR_TOS | BCR_SZ_8]
+                    )
                     emit_tracked_abs_s8_load(
                         cmpl_obj,
                         sz_num,
@@ -1060,24 +1071,26 @@ from ..parser.stmnt.SemiColonStmnt import SemiColonStmnt
 from ..parser.type.BaseType import BaseType, TypeClass
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc
 from ..parser.type.get_user_str_from_type import get_user_str_from_type
-from ..parser.type.types import (
-    ClassType,
-    CompileContext,
-    ContextVariable,
-    INT_TYPE_CODES,
-    IdentifiedQualType,
+from ..parser.type.ClassType import ClassType
+from ..parser.type.CompileContext import CompileContext
+from ..parser.type.ContextVariable import ContextVariable
+from ..parser.type.IdentifiedQualType import IdentifiedQualType
+from ..parser.type.PrimitiveType import (
     PrimitiveType,
-    QualType,
-    StructType,
-    UnionType,
+    INT_TYPE_CODES,
     bool_t,
+    void_t,
+    prim_types,
+)
+from ..parser.type.qual_atomic_type_util import (
     compare_no_cvr,
     get_base_prim_type,
     get_tgt_ref_type,
     get_value_type,
     is_atomic_storage_type,
     is_volatile_storage_type,
-    prim_types,
-    size_of,
-    void_t,
 )
+from ..parser.type.QualType import QualType
+from ..parser.type.StructType import StructType
+from ..parser.type.UnionType import UnionType
+from ..parser.type.align_size_of import size_of

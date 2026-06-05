@@ -2,7 +2,6 @@ import os
 import sys
 import unittest
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
@@ -19,7 +18,7 @@ from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import 
 )
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
-from IsaacCompiler.parser.type.types import CompileContext
+from IsaacCompiler.parser.type.CompileContext import CompileContext
 
 
 def _flatify_dep_desc(dep_dct, start_key):
@@ -58,8 +57,7 @@ def _compile_source(source):
         (name, sorted(obj.linkages)) for name, obj in cmpl_obj.objects.items()
     )
     dep_tree.extend(
-        (name, sorted(obj.linkages))
-        for name, obj in link_opts.extern_deps.items()
+        (name, sorted(obj.linkages)) for name, obj in link_opts.extern_deps.items()
     )
     dep_dct = dict(dep_tree)
     used_deps = _flatify_dep_desc(dep_dct, "")

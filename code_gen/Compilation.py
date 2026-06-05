@@ -32,6 +32,7 @@ from .percpu import (
     PERCPU_START_SYMBOLS,
     matches_percpu_section,
 )
+from ..parser.type.align_util import align_up
 
 INIT_GLOBALS_LINK_NAME = "?Fz__init_globals"
 INIT_ARRAY_SECTION = ".init_array"
@@ -66,10 +67,6 @@ class LifecycleFunction:
     priority: int
     sequence: int
     object_name: str
-
-
-def _align_up(x: int, align: int) -> int:
-    return (x + align - 1) & ~(align - 1)
 
 
 class Compilation(BaseCmplObj):
@@ -208,8 +205,7 @@ class Compilation(BaseCmplObj):
             priority = int(args[0], 0)
         except ValueError as exc:
             raise TypeError(
-                "%s attribute priority must be an integer constant"
-                % attribute.name
+                "%s attribute priority must be an integer constant" % attribute.name
             ) from exc
         if priority < 0 or priority > DEFAULT_LIFECYCLE_PRIORITY:
             raise ValueError(
@@ -235,8 +231,6 @@ class Compilation(BaseCmplObj):
         if registry_symbol is None or not registry_symbol.defined:
             return
 
-        from ..parser.type.types import QualType, compare_no_cvr, void_t
-
         if not isinstance(typ, QualType) or typ.qual_id != QualType.QUAL_FN:
             raise TypeError("constructor and destructor attributes require a function")
         if typ.ext_inf:
@@ -252,8 +246,7 @@ class Compilation(BaseCmplObj):
             previous = by_kind.get(attribute.name)
             if previous is not None and previous != priority:
                 raise TypeError(
-                    "conflicting %s priorities for '%s'"
-                    % (attribute.name, link_name)
+                    "conflicting %s priorities for '%s'" % (attribute.name, link_name)
                 )
             by_kind[attribute.name] = priority
 
@@ -299,18 +292,12 @@ class Compilation(BaseCmplObj):
 
     def _emit_lifecycle_calls(self, kind: str, reverse: bool = False) -> None:
         entries = sorted(
-            (
-                entry
-                for entry in self.lifecycle_functions
-                if entry.kind == kind
-            ),
+            (entry for entry in self.lifecycle_functions if entry.kind == kind),
             key=lambda entry: (entry.priority, entry.sequence),
             reverse=reverse,
         )
         if not entries:
             return
-
-        from .branch_emit import emit_rel_call
 
         for entry in entries:
             emit_rel_call(self.memory, self.get_link(entry.link_name))
@@ -318,10 +305,6 @@ class Compilation(BaseCmplObj):
     def emit_standalone_startup(self, main_link_name: str) -> None:
         if self._standalone_startup_emitted:
             raise ValueError("standalone startup code has already been emitted")
-
-        from ..StackVM.PyStackVM import BC_HLT
-        from .branch_emit import emit_rel_call
-        from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 
         init_obj = self.finalize_global_initializer()
         if init_obj is not None:
@@ -396,7 +379,7 @@ class Compilation(BaseCmplObj):
                         "Redefinition of name = '%s' is not allowed" % cur.name
                     )
                 if cur.typ == CompileObjectType.GLOBAL and cur.alignment > 1:
-                    mem_off = _align_up(len(self.memory), cur.alignment)
+                    mem_off = align_up(len(self.memory), cur.alignment)
                     if mem_off > len(self.memory):
                         self.memory.extend([0] * (mem_off - len(self.memory)))
                 mem_off = len(self.memory)
@@ -443,7 +426,7 @@ class Compilation(BaseCmplObj):
             cur = self.string_pool[k]
             assert cur.src is None
             if cur.alignment > 1:
-                mem_off = _align_up(len(self.memory), cur.alignment)
+                mem_off = align_up(len(self.memory), cur.alignment)
                 if mem_off > len(self.memory):
                     self.memory.extend([0] * (mem_off - len(self.memory)))
             mem_off = len(self.memory)
@@ -480,9 +463,7 @@ class Compilation(BaseCmplObj):
 
     @staticmethod
     def _write_relocation_addend(memory: bytearray, offset: int, addend: int) -> None:
-        memory[offset : offset + 8] = (addend & ((1 << 64) - 1)).to_bytes(
-            8, "little"
-        )
+        memory[offset : offset + 8] = (addend & ((1 << 64) - 1)).to_bytes(8, "little")
 
     def to_stackvm_object(
         self,
@@ -513,7 +494,6 @@ class Compilation(BaseCmplObj):
             return name == base or name.startswith(base + ".")
 
         def is_read_only_type(typ: object) -> bool:
-            from ..parser.type.types import QualType
 
             while isinstance(typ, QualType):
                 if typ.qual_id == QualType.QUAL_CONST:
@@ -609,7 +589,7 @@ class Compilation(BaseCmplObj):
                             % (obj.name, section_name)
                         )
             builder = get_section_builder(section_name, segment, alignment, flags)
-            offset = _align_up(builder["size"], alignment)
+            offset = align_up(builder["size"], alignment)
             if not flags & SectionFlags.NOBITS:
                 memory = builder["memory"]
                 if offset > len(memory):
@@ -650,7 +630,7 @@ class Compilation(BaseCmplObj):
                 rodata_builder["alignment"] = max(
                     rodata_builder["alignment"], alignment
                 )
-            offset = _align_up(rodata_builder["size"], alignment)
+            offset = align_up(rodata_builder["size"], alignment)
             memory = rodata_builder["memory"]
             if offset > len(memory):
                 memory.extend([0] * (offset - len(memory)))
@@ -744,8 +724,7 @@ class Compilation(BaseCmplObj):
             if registry_symbol is None:
                 binding = (
                     SymbolBinding.LOCAL
-                    if name == INIT_GLOBALS_LINK_NAME
-                    or name.endswith("$init_guard")
+                    if name == INIT_GLOBALS_LINK_NAME or name.endswith("$init_guard")
                     else SymbolBinding.GLOBAL
                 )
                 _, symbol_type = self._object_symbol_defaults(obj)
@@ -842,8 +821,7 @@ class Compilation(BaseCmplObj):
                     offset = base_offset + ref.pos
                     if ref.pos < 0 or ref.pos + 8 > len(obj.memory):
                         raise ValueError(
-                            "String relocation patch is outside object '%s'"
-                            % obj.name
+                            "String relocation patch is outside object '%s'" % obj.name
                         )
                     self._write_relocation_addend(section_memory, offset, ref.addend)
                     relocations.append(
@@ -872,7 +850,7 @@ class Compilation(BaseCmplObj):
                     continue
                 if segment == ObjectSegment.DATA:
                     data_alignment = max(data_alignment, builder["alignment"])
-                offset = _align_up(len(segment_memory), builder["alignment"])
+                offset = align_up(len(segment_memory), builder["alignment"])
                 if offset > len(segment_memory):
                     segment_memory.extend([0] * (offset - len(segment_memory)))
                 section_offsets[index] = offset
@@ -886,7 +864,7 @@ class Compilation(BaseCmplObj):
                     continue
                 if segment == ObjectSegment.DATA:
                     data_alignment = max(data_alignment, builder["alignment"])
-                logical_end = _align_up(logical_end, builder["alignment"])
+                logical_end = align_up(logical_end, builder["alignment"])
                 section_offsets[index] = logical_end
                 logical_end += builder["size"]
 
@@ -966,3 +944,9 @@ from .CompileObject import CompileObject
 from .LinkRef import LinkRef
 from .Linkage import Linkage
 from .LinkerOptions import LinkerOptions
+from .stackvm_binutils.emit_load_i_const import emit_load_i_const
+from ..StackVM.PyStackVM import BC_HLT
+from .branch_emit import emit_rel_call
+from ..parser.type.QualType import QualType
+from ..parser.type.qual_atomic_type_util import compare_no_cvr
+from ..parser.type.PrimitiveType import void_t

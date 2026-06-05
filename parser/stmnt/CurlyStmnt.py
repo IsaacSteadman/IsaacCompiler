@@ -45,15 +45,6 @@ class CurlyStmnt(BaseStmnt):
         if self.context.has_var_strict("__func__"):
             return
 
-        from ..expr.LiteralExpr import LiteralExpr
-        from ..type.types import (
-            ContextVariable,
-            PrimitiveType,
-            PrimitiveTypeId,
-            QualType,
-            VarDeclMods,
-        )
-
         fn_name = parent_context.name
         char_type = PrimitiveType.from_type_code(PrimitiveTypeId.INT_C)
         elem_type = QualType(QualType.QUAL_CONST, char_type)
@@ -62,9 +53,7 @@ class CurlyStmnt(BaseStmnt):
         literal.l_val = list(map(ord, fn_name))
         literal.t_anot = QualType(QualType.QUAL_REF, arr_type)
 
-        ctx_var = ContextVariable(
-            "__func__", arr_type, literal, VarDeclMods.STATIC
-        )
+        ctx_var = ContextVariable("__func__", arr_type, literal, VarDeclMods.STATIC)
         self.context.new_var("__func__", ctx_var)
         self.context.new_var("__FUNCTION__", ctx_var)
         self.implicit_ctx_vars.append(ctx_var)
@@ -72,5 +61,11 @@ class CurlyStmnt(BaseStmnt):
 
 from .get_stmnt import get_stmnt
 from ...PrettyRepr import get_pretty_repr
-from ..type.types import CompileContext, LocalScope
+from ..type.CompileContext import CompileContext
+from ..type.LocalScope import LocalScope
 from ...lexer.lexer import Token
+from ..expr.LiteralExpr import LiteralExpr
+from ..type.ContextVariable import ContextVariable
+from ..type.PrimitiveType import PrimitiveType, PrimitiveTypeId
+from ..type.QualType import QualType
+from ..type.VarDeclMods import VarDeclMods

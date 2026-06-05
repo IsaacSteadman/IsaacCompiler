@@ -1,7 +1,6 @@
 import re
 from typing import Dict, List, Optional, Tuple
 
-
 _ASM_GOTO_LABEL_RE = re.compile(r"%l(?:\[([A-Za-z_$][A-Za-z0-9_$]*)\]|([0-9]+))")
 
 
@@ -301,7 +300,9 @@ def compile_stmnt(
         default_lnk = None  # will point at the default segment's Linkage, if any
 
         # CMP opcode appropriate for the expression size.
-        cmp_opcode = None if sz_cls == 4 else (BC_CMP1, BC_CMP2, BC_CMP4, BC_CMP8)[sz_cls]
+        cmp_opcode = (
+            None if sz_cls == 4 else (BC_CMP1, BC_CMP2, BC_CMP4, BC_CMP8)[sz_cls]
+        )
 
         # --- Step 3: emit the compare chain ---
         for seg_idx, (seg_labels, _) in enumerate(stmnt.segments):
@@ -400,17 +401,15 @@ from ..parser.stmnt.SemiColonStmnt import SemiColonStmnt
 from ..parser.stmnt.StaticAssertStmnt import StaticAssertStmnt
 from ..parser.stmnt.SwitchStmnt import SwitchStmnt
 from ..parser.stmnt.WhileLoop import WhileLoop
-from ..parser.type.types import (
-    CompileContext,
-    ContextVariable,
-    DeclStmnt,
-    get_value_type,
-    size_of,
-    void_t,
-)
+from ..parser.type.BaseType import BaseType
+from ..parser.type.ContextVariable import ContextVariable
+from ..parser.stmnt.DeclStmnt import DeclStmnt
+from ..parser.type.CompileContext import CompileContext
+from ..parser.type.qual_atomic_type_util import get_value_type
+from ..parser.type.align_size_of import size_of
+from ..parser.type.PrimitiveType import void_t
 from ..parser.stmnt.helpers.SingleVarDecl import SingleVarDecl
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc, VarRefTosNamed
-
 
 _DEBUG_STMNT_TYPES = {
     StmntType.ASM,

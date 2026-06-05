@@ -36,5 +36,7 @@ class FnCallExpr(BaseExpr):
 from .resolve_overloaded_fn import resolve_overloaded_fn
 from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import TypeClass
-from ..type.types import CompileContext, QualType, get_value_type
+from ..type.CompileContext import CompileContext
+from ..type.QualType import QualType
+from ..type.qual_atomic_type_util import get_value_type
 from ...lexer.lexer import Token

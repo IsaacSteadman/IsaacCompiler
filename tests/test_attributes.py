@@ -2,7 +2,6 @@ import os
 import sys
 import unittest
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
@@ -13,10 +12,12 @@ from IsaacCompiler.code_gen.Compilation import Compilation
 from IsaacCompiler.code_gen.CompilerOptions import CompilerOptions
 from IsaacCompiler.code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
 from IsaacCompiler.code_gen.compile_stmnt import compile_stmnt
-from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import lib_utils_abi
+from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import (
+    lib_utils_abi,
+)
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
-from IsaacCompiler.parser.type.types import CompileContext
+from IsaacCompiler.parser.type.CompileContext import CompileContext
 
 
 def _parse_source(source, default_alignment=None):
@@ -111,7 +112,7 @@ class AttributeParserTests(unittest.TestCase):
     def test_decl_attributes_are_stored_on_decl_and_context_variable(self):
         global_ctx, stmnts = _parse_source(
             '__attribute__((deprecated("use_y"), noinline)) '
-            'int __attribute__((aligned(8), weak)) x;'
+            "int __attribute__((aligned(8), weak)) x;"
         )
 
         decl = stmnts[0].decl_lst[0]
@@ -159,7 +160,9 @@ class AttributeParserTests(unittest.TestCase):
             global_ctx.vars["cache"].section_name,
             ".data.cacheline_aligned",
         )
-        self.assertEqual(_get_attr(stmnts[0].decl_lst[0], "section").args, ['".init.text"'])
+        self.assertEqual(
+            _get_attr(stmnts[0].decl_lst[0], "section").args, ['".init.text"']
+        )
 
 
 if __name__ == "__main__":

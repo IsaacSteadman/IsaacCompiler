@@ -2,7 +2,6 @@ import os
 import sys
 import unittest
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
@@ -21,7 +20,7 @@ from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import 
 )
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
-from IsaacCompiler.parser.type.types import CompileContext
+from IsaacCompiler.parser.type.CompileContext import CompileContext
 
 
 def _compile_source(source):

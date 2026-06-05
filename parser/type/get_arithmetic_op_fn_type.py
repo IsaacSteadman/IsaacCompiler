@@ -5,5 +5,5 @@ def get_arithmetic_op_fn_type(typ: "BaseType", is_const_ref: bool = False):
     return QualType(QualType.QUAL_FN, typ, [arg_t, arg_t])
 
 
-from .types import QualType
+from .QualType import QualType
 from .BaseType import BaseType

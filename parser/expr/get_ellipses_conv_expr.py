@@ -1,17 +1,7 @@
-from .CastOpExpr import CastOpExpr, CastType
-from ..type.BaseType import TypeClass
-from ..type.types import (
-    QualType,
-    PrimitiveType,
-    PrimitiveTypeId,
-    INT_TYPE_CODES,
-    FLT_TYPE_CODES,
-    SIZE_SIGN_MAP,
-    get_base_prim_type,
-)
+from typing import Optional, Tuple
 
 
-def get_ellipses_conv_expr(expr):
+def get_ellipses_conv_expr(expr: "BaseExpr") -> Optional[Tuple["BaseExpr", int]]:
     """
     :param BaseExpr expr:
     :rtype: (BaseExpr, int)|None
@@ -45,3 +35,17 @@ def get_ellipses_conv_expr(expr):
     if to_type is not expr.t_anot:
         rtn = CastOpExpr(to_type, expr, CastType.IMPLICIT)
     return rtn, 6
+
+
+from ..type.QualType import QualType
+from ..type.PrimitiveType import (
+    PrimitiveType,
+    PrimitiveTypeId,
+    INT_TYPE_CODES,
+    FLT_TYPE_CODES,
+    SIZE_SIGN_MAP,
+)
+from ..type.qual_atomic_type_util import get_base_prim_type
+from .CastOpExpr import CastOpExpr, CastType
+from ..type.BaseType import TypeClass
+from .BaseExpr import BaseExpr

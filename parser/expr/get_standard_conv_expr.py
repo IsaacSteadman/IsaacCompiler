@@ -139,15 +139,17 @@ from .expr_constants import OVERLOAD_VERBOSE, OVERLOAD_BAN_ARR_VAL
 from .BaseExpr import BaseExpr
 from ..type.BaseType import BaseType, TypeClass
 from .CastOpExpr import CastOpExpr, CastType
-from ..type.types import (
-    get_tgt_ref_type,
-    compare_no_cvr,
-    QualType,
+from ..type.QualType import QualType
+from ..type.PrimitiveType import (
     PrimitiveType,
     PrimitiveTypeId,
     INT_TYPE_CODES,
     FLT_TYPE_CODES,
     is_prim_type_id,
+)
+from ..type.qual_atomic_type_util import (
+    get_tgt_ref_type,
+    compare_no_cvr,
     is_prim_or_ptr,
     get_base_prim_type,
 )

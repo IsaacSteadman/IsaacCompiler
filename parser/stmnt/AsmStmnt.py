@@ -50,13 +50,9 @@ class AsmStmnt(BaseStmnt):
                 stack.pop()
             entry_has_tokens = True
             c += 1
-        raise ParsingError(
-            tokens, c, "Expected ':' after asm goto %s" % section_name
-        )
+        raise ParsingError(tokens, c, "Expected ':' after asm goto %s" % section_name)
 
-    def _build_gnu_goto(
-        self, tokens: List["Token"], c: int, end: int
-    ) -> int:
+    def _build_gnu_goto(self, tokens: List["Token"], c: int, end: int) -> int:
         if c >= end or tokens[c].str != "(":
             raise ParsingError(tokens, c, "Expected '(' after asm goto")
         c += 1
@@ -87,12 +83,16 @@ class AsmStmnt(BaseStmnt):
         while c < end and tokens[c].str != ")":
             if expect_label:
                 if tokens[c].type_id != TokenType.NAME:
-                    raise ParsingError(tokens, c, "Expected C label in asm goto label list")
+                    raise ParsingError(
+                        tokens, c, "Expected C label in asm goto label list"
+                    )
                 self.goto_labels.append(tokens[c].str)
                 expect_label = False
             else:
                 if tokens[c].str != ",":
-                    raise ParsingError(tokens, c, "Expected ',' between asm goto labels")
+                    raise ParsingError(
+                        tokens, c, "Expected ',' between asm goto labels"
+                    )
                 expect_label = True
             c += 1
         if not self.goto_labels:
@@ -125,7 +125,9 @@ class AsmStmnt(BaseStmnt):
             return self._build_gnu_goto(tokens, c, end)
         if self.qualifiers:
             raise ParsingError(
-                tokens, c, "GNU asm qualifiers are currently supported only with asm goto"
+                tokens,
+                c,
+                "GNU asm qualifiers are currently supported only with asm goto",
             )
         if tokens[c].str == "(":
             self.condition = {}
@@ -168,4 +170,4 @@ class AsmStmnt(BaseStmnt):
 from ...lexer.lexer import Token, TokenType
 from ..expr.LiteralExpr import LiteralExpr
 from ..ParsingError import ParsingError
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext

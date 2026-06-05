@@ -34,5 +34,5 @@ from ..expr.get_expr import get_expr
 from ..expr.BaseExpr import BaseExpr
 from ..get_user_str_parse_pos import get_user_str_parse_pos
 from ...PrettyRepr import get_pretty_repr
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext
 from ...lexer.lexer import Token

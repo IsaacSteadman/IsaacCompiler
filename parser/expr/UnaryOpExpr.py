@@ -12,17 +12,13 @@ from ..type.get_uni_op_fn_type import (
     get_uni_op_fn_type_v__v,
 )
 from ..type.get_user_str_from_type import get_user_str_from_type
-from ..type.types import (
-    CompileContext,
-    QualType,
+from ...lexer.lexer import Token
+from ..type.PrimitiveType import (
     bool_t,
-    get_tgt_ref_type,
     int_types,
     prim_types,
     signed_num_types,
-    size_of,
 )
-from ...lexer.lexer import Token
 
 
 class UnaryExprSubType(Enum):
@@ -170,3 +166,9 @@ class UnaryOpExpr(BaseExpr):
             + get_pretty_repr(self.a, pretty_repr_ctx)
             + [")"]
         )
+
+
+from ..type.CompileContext import CompileContext
+from ..type.align_size_of import size_of
+from ..type.QualType import QualType
+from ..type.qual_atomic_type_util import get_tgt_ref_type

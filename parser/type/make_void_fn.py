@@ -6,4 +6,5 @@ def make_void_fn(arg_types: List["BaseType"]):
 
 
 from .BaseType import BaseType
-from .types import QualType, void_t
+from .QualType import QualType
+from .PrimitiveType import void_t

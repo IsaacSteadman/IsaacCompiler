@@ -81,14 +81,14 @@ class SpecialDotExpr(BaseExpr):
 from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import TypeClass
 from ..type.get_user_str_from_type import get_user_str_from_type
-from ..type.types import (
-    add_volatile_qualifier,
-    ClassType,
-    CompileContext,
-    is_volatile_type,
-    QualType,
-    StructType,
-    UnionType,
+from ..type.qual_atomic_type_util import (
     get_tgt_ref_type,
+    add_volatile_qualifier,
+    is_volatile_type,
 )
+from ..type.ClassType import ClassType
+from ..type.StructType import StructType
+from ..type.UnionType import UnionType
+from ..type.CompileContext import CompileContext
+from ..type.QualType import QualType
 from ...lexer.lexer import Token

@@ -127,4 +127,6 @@ from .get_implicit_conv_expr import get_implicit_conv_expr
 from ..type.BaseType import TypeClass
 from ..type.get_actual_type import get_actual_type
 from ..type.is_default import is_default
-from ..type.types import QualType, ContextVariable, OverloadedCtxVar
+from ..type.QualType import QualType
+from ..type.ContextVariable import ContextVariable
+from ..type.OverloadedCtxVar import OverloadedCtxVar

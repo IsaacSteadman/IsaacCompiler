@@ -75,7 +75,7 @@ from ..expr.BaseExpr import BaseExpr
 from ..expr.LiteralExpr import LiteralExpr
 from ..expr.get_bool_expr import get_bool_expr
 from ..expr.get_expr import get_expr
-from ..stmnt.BaseStmnt import BaseStmnt, StmntType
 from ..stmnt.get_stmnt import get_stmnt
-from ..type.types import CompileContext, LocalScope
+from ..type.CompileContext import CompileContext
+from ..type.LocalScope import LocalScope
 from ...lexer.lexer import Token

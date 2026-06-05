@@ -18,7 +18,7 @@ from .BaseStmnt import BaseStmnt, StmntType
 
 if TYPE_CHECKING:
     from ...lexer.lexer import Token
-    from ..type.types import CompileContext
+    from ..type.CompileContext import CompileContext
 
 
 class StaticAssertStmnt(BaseStmnt):
@@ -166,7 +166,9 @@ def _find_call_paren_end(tokens: List["Token"], c: int, end: int) -> int:
     raise ValueError("expected ')' to terminate builtin call")
 
 
-def _find_top_level_call_comma(tokens: List["Token"], c: int, end: int) -> Optional[int]:
+def _find_top_level_call_comma(
+    tokens: List["Token"], c: int, end: int
+) -> Optional[int]:
     lvl = 1
     while c < end:
         if tokens[c].str in ("(", "[", "{"):
@@ -441,8 +443,12 @@ def _eval_tokens(
             comma_pos = _find_top_level_call_comma(tokens, start + 2, paren_end)
             if comma_pos is None:
                 raise ValueError("__builtin_types_compatible_p expects two arguments")
-            lhs_type = _parse_types_compatible_arg(tokens, start + 2, comma_pos, context)
-            rhs_type = _parse_types_compatible_arg(tokens, comma_pos + 1, paren_end, context)
+            lhs_type = _parse_types_compatible_arg(
+                tokens, start + 2, comma_pos, context
+            )
+            rhs_type = _parse_types_compatible_arg(
+                tokens, comma_pos + 1, paren_end, context
+            )
             return 1 if compare_no_cvr(lhs_type, rhs_type) else 0
 
     # --- _Generic(controlling_expr, type: expr, ..., default: expr) ---
@@ -570,16 +576,12 @@ def _eval_tokens(
 # ---------------------------------------------------------------------------
 
 from ..ParsingError import ParsingError
-from ..type.types import (
-    ClassType,
-    CompileContext,
-    QualType,
-    StructType,
-    UnionType,
-    compare_no_cvr,
-    get_value_type,
-    proc_typed_decl,
-    size_of,
-)
+from ..type.ClassType import ClassType
+from ..type.UnionType import UnionType
+from ..type.StructType import StructType
+from ..type.QualType import QualType
+from ..type.qual_atomic_type_util import compare_no_cvr, get_value_type
+from ..type.proc_typed_decl import proc_typed_decl
+from ..type.align_size_of import size_of
 from ...lexer.lexer import Token, TokenType
 from ..expr.LiteralExpr import LiteralExpr

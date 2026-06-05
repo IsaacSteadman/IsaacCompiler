@@ -17,24 +17,12 @@ from .code_gen.stackvm_binutils.linker import (
     load_linker_script,
 )
 from .code_gen.stackvm_binutils.object_file import write_sbo
-
-# Load-bearing import order: parser.type.types must be imported before the
-# parser.stmnt / parser.expr modules.  Those expr/stmnt modules (LiteralExpr,
-# CurlyExpr, ...) form an import cycle with type.types that only resolves when
-# type.types is the entry point (it binds its own names before pulling the expr
-# modules in at the bottom of the file).  Previously this ordering was provided
-# implicitly by importing compile_api here; compile_api is now imported lazily
-# (so the run/link/addr2line subcommands and gcc-mode -E / -print-file-name do
-# not compile the bundled runtime), so the ordering is made explicit instead.
-from .parser.type.types import (
-    CompileContext,
-    QualType,
-    PrimitiveType,
-    TypeDefCtxMember,
-)
+from .parser.type.CompileContext import CompileContext
+from .parser.type.QualType import QualType
+from .parser.type.PrimitiveType import PrimitiveType
+from .parser.type.TypeDefCtxMember import TypeDefCtxMember
 from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
-
 
 _SVC_MAGIC = (
     b"\xf7SVE\0\0\0\0"  # [S]tack[V]m [E]xecutable magic number for version 0000

@@ -21,4 +21,4 @@ class ContinueStmnt(BaseStmnt):
 
 from ..ParsingError import ParsingError
 from ...lexer.lexer import Token
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext

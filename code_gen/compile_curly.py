@@ -40,4 +40,4 @@ from .LocalCompileData import LocalCompileData
 from .compile_stmnt import compile_stmnt
 from ..parser.type.helpers.VarRef import VarRefTosNamed
 from ..parser.stmnt.CurlyStmnt import CurlyStmnt
-from ..parser.type.types import CompileContext
+from ..parser.type.CompileContext import CompileContext

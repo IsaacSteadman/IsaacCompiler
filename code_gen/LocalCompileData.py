@@ -1,8 +1,8 @@
 from typing import Dict, List, Optional, Set, TYPE_CHECKING, Tuple, TypeVar, Union
 
+from ..parser.type.align_util import align_up
 
-def _align_up(x: int, align: int) -> int:
-    return (x + align - 1) & ~(align - 1)
+_T = TypeVar("_T")
 
 
 class LocalCompileData(object):
@@ -103,9 +103,9 @@ class LocalCompileData(object):
         align = ctx_var.effective_alignment()
         if align > 1:
             if bp_off_pre_inc:
-                bp_off = _align_up(bp_off + sz_var, align) - sz_var
+                bp_off = align_up(bp_off + sz_var, align) - sz_var
             else:
-                bp_off = _align_up(bp_off, align)
+                bp_off = align_up(bp_off, align)
         lnk = (
             LocalRef.from_bp_off_pre_inc(bp_off, sz_var)
             if bp_off_pre_inc
@@ -133,17 +133,13 @@ class LocalCompileData(object):
         self.local_links[k] = len(self.vars)
         self.vars.append(v)
 
-    def strict_get(
-        self, k: str, default: TypeVar("T") = None
-    ) -> Union["LocalRef", TypeVar("T")]:
+    def strict_get(self, k: str, default: _T = None) -> Union["LocalRef", _T]:
         var_index = self.local_links.get(k, None)
         if var_index is None:
             return default
         return self.vars[var_index][1]
 
-    def get(
-        self, k: str, default: TypeVar("T") = None
-    ) -> Union["LocalRef", TypeVar("T")]:
+    def get(self, k: str, default: _T = None) -> Union["LocalRef", _T]:
         lnk = self.strict_get(k, None)
         if lnk is None:
             if self.parent is None:
@@ -152,15 +148,14 @@ class LocalCompileData(object):
         return lnk
 
 
-if TYPE_CHECKING:
-    from .BaseCmplObj import BaseCmplObj
-    from .BaseLink import BaseLink
-    from ..parser.type.BaseType import BaseType
-    from ..parser.type.types import ContextVariable
-
+from .BaseCmplObj import BaseCmplObj
+from .BaseLink import BaseLink
+from ..parser.type.BaseType import BaseType
+from ..parser.type.ContextVariable import ContextVariable
 from .Linkage import Linkage
 from .LocalRef import LocalRef
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import BC_RST_SP1
-from ..parser.type.types import CompileContext, size_of
+from ..parser.type.CompileContext import CompileContext
+from ..parser.type.align_size_of import size_of
 from ..parser.type.helpers.VarRef import VarRefTosNamed

@@ -2,7 +2,6 @@ import os
 import sys
 import unittest
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
@@ -16,17 +15,17 @@ from IsaacCompiler.code_gen.CompilerOptions import CompilerOptions
 from IsaacCompiler.code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
 from IsaacCompiler.code_gen.compile_stmnt import compile_stmnt
 from IsaacCompiler.code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
-from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import lib_utils_abi
+from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import (
+    lib_utils_abi,
+)
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
-from IsaacCompiler.parser.type.types import (
-    CompileContext,
-    PrimitiveType,
-    QualType,
-    StructType,
-    TypeDefCtxMember,
-    size_of,
-)
+from IsaacCompiler.parser.type.CompileContext import CompileContext
+from IsaacCompiler.parser.type.PrimitiveType import PrimitiveType
+from IsaacCompiler.parser.type.QualType import QualType
+from IsaacCompiler.parser.type.StructType import StructType
+from IsaacCompiler.parser.type.TypeDefCtxMember import TypeDefCtxMember
+from IsaacCompiler.parser.type.align_size_of import size_of
 
 
 def _flatify_dep_desc(dep_dct, start_key):
@@ -156,7 +155,9 @@ class GlobalStaticInitTests(unittest.TestCase):
         vm = _run_program(cmpl_obj)
         result_addr = _get_global_addr(global_ctx, cmpl_obj, "result")
         self.assertEqual(
-            int.from_bytes(vm.memory[result_addr : result_addr + 4], "little", signed=True),
+            int.from_bytes(
+                vm.memory[result_addr : result_addr + 4], "little", signed=True
+            ),
             3,
         )
 
@@ -201,7 +202,7 @@ class GlobalStaticInitTests(unittest.TestCase):
     def test_string_initializers_are_serialized(self):
         global_ctx, cmpl_obj = _compile_source(
             'static const char msg[] = "hi"; const char *ptr = "hi"; '
-            'int main(int argc, char **argv) { return 0; }\n',
+            "int main(int argc, char **argv) { return 0; }\n",
             remove_unused_deps=False,
         )
         msg_addr = _get_global_addr(global_ctx, cmpl_obj, "msg")
@@ -240,15 +241,15 @@ class GlobalStaticInitTests(unittest.TestCase):
             "struct NaturalLayout { "
             "    unsigned char a; unsigned int b; "
             "}; "
-            "_Static_assert(sizeof(struct NaturalLayout) == 8, \"natural padded size\"); "
+            '_Static_assert(sizeof(struct NaturalLayout) == 8, "natural padded size"); '
             "struct __attribute__((packed)) KeywordPacked { "
             "    unsigned char a; unsigned int b; "
             "}; "
-            "_Static_assert(sizeof(struct KeywordPacked) == 5, \"keyword packed size\"); "
+            '_Static_assert(sizeof(struct KeywordPacked) == 5, "keyword packed size"); '
             "__attribute__((packed)) struct LeadingPacked { "
             "    unsigned char a; unsigned int b; unsigned char c; "
             "} p = { 1, 0x11223344, 2 }; "
-            "_Static_assert(sizeof(struct LeadingPacked) == 6, \"leading packed size\"); "
+            '_Static_assert(sizeof(struct LeadingPacked) == 6, "leading packed size"); '
             "int main(int argc, char **argv) { return 0; }\n",
             remove_unused_deps=False,
             default_alignment=8,
@@ -262,7 +263,7 @@ class GlobalStaticInitTests(unittest.TestCase):
     def test_no_default_alignment_keeps_regular_struct_fields_adjacent(self):
         global_ctx, cmpl_obj = _compile_source(
             "struct Flat { unsigned char a; unsigned int b; unsigned char c; }; "
-            "_Static_assert(sizeof(struct Flat) == 6, \"no default padding\"); "
+            '_Static_assert(sizeof(struct Flat) == 6, "no default padding"); '
             "struct Flat g = { 1, 0x11223344, 2 }; "
             "int main(int argc, char **argv) { return 0; }\n",
             remove_unused_deps=False,
@@ -276,9 +277,9 @@ class GlobalStaticInitTests(unittest.TestCase):
     def test_aligned_structs_affect_embedding_and_tail_padding(self):
         global_ctx, cmpl_obj = _compile_source(
             "struct Inner { unsigned char c; } __attribute__((aligned(8))); "
-            "_Static_assert(sizeof(struct Inner) == 8, \"inner aligned size\"); "
+            '_Static_assert(sizeof(struct Inner) == 8, "inner aligned size"); '
             "struct Outer { unsigned char lead; struct Inner inner; unsigned char tail; }; "
-            "_Static_assert(sizeof(struct Outer) == 24, \"outer aligned size\"); "
+            '_Static_assert(sizeof(struct Outer) == 24, "outer aligned size"); '
             "struct Outer g; "
             "int main(int argc, char **argv) { "
             "    g.lead = 0xAA; "
@@ -322,7 +323,7 @@ class GlobalStaticInitTests(unittest.TestCase):
             "    struct { unsigned int lo; unsigned int hi; }; "
             "    unsigned long full; "
             "} u64_pair_t; "
-            "_Static_assert(sizeof(u64_pair_t) == 8, \"union size\"); "
+            '_Static_assert(sizeof(u64_pair_t) == 8, "union size"); '
             "u64_pair_t x; "
             "int main(int argc, char **argv) { "
             "    x.full = 0; "
@@ -348,7 +349,7 @@ class GlobalStaticInitTests(unittest.TestCase):
             "        unsigned long full; "
             "    }; "
             "}; "
-            "_Static_assert(sizeof(struct Outer) == 9, \"outer size\"); "
+            '_Static_assert(sizeof(struct Outer) == 9, "outer size"); '
             "struct Outer x; "
             "int main(int argc, char **argv) { "
             "    x.tag = 0xAA; "
@@ -367,7 +368,7 @@ class GlobalStaticInitTests(unittest.TestCase):
     def test_flexible_array_member_uses_tail_offset_and_zero_size(self):
         global_ctx, _cmpl_obj = _compile_source(
             "struct packet { unsigned int length; unsigned char data[]; }; "
-            "_Static_assert(sizeof(struct packet) == 4, \"packet size\"); "
+            '_Static_assert(sizeof(struct packet) == 4, "packet size"); '
             "int main(int argc, char **argv) { return 0; }\n",
             remove_unused_deps=False,
             default_alignment=8,
@@ -382,7 +383,7 @@ class GlobalStaticInitTests(unittest.TestCase):
     def test_flexible_array_member_honors_padding_before_tail(self):
         global_ctx, _cmpl_obj = _compile_source(
             "struct padded_tail { unsigned char tag; unsigned int data[]; }; "
-            "_Static_assert(sizeof(struct padded_tail) == 4, \"padded size\"); "
+            '_Static_assert(sizeof(struct padded_tail) == 4, "padded size"); '
             "int main(int argc, char **argv) { return 0; }\n",
             remove_unused_deps=False,
             default_alignment=8,
@@ -457,11 +458,15 @@ class GlobalStaticInitTests(unittest.TestCase):
         calls_addr = _get_global_addr(global_ctx, cmpl_obj, "calls")
         result_addr = _get_global_addr(global_ctx, cmpl_obj, "result")
         self.assertEqual(
-            int.from_bytes(vm.memory[calls_addr : calls_addr + 4], "little", signed=True),
+            int.from_bytes(
+                vm.memory[calls_addr : calls_addr + 4], "little", signed=True
+            ),
             1,
         )
         self.assertEqual(
-            int.from_bytes(vm.memory[result_addr : result_addr + 4], "little", signed=True),
+            int.from_bytes(
+                vm.memory[result_addr : result_addr + 4], "little", signed=True
+            ),
             20,
         )
 

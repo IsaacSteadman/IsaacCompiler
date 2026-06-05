@@ -43,5 +43,5 @@ class NamespaceStmnt(BaseStmnt):
 
 from ..ParsingError import ParsingError
 from .get_stmnt import get_stmnt
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext
 from ...lexer.lexer import Token, TokenType

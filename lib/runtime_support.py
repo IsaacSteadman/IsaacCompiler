@@ -8,7 +8,7 @@ from ..code_gen.compile_stmnt import compile_stmnt
 from ..code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import get_lib_utils_abi
 from ..lexer.lexer import get_list_tokens
 from ..parser.stmnt.get_stmnt import get_stmnt
-from ..parser.type.types import CompileContext
+from ..parser.type.CompileContext import CompileContext
 
 
 def _compile_support_file(path: str, mode: NameManglingMode) -> Compilation:

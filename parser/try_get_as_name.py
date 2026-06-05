@@ -23,4 +23,4 @@ def try_get_as_name(
 
 from ..lexer.lexer import Token, TokenType
 from .constants import KEYWORDS
-from .type.types import CompileContext
+from .type.CompileContext import CompileContext

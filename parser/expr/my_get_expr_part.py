@@ -1,4 +1,4 @@
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, List, NamedTuple, Tuple
 from ..util import try_catch_wrapper0
 
 """def GetTypeName(tokens, c, end, context, Strict=False):
@@ -150,9 +150,7 @@ def my_get_expr_part(
         expr, c = _build_builtin_expect_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
     elif (
-        s == "__builtin_types_compatible_p"
-        and c + 1 < end
-        and tokens[c + 1].str == "("
+        s == "__builtin_types_compatible_p" and c + 1 < end and tokens[c + 1].str == "("
     ):
         expr, c = _build_builtin_types_compatible_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
@@ -217,25 +215,9 @@ from .expr_part.InlineIfOpPart import InlineIfOpPart
 from .expr_part.ParentOpPart import ParenthOpPart
 from .expr_part.SParenthOpPart import SParenthOpPart
 from .expr_part.SimpleOpPart import SimpleOpPart
-from ..type.types import (
-    ClassType,
-    CompileContext,
-    ContextVariable,
-    PrimitiveType,
-    IdentifiedQualType,
-    QualType,
-    StructType,
-    UnionType,
-    bool_t,
-    compare_no_cvr,
-    get_value_type,
-    is_atomic_type,
-    proc_typed_decl,
-    size_l_t,
-    void_t,
-)
 from ...lexer.lexer import BreakSymClass, OperatorClass, Token, TokenType
-
+from ..type.PrimitiveType import PrimitiveType, bool_t, size_l_t, void_t
+from ..type.QualType import QualType
 
 _builtin_result_int_t = PrimitiveType.from_str_name(["signed", "int"])
 _builtin_arg_u16_t = PrimitiveType.from_str_name(["unsigned", "short"])
@@ -432,7 +414,9 @@ def _consume_abstract_decl_suffixes(tokens, c, end, context, typ):
         if tokens[c].str != "]":
             expr, c = get_expr(tokens, c, "]", end, context)
             if not isinstance(expr, LiteralExpr) or expr.t_lit != LiteralExpr.LIT_INT:
-                raise ParsingError(tokens, c, "Expected literal integer for bounds of array")
+                raise ParsingError(
+                    tokens, c, "Expected literal integer for bounds of array"
+                )
             ext_inf = expr.l_val
         if tokens[c].str != "]":
             raise ParsingError(tokens, c, "Expected closing ']' in abstract declarator")
@@ -568,8 +552,7 @@ def _parse_atomic_order_expr(name, arg_name, expr, tokens, c):
         raise ParsingError(
             tokens,
             c,
-            "%s %s must be an integer constant memory_order"
-            % (name, arg_name),
+            "%s %s must be an integer constant memory_order" % (name, arg_name),
         )
     order = int(expr.l_val)
     if order < 0 or order > 3:
@@ -588,7 +571,9 @@ def _require_atomic_object_ptr(name, tokens, c, expr, arg_name):
         raise ParsingError(tokens, c, "%s %s must be a pointer" % (name, arg_name))
     if not is_atomic_type(ptr_type.tgt_type):
         raise ParsingError(
-            tokens, c, "%s %s must point to an _Atomic-qualified object" % (name, arg_name)
+            tokens,
+            c,
+            "%s %s must point to an _Atomic-qualified object" % (name, arg_name),
         )
     return ptr_type, get_value_type(ptr_type.tgt_type)
 
@@ -602,8 +587,7 @@ def _require_expected_ptr(name, tokens, c, expr, value_type):
         raise ParsingError(
             tokens,
             c,
-            "%s expected argument must point to %s"
-            % (name, value_type.to_user_str()),
+            "%s expected argument must point to %s" % (name, value_type.to_user_str()),
         )
     return ptr_type
 
@@ -715,7 +699,9 @@ def _build_builtin_types_compatible_expr(tokens, c, end, context):
     paren_end = _find_call_paren_end(tokens, c, end)
     comma_pos = _find_top_level_call_comma(tokens, c, paren_end)
     if comma_pos is None:
-        raise ParsingError(tokens, c, "__builtin_types_compatible_p expects two arguments")
+        raise ParsingError(
+            tokens, c, "__builtin_types_compatible_p expects two arguments"
+        )
     lhs_type = _parse_builtin_type_arg(tokens, c, comma_pos, context, "first argument")
     rhs_type = _parse_builtin_type_arg(
         tokens, comma_pos + 1, paren_end, context, "second argument"
@@ -832,7 +818,9 @@ def _build_generic_expr(tokens, c, end, context):
             raise ParsingError(tokens, c, "Expected ':' in _Generic association")
         expr_start = colon_pos + 1
         if expr_start >= assoc_end:
-            raise ParsingError(tokens, expr_start, "Expected _Generic result expression")
+            raise ParsingError(
+                tokens, expr_start, "Expected _Generic result expression"
+            )
 
         if tokens[c].str == "default" and c + 1 == colon_pos:
             if default_range is not None:
@@ -859,7 +847,9 @@ def _build_generic_expr(tokens, c, end, context):
         )
     expr, expr_c = get_expr(tokens, branch_range[0], None, branch_range[1], context)
     if expr is None:
-        raise ParsingError(tokens, branch_range[0], "Expected _Generic result expression")
+        raise ParsingError(
+            tokens, branch_range[0], "Expected _Generic result expression"
+        )
     if expr_c != branch_range[1]:
         raise ParsingError(tokens, expr_c, "Unexpected tokens in _Generic result")
     return expr, paren_end + 1
@@ -876,7 +866,9 @@ def _build_builtin_offsetof_expr(tokens, c, end, context):
             tokens, type_c, comma_pos, context, type_decl.typ
         )
     if type_decl is None or type_c != comma_pos:
-        raise ParsingError(tokens, c, "__builtin_offsetof first argument must be a type")
+        raise ParsingError(
+            tokens, c, "__builtin_offsetof first argument must be a type"
+        )
     member_c = comma_pos + 1
     if member_c >= paren_end or tokens[member_c].type_id != TokenType.NAME:
         raise ParsingError(
@@ -924,7 +916,9 @@ def _build_stackvm_percpu_addr_expr(tokens, c, end, context):
         raise ParsingError(tokens, c, "%s argument must be a pointer" % name)
     converted = get_implicit_conv_expr(expr, _builtin_void_ptr_t)
     if converted is None:
-        raise ParsingError(tokens, c, "%s argument must be convertible to void *" % name)
+        raise ParsingError(
+            tokens, c, "%s argument must be convertible to void *" % name
+        )
     return PerCpuAddrExpr(converted[0], _builtin_void_ptr_t), paren_end + 1
 
 
@@ -965,3 +959,14 @@ def _build_va_intrinsic(name, tokens, c, end, context):
         return rtn
     else:
         raise ValueError("Unknown va intrinsic: %s" % name)
+
+
+from ..type.ClassType import ClassType
+from ..type.CompileContext import CompileContext
+from ..type.ContextVariable import ContextVariable
+from ..type.IdentifiedQualType import IdentifiedQualType
+from ..type.StructType import StructType
+from ..type.UnionType import UnionType
+from ..type.qual_atomic_type_util import compare_no_cvr, get_value_type, is_atomic_type
+from ..type.proc_typed_decl import proc_typed_decl
+from ..type.BaseType import BaseType

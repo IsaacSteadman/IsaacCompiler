@@ -7,4 +7,4 @@ def get_asgn_fn_type(typ: "BaseType", is_const_ref: bool = False) -> "QualType":
 
 
 from .BaseType import BaseType
-from .types import QualType
+from .QualType import QualType

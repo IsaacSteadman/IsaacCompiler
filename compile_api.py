@@ -22,12 +22,10 @@ from .lexer.lexer import get_list_tokens
 from .lib.runtime_support import get_runtime_extern_deps
 from .parser.stmnt.BaseStmnt import BaseStmnt
 from .parser.stmnt.get_stmnt import get_stmnt
-from .parser.type.types import (
-    CompileContext,
-    PrimitiveType,
-    QualType,
-    TypeDefCtxMember,
-)
+from .parser.type.CompileContext import CompileContext
+from .parser.type.PrimitiveType import PrimitiveType
+from .parser.type.QualType import QualType
+from .parser.type.TypeDefCtxMember import TypeDefCtxMember
 
 
 def flatify_dep_desc(dep_dct: Dict[str, List[str]], start_k: str) -> Set[str]:
@@ -131,9 +129,7 @@ def build_compilation(
     # Register built-in type alias: typedef unsigned char *va_list
     va_list_base = PrimitiveType.from_str_name(["unsigned", "char"])
     va_list_t = QualType(QualType.QUAL_PTR, va_list_base)
-    global_ctx.new_type(
-        "va_list", TypeDefCtxMember("va_list", global_ctx, va_list_t)
-    )
+    global_ctx.new_type("va_list", TypeDefCtxMember("va_list", global_ctx, va_list_t))
 
     runtime_extern_deps = (
         get_runtime_extern_deps(name_mangling_mode) if use_runtime_deps else None

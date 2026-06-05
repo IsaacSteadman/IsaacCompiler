@@ -49,5 +49,6 @@ class StmntExpr(BaseExpr):
 from ...PrettyRepr import get_pretty_repr
 from ..stmnt.CurlyStmnt import CurlyStmnt
 from ..stmnt.SemiColonStmnt import SemiColonStmnt
-from ..type.types import CompileContext, void_t
+from ..type.CompileContext import CompileContext
+from ..type.PrimitiveType import void_t
 from ...lexer.lexer import Token

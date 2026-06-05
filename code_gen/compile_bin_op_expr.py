@@ -423,18 +423,20 @@ from ..parser.expr.NameRefExpr import NameRefExpr
 from ..parser.expr.OperatorType import OperatorType
 from ..parser.type.BaseType import BaseType
 from ..parser.type.get_user_str_from_type import get_user_str_from_type
-from ..parser.type.types import (
-    CompileContext,
-    ContextVariable,
-    FLT_TYPE_CODES,
+from ..parser.type.CompileContext import CompileContext
+from ..parser.type.ContextVariable import ContextVariable
+from ..parser.type.PrimitiveType import (
     PrimitiveType,
     PrimitiveTypeId,
-    QualType,
+    FLT_TYPE_CODES,
+    void_t,
+    prim_types,
+)
+from ..parser.type.QualType import QualType
+from ..parser.type.qual_atomic_type_util import (
     compare_no_cvr,
     get_tgt_ref_type,
     is_atomic_storage_type,
     is_volatile_storage_type,
-    prim_types,
-    size_of,
-    void_t,
 )
+from ..parser.type.align_size_of import size_of

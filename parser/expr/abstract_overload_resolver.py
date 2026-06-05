@@ -102,7 +102,7 @@ def abstract_overload_resolver(
 from .BaseExpr import BaseExpr
 from .expr_constants import OVERLOAD_VERBOSE
 from ..type.BaseType import BaseType, TypeClass
-from ..type.types import QualType
+from ..type.QualType import QualType
 from .get_ellipses_conv_expr import get_ellipses_conv_expr
 from .get_implicit_conv_expr import get_implicit_conv_expr
 from ..type.get_actual_type import get_actual_type

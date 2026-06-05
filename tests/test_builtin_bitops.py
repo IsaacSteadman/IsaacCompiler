@@ -2,7 +2,6 @@ import os
 import sys
 import unittest
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
@@ -19,12 +18,10 @@ from IsaacCompiler.code_gen.stackvm_binutils.emit_load_i_const import emit_load_
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.lib.runtime_support import runtime_extern_deps
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
-from IsaacCompiler.parser.type.types import (
-    CompileContext,
-    PrimitiveType,
-    QualType,
-    TypeDefCtxMember,
-)
+from IsaacCompiler.parser.type.CompileContext import CompileContext
+from IsaacCompiler.parser.type.PrimitiveType import PrimitiveType
+from IsaacCompiler.parser.type.QualType import QualType
+from IsaacCompiler.parser.type.TypeDefCtxMember import TypeDefCtxMember
 
 
 def _flatify_dep_desc(dep_dct, start_key):
@@ -147,10 +144,16 @@ class BuiltinBitOpsTests(unittest.TestCase):
         )
 
         vm = _run_program(cmpl_obj)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "clz_zero", 4, True), 32)
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "clz_zero", 4, True), 32
+        )
         self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "clz_one", 4, True), 31)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "clzl_one", 4, True), 63)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "ctz_zero", 4, True), 32)
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "clzl_one", 4, True), 63
+        )
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "ctz_zero", 4, True), 32
+        )
         self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "ctz_val", 4, True), 6)
         self.assertEqual(
             _read_global(vm, global_ctx, cmpl_obj, "popcnt_val", 4, True), 9
@@ -165,11 +168,15 @@ class BuiltinBitOpsTests(unittest.TestCase):
         )
         self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "ffs_zero", 4, True), 0)
         self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "ffs_val", 4, True), 4)
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "clzll_one", 4, True), 63)
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "clzll_one", 4, True), 63
+        )
         self.assertEqual(
             _read_global(vm, global_ctx, cmpl_obj, "popcntll_val", 4, True), 8
         )
-        self.assertEqual(_read_global(vm, global_ctx, cmpl_obj, "ffsl_val", 4, True), 13)
+        self.assertEqual(
+            _read_global(vm, global_ctx, cmpl_obj, "ffsl_val", 4, True), 13
+        )
 
     def test_helper_library_symbols_are_linked_by_default(self):
         global_ctx, cmpl_obj = _compile_source(
@@ -198,7 +205,9 @@ class BuiltinBitOpsTests(unittest.TestCase):
 
         flags_addr = _get_global_addr(global_ctx, cmpl_obj, "flags")
         self.assertEqual(
-            int.from_bytes(cmpl_obj.memory[flags_addr : flags_addr + 4], "little", signed=True),
+            int.from_bytes(
+                cmpl_obj.memory[flags_addr : flags_addr + 4], "little", signed=True
+            ),
             7,
         )
 

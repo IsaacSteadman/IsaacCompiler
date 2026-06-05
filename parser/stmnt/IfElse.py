@@ -57,7 +57,7 @@ class IfElse(BaseStmnt):
 
 
 from ...PrettyRepr import get_pretty_repr
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext
 from ..expr.BaseExpr import BaseExpr
 from ...lexer.lexer import Token, TokenType
 from ..ParsingError import ParsingError

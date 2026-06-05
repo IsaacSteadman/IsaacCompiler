@@ -134,6 +134,7 @@ from ..ParsingError import ParsingError
 from ..expr.BaseExpr import BaseExpr
 from ..expr.get_expr import get_expr
 from ..stmnt.get_stmnt import get_stmnt
-from ..type.types import CompileContext, LocalScope
+from ..type.CompileContext import CompileContext
+from ..type.LocalScope import LocalScope
 from ...lexer.lexer import Token, TokenType
 from .StaticAssertStmnt import _try_eval_const

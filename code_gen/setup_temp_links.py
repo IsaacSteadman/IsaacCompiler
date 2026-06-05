@@ -1,4 +1,5 @@
 from typing import List, Optional, Tuple
+from ..parser.type.align_util import align_up
 
 
 def setup_temp_links(
@@ -24,7 +25,7 @@ def setup_temp_links(
         sz_var = size_of(expr.temps[c])
         align = align_of(expr.temps[c])
         if align > 1:
-            bp_off = _align_up(bp_off + sz_var, align) - sz_var
+            bp_off = align_up(bp_off + sz_var, align) - sz_var
         temp_links[c] = (
             expr.temps[c],
             LocalRef.from_bp_off_pre_inc(bp_off, sz_var),
@@ -48,8 +49,5 @@ from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import BC_ADD_SP1
 from ..parser.expr.BaseExpr import BaseExpr
 from ..parser.type.BaseType import BaseType
-from ..parser.type.types import CompileContext, OPT_CODE_GEN, align_of, size_of
-
-
-def _align_up(x: int, align: int) -> int:
-    return (x + align - 1) & ~(align - 1)
+from ..parser.type.align_size_of import align_of, size_of
+from ..parser.type.CompileContext import CompileContext, OPT_CODE_GEN

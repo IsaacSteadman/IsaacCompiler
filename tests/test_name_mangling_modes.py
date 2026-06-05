@@ -2,7 +2,6 @@ import os
 import sys
 import unittest
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
@@ -23,7 +22,7 @@ from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import 
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.lib.runtime_support import get_runtime_extern_deps
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
-from IsaacCompiler.parser.type.types import CompileContext
+from IsaacCompiler.parser.type.CompileContext import CompileContext
 
 
 def _flatify_dep_desc(dep_dct, start_key):
@@ -168,11 +167,19 @@ class NameManglingModeTests(unittest.TestCase):
                     global_ctx.vars["bit_count"].get_link_name()
                 ).src
 
-                self.assertEqual(bytes(vm.memory[filled_addr : filled_addr + 4]), b"xxx\0")
-                self.assertEqual(bytes(vm.memory[direct_addr : direct_addr + 3]), b"yy\0")
-                self.assertEqual(bytes(vm.memory[copied_addr : copied_addr + 4]), b"abc\0")
                 self.assertEqual(
-                    int.from_bytes(vm.memory[copied_len_addr : copied_len_addr + 8], "little"),
+                    bytes(vm.memory[filled_addr : filled_addr + 4]), b"xxx\0"
+                )
+                self.assertEqual(
+                    bytes(vm.memory[direct_addr : direct_addr + 3]), b"yy\0"
+                )
+                self.assertEqual(
+                    bytes(vm.memory[copied_addr : copied_addr + 4]), b"abc\0"
+                )
+                self.assertEqual(
+                    int.from_bytes(
+                        vm.memory[copied_len_addr : copied_len_addr + 8], "little"
+                    ),
                     3,
                 )
                 self.assertEqual(

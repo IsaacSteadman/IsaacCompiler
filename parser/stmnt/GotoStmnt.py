@@ -25,4 +25,4 @@ class GotoStmnt(BaseStmnt):
 
 from ..ParsingError import ParsingError
 from ...lexer.lexer import Token, TokenType
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext

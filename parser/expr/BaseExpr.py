@@ -49,4 +49,4 @@ class BaseExpr(PrettyRepr):
 
 
 from ..type.BaseType import BaseType
-from ..type.types import BitFieldInfo
+from ..type.BitFieldInfo import BitFieldInfo

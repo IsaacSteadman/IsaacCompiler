@@ -2,7 +2,6 @@ from typing import List, Optional, Tuple, Union
 from .BaseExpr import BaseExpr, ExprType
 from ...lexer.constants import TokenType
 
-
 LITERAL_TYPES = {
     TokenType.DBL_QUOTE,
     TokenType.UNI_QUOTE,
@@ -375,11 +374,8 @@ class LiteralExpr(BaseExpr):
 
 from ..ParsingError import ParsingError
 from ...PrettyRepr import get_pretty_repr
-from ..type.types import (
-    CompileContext,
-    PrimitiveType,
-    PrimitiveTypeId,
-    QualType,
-    size_of,
-)
+from ..type.CompileContext import CompileContext
+from ..type.QualType import QualType
+from ..type.PrimitiveType import PrimitiveType, PrimitiveTypeId
+from ..type.align_size_of import size_of
 from ...lexer.lexer import Token

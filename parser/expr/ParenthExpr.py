@@ -30,5 +30,5 @@ class ParenthExpr(BaseExpr):
 
 
 from ...PrettyRepr import get_pretty_repr
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext
 from ...lexer.lexer import Token

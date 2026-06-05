@@ -1,8 +1,20 @@
 from dataclasses import dataclass, field
 import os
 import re
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, TextIO, Tuple, Union
+from typing import (
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    TextIO,
+    Tuple,
+    Union,
+)
 
+from ...parser.type.align_util import align_up
 from .archive_file import (
     SBA_MAGIC,
     StackVMArchive,
@@ -37,7 +49,6 @@ from ..percpu import (
     PERCPU_SIZE_SYMBOLS,
     PERCPU_START_SYMBOLS,
 )
-
 
 DEFAULT_CODE_BASE = 0
 DEFAULT_DATA_BASE = 0x1000
@@ -123,9 +134,7 @@ class LinkerScript:
         ):
             insert_at = sections.index(".data") + 1
             sections = (
-                sections[:insert_at]
-                + (PERCPU_SECTION_NAME,)
-                + sections[insert_at:]
+                sections[:insert_at] + (PERCPU_SECTION_NAME,) + sections[insert_at:]
             )
         object.__setattr__(self, "sections", sections)
         if len(sections) != len(DEFAULT_SECTION_ORDER) or set(sections) != set(
@@ -280,9 +289,7 @@ class LinkResult:
             None,
         )
         file_size = (
-            bss.address
-            if bss is not None and bss.size > 0
-            else len(self.memory)
+            bss.address if bss is not None and bss.size > 0 else len(self.memory)
         )
         return StackVMExecutable(
             self.memory,
@@ -355,10 +362,6 @@ class _AliasResolver:
             if self.canonical(name) == canonical_name:
                 names.add(name)
         return names
-
-
-def _align_up(value: int, alignment: int) -> int:
-    return (value + alignment - 1) & ~(alignment - 1)
 
 
 def _read_addend(memory: bytearray, offset: int) -> int:
@@ -472,8 +475,7 @@ class _ObjectLinker:
                 defined = {
                     self.aliases.canonical(symbol.name)
                     for symbol in member.obj.symbols
-                    if not symbol.is_undefined
-                    and symbol.binding != SymbolBinding.LOCAL
+                    if not symbol.is_undefined and symbol.binding != SymbolBinding.LOCAL
                 }
                 if unresolved & defined:
                     selected_index = index
@@ -506,14 +508,14 @@ class _ObjectLinker:
             if obj.sections:
                 for section_index, section in enumerate(obj.sections):
                     segment_data = (
-                        obj.code
-                        if section.segment == ObjectSegment.CODE
-                        else obj.data
+                        obj.code if section.segment == ObjectSegment.CODE else obj.data
                     )
                     data = (
                         b""
                         if section.is_nobits
-                        else segment_data[section.offset : section.offset + section.size]
+                        else segment_data[
+                            section.offset : section.offset + section.size
+                        ]
                     )
                     input_sections.append(
                         _InputSection(
@@ -539,11 +541,16 @@ class _ObjectLinker:
                         obj.data_alignment,
                     ),
                 ):
-                    needed = bool(data) or any(
-                        not symbol.is_undefined and symbol.segment == segment
-                        for symbol in obj.symbols
-                    ) or any(
-                        relocation.segment == segment for relocation in obj.relocations
+                    needed = (
+                        bool(data)
+                        or any(
+                            not symbol.is_undefined and symbol.segment == segment
+                            for symbol in obj.symbols
+                        )
+                        or any(
+                            relocation.segment == segment
+                            for relocation in obj.relocations
+                        )
                     )
                     if needed:
                         input_sections.append(
@@ -634,14 +641,14 @@ class _ObjectLinker:
             members = members_by_output[name]
             if members:
                 alignment = max(section.alignment for section in members)
-                start = _align_up(len(memory), alignment)
+                start = align_up(len(memory), alignment)
                 memory.extend([0] * (start - len(memory)))
             else:
                 start = len(memory)
             file_size = 0
             input_names = []
             for section in members:
-                address = _align_up(len(memory), section.alignment)
+                address = align_up(len(memory), section.alignment)
                 memory.extend([0] * (address - len(memory)))
                 input_section_addresses[section.key] = address
                 input_names.append(
@@ -670,11 +677,7 @@ class _ObjectLinker:
                 start,
                 len(memory) - start,
                 file_size,
-                (
-                    ObjectSegment.CODE
-                    if name in CODE_SECTIONS
-                    else ObjectSegment.DATA
-                ),
+                (ObjectSegment.CODE if name in CODE_SECTIONS else ObjectSegment.DATA),
                 input_names,
             )
 
@@ -684,7 +687,7 @@ class _ObjectLinker:
             section_layouts.append(place_output_section(name))
         code_segment_end = len(memory)
 
-        data_segment_start = _align_up(
+        data_segment_start = align_up(
             max(code_segment_end, self.options.data_base),
             self.options.data_alignment,
         )
@@ -724,7 +727,9 @@ class _ObjectLinker:
                 and section.key not in debug_section_keys
             ]
 
-            def segment_layout(segment: ObjectSegment, fallback: int) -> Tuple[int, int]:
+            def segment_layout(
+                segment: ObjectSegment, fallback: int
+            ) -> Tuple[int, int]:
                 regions = [
                     (
                         input_section_addresses[section.key],
@@ -840,10 +845,7 @@ class _ObjectLinker:
                     target_address = selected_addresses.get(
                         self.aliases.canonical(symbol.name)
                     )
-                    if (
-                        target_address is None
-                        and _is_undefined_weak(symbol)
-                    ):
+                    if target_address is None and _is_undefined_weak(symbol):
                         target_address = 0
                         resolved_undefined_weak = True
                 if target_address is None:
@@ -1025,7 +1027,9 @@ LinkInput = Union[
 ]
 
 
-def _coerce_inputs(inputs: Sequence[LinkInput]) -> List[Union[ObjectInput, ArchiveInput]]:
+def _coerce_inputs(
+    inputs: Sequence[LinkInput],
+) -> List[Union[ObjectInput, ArchiveInput]]:
     result = []
     for index, link_input in enumerate(inputs):
         if isinstance(link_input, (ObjectInput, ArchiveInput)):

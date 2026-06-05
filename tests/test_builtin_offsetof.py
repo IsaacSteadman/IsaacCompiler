@@ -2,7 +2,6 @@ import os
 import sys
 import unittest
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
@@ -16,15 +15,15 @@ from IsaacCompiler.code_gen.CompilerOptions import CompilerOptions
 from IsaacCompiler.code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
 from IsaacCompiler.code_gen.compile_stmnt import compile_stmnt
 from IsaacCompiler.code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
-from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import lib_utils_abi
+from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import (
+    lib_utils_abi,
+)
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
-from IsaacCompiler.parser.type.types import (
-    CompileContext,
-    PrimitiveType,
-    QualType,
-    TypeDefCtxMember,
-)
+from IsaacCompiler.parser.type.CompileContext import CompileContext
+from IsaacCompiler.parser.type.PrimitiveType import PrimitiveType
+from IsaacCompiler.parser.type.QualType import QualType
+from IsaacCompiler.parser.type.TypeDefCtxMember import TypeDefCtxMember
 
 
 def _flatify_dep_desc(dep_dct, start_key):
@@ -144,7 +143,9 @@ class BuiltinOffsetofTests(unittest.TestCase):
         vm = _run_program(cmpl_obj)
         result_addr = _get_global_addr(global_ctx, cmpl_obj, "result")
         self.assertEqual(
-            int.from_bytes(vm.memory[result_addr : result_addr + 4], "little", signed=True),
+            int.from_bytes(
+                vm.memory[result_addr : result_addr + 4], "little", signed=True
+            ),
             4,
         )
 

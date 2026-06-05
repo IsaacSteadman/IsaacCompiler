@@ -1,12 +1,5 @@
 from typing import List
 from .BaseExpr import BaseExpr, ExprType
-from ..type.types import (
-    CompileContext,
-    QualType,
-    get_tgt_ref_type,
-    size_l_t,
-    snz_l_t,
-)
 
 
 # SParenth means '[' (Square)
@@ -84,3 +77,7 @@ from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import TypeClass
 from ..type.get_user_str_from_type import get_user_str_from_type
 from ...lexer.lexer import Token
+from ..type.CompileContext import CompileContext
+from ..type.QualType import QualType
+from ..type.qual_atomic_type_util import get_tgt_ref_type
+from ..type.PrimitiveType import size_l_t, snz_l_t

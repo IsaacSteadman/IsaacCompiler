@@ -118,7 +118,9 @@ from .ReturnStmnt import ReturnStmnt
 from .SemiColonStmnt import SemiColonStmnt
 from .StaticAssertStmnt import StaticAssertStmnt
 from .SwitchStmnt import SwitchStmnt
+from .DeclStmnt import DeclStmnt
+from .TypeDefStmnt import TypeDefStmnt
 from .WhileLoop import WhileLoop
 from ..type.is_type_name_part import is_type_name_part
-from ..type.types import CompileContext, DeclStmnt, TypeDefStmnt
+from ..type.CompileContext import CompileContext
 from ...lexer.lexer import Token, TokenType

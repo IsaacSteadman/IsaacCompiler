@@ -29,5 +29,5 @@ from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import BC_RST_SP1
 from ..parser.expr.BaseExpr import BaseExpr
 from ..parser.type.BaseType import BaseType
-from ..parser.type.types import CompileContext
+from ..parser.type.CompileContext import CompileContext
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc

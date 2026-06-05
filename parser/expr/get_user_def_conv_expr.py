@@ -47,11 +47,11 @@ def get_user_def_conv_expr(
 from .BaseExpr import BaseExpr
 from ..type.BaseType import BaseType, TypeClass
 from ..type.get_user_str_from_type import get_user_str_from_type
-from ..type.types import (
-    ClassType,
-    QualType,
-    StructType,
-    UnionType,
+from ..type.QualType import QualType
+from ..type.StructType import StructType
+from ..type.ClassType import ClassType
+from ..type.UnionType import UnionType
+from ..type.qual_atomic_type_util import (
     compare_no_cvr,
     get_base_prim_type,
 )

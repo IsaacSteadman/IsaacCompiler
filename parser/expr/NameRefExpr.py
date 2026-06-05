@@ -51,5 +51,7 @@ from ..ParsingError import ParsingError
 from ..get_name_from_tokens import get_name_from_tokens
 from ...PrettyRepr import get_pretty_repr
 from ..type.BaseType import TypeClass
-from ..type.types import QualType, CompileContext, ContextVariable
+from ..type.QualType import QualType
+from ..type.CompileContext import CompileContext
+from ..type.ContextVariable import ContextVariable
 from ...lexer.lexer import Token, TokenType

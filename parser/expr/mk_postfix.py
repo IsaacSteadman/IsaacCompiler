@@ -240,4 +240,4 @@ from .expr_part.BaseOpPart import BaseOpPart
 from ...ParseConstants import LST_LTR_OPS
 from ...lexer.lexer import Token
 
-from ..type.types import CompileContext
+from ..type.CompileContext import CompileContext

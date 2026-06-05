@@ -51,4 +51,4 @@ from .expr_constants import OVERLOAD_VERBOSE
 from ..type.BaseType import BaseType
 from .get_standard_conv_expr import get_standard_conv_expr
 from .get_user_def_conv_expr import get_user_def_conv_expr
-from ..type.types import compare_no_cvr
+from ..type.qual_atomic_type_util import compare_no_cvr

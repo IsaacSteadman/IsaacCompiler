@@ -105,12 +105,9 @@ from .tear_down_temp_links import tear_down_temp_links
 from ..parser.type.get_user_str_from_type import get_user_str_from_type
 from ..parser.expr.CastOpExpr import CastOpExpr
 from ..parser.type.BaseType import BaseType, TypeClass
-from ..parser.type.types import (
-    CompileContext,
-    QualType,
-    compare_no_cvr,
-    get_tgt_ref_type,
-)
+from ..parser.type.CompileContext import CompileContext
+from ..parser.type.QualType import QualType
+from ..parser.type.qual_atomic_type_util import compare_no_cvr, get_tgt_ref_type
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc, VarRefTosNamed
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import BC_AND1, BC_RSHIFT1
