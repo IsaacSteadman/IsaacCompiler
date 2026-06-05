@@ -4,3 +4,4 @@ C++ references
 C++ namespaces
 C++ function-overloading
 Volatile-qualified accesses are tracked in code generation, and there is currently no optimisation pass that removes or reorders them
+GCC-compatible command-line interface (drop-in cc/gcc front end: -c, -o, -I, -D, -U, -W*, -O*, -g, -std=, -f*, -nostdlib, -nostdinc, -T, -l, -L, -shared, -static, -march=, -print-file-name=)

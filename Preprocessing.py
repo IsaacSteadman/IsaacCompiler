@@ -128,9 +128,16 @@ class Preprocessor:
         self,
         include_dirs: List[str],
         defines: Optional[Dict[str, MacroDef]] = None,
+        undefines: Optional[List[str]] = None,
+        warnings_as_errors: bool = False,
     ) -> None:
         self.include_dirs: List[str] = list(include_dirs)
         self.defines: Dict[str, MacroDef] = dict(defines) if defines else {}
+        # Names forced undefined from the command line (``-U``).  These suppress
+        # the predefined / GNU-alias macros below and persist for the whole run.
+        self._undefines: Set[str] = set(undefines) if undefines else set()
+        # Treat preprocessor warnings (#warning) as hard errors (``-Werror``).
+        self.warnings_as_errors: bool = warnings_as_errors
         # Conditional-inclusion stack.
         # Each entry is (active: bool, can_switch: bool) where:
         #   active      – this level is currently producing output.
@@ -164,6 +171,9 @@ class Preprocessor:
         for alias, canonical in self._GNU_ALIASES.items():
             if alias not in self.defines:
                 self.defines[alias] = MacroDef(alias, None, canonical)
+        # Honour command-line ``-U`` last so it overrides any predefined macro.
+        for name in self._undefines:
+            self.defines.pop(name, None)
 
     # ------------------------------------------------------------------
     # Properties
@@ -337,6 +347,8 @@ class Preprocessor:
             raise _err(f"#error {args}")
 
         if name == "warning":
+            if self.warnings_as_errors:
+                raise _err(f"#warning {args} [-Werror]")
             print(f"{source_path}:{lineno}: warning: {args}", file=sys.stderr)
             return ""
 
@@ -1180,6 +1192,8 @@ def preprocess(
     source: str,
     include_dirs: List[str],
     defines: Optional[Dict[str, MacroDef]] = None,
+    undefines: Optional[List[str]] = None,
+    warnings_as_errors: bool = False,
 ) -> str:
     """Preprocess a C/C++ source string and return the expanded result.
 
@@ -1194,6 +1208,12 @@ def preprocess(
     defines:
         Optional pre-defined macros (equivalent to ``-D`` on the command
         line).  Map macro names to ``MacroDef`` instances.
+    undefines:
+        Optional macro names to force undefined (equivalent to ``-U`` on the
+        command line).  These suppress matching predefined macros.
+    warnings_as_errors:
+        When True, ``#warning`` directives are promoted to hard errors
+        (equivalent to ``-Werror``).
     """
-    p = Preprocessor(include_dirs, defines)
+    p = Preprocessor(include_dirs, defines, undefines, warnings_as_errors)
     return p.preprocess(source)

@@ -1,15 +1,12 @@
 import argparse
 import os
 import struct
-from typing import Callable, Dict, List, Optional, Set, Union
+import sys
+from typing import Callable, List, Optional, Union
 from .PrettyRepr import format_pretty
 from .Preprocessing import preprocess as cpp_preprocess
 from .StackVM.runner import add_cmd_argv_vm, load_sbc, run_in_vm
-from .code_gen.Compilation import Compilation
-from .code_gen.CompilerOptions import CompilerOptions
-from .code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
 from .code_gen.NameMangling import NameManglingMode
-from .code_gen.compile_stmnt import compile_stmnt
 from .code_gen.get_dict_link_src import get_dict_link_src
 from .code_gen.get_dict_links import get_dict_links
 from .lexer.lexer import get_list_tokens
@@ -20,30 +17,23 @@ from .code_gen.stackvm_binutils.linker import (
     load_linker_script,
 )
 from .code_gen.stackvm_binutils.object_file import write_sbo
-from .parser.stmnt.BaseStmnt import BaseStmnt
-from .parser.stmnt.get_stmnt import get_stmnt
+
+# Load-bearing import order: parser.type.types must be imported before the
+# parser.stmnt / parser.expr modules.  Those expr/stmnt modules (LiteralExpr,
+# CurlyExpr, ...) form an import cycle with type.types that only resolves when
+# type.types is the entry point (it binds its own names before pulling the expr
+# modules in at the bottom of the file).  Previously this ordering was provided
+# implicitly by importing compile_api here; compile_api is now imported lazily
+# (so the run/link/addr2line subcommands and gcc-mode -E / -print-file-name do
+# not compile the bundled runtime), so the ordering is made explicit instead.
 from .parser.type.types import (
     CompileContext,
     QualType,
     PrimitiveType,
     TypeDefCtxMember,
 )
-from .lib.runtime_support import get_runtime_extern_deps
-
-
-def flatify_dep_desc(dep_dct: Dict[str, List[str]], start_k: str) -> Set[str]:
-    rtn = set()
-    set_next = {start_k}
-    while len(set_next):
-        set_get = set_next
-        rtn |= set_get
-        set_next = set()
-        for k in set_get:
-            if k not in dep_dct:
-                raise KeyError("Unresolved External Symbol: " + k)
-            set_next.update(dep_dct[k])
-        set_next -= rtn
-    return rtn
+from .parser.stmnt.BaseStmnt import BaseStmnt
+from .parser.stmnt.get_stmnt import get_stmnt
 
 
 _SVC_MAGIC = (
@@ -422,6 +412,28 @@ run_parser.add_argument(
 )
 
 # ---------------------------------------------------------------------------
+# GCC-compatible front end (COMPAT-H1)
+# ---------------------------------------------------------------------------
+# Build systems (Kconfig/CMake/Meson/autoconf) invoke the compiler as if it
+# were gcc — with no subcommand and gcc-style flags.  Dispatch to the
+# gcc-compatible driver either explicitly (``gcc``/``cc``) or implicitly
+# (the first token is not a native subcommand and not a help request).
+_KNOWN_SUBCOMMANDS = {"compile", "link", "addr2line", "run"}
+_raw_argv = sys.argv[1:]
+if _raw_argv and _raw_argv[0] in {"gcc", "cc"}:
+    from .gcc_driver import run_gcc_driver
+
+    raise SystemExit(run_gcc_driver(_raw_argv[1:]))
+if (
+    _raw_argv
+    and _raw_argv[0] not in _KNOWN_SUBCOMMANDS
+    and _raw_argv[0] not in {"-h", "--help"}
+):
+    from .gcc_driver import run_gcc_driver
+
+    raise SystemExit(run_gcc_driver(_raw_argv))
+
+# ---------------------------------------------------------------------------
 # Parse and normalise program_args
 # ---------------------------------------------------------------------------
 args = argparser.parse_args()
@@ -487,27 +499,9 @@ if args.subcommand == "compile":
         raise SystemExit(1)
 
     print("Tokenizing")
-    with open(input_file, "r") as fl:
-        _source = fl.read()
     _pkg_include = os.path.join(os.path.dirname(__file__), "StackVM", "include")
     _src_dir = os.path.dirname(os.path.abspath(input_file))
     _include_dirs = [_src_dir, _pkg_include] + (args.include_dirs or [])
-    _source = cpp_preprocess(_source, _include_dirs)
-    tokens = get_list_tokens(_source)
-
-    global_ctx = CompileContext(
-        "",
-        None,
-        args.default_alignment,
-        name_mangling_mode=args.name_mangling_mode,
-    )
-    # Register built-in type alias: typedef unsigned char *va_list
-    _va_list_base = PrimitiveType.from_str_name(["unsigned", "char"])
-    _va_list_t = QualType(QualType.QUAL_PTR, _va_list_base)
-    global_ctx.new_type("va_list", TypeDefCtxMember("va_list", global_ctx, _va_list_t))
-    c = 0
-    end = len(tokens)
-    lst_stmnt: List[BaseStmnt] = []
 
     if (
         args.output_binary is not None
@@ -515,79 +509,29 @@ if args.subcommand == "compile":
         or args.run
         or args.compile_only
     ):
-        link_style = args.link_style
-        runtime_extern_deps = get_runtime_extern_deps(args.name_mangling_mode)
-        link_opts = LinkerOptions(
-            True,
-            args.data_seg_align,
-            runtime_extern_deps,
-            (
-                0
-                if args.compile_only
-                else (LNK_RUN_STANDALONE if link_style == "standalone" else 0)
-            ),
-            args.default_alignment,
-            args.name_mangling_mode,
-            args.percpu_copies,
+        # The tokenize → parse → compile → merge/link pipeline lives in
+        # compile_api.build_compilation so the gcc-compatible driver can share
+        # exactly this behaviour.  Imported lazily so the run / link / addr2line
+        # subcommands (and gcc-mode -E / -print-file-name) do not pay the cost
+        # of compiling the bundled runtime support library.
+        from .compile_api import build_compilation
+
+        _result = build_compilation(
+            input_file,
+            include_dirs=_include_dirs,
+            name_mangling_mode=args.name_mangling_mode,
+            default_alignment=args.default_alignment,
+            data_seg_align=args.data_seg_align,
+            percpu_copies=args.percpu_copies,
+            link_style=args.link_style,
+            compile_only=args.compile_only,
+            debugging_symbols=args.debugging_symbols,
+            verbose=True,
         )
-        cmpl_opts = CompilerOptions(
-            link_opts,
-            not args.compile_only,
-            args.debugging_symbols,
-            args.name_mangling_mode,
-        )
-        cmpl_obj = Compilation(
-            cmpl_opts.keep_local_syms,
-            args.name_mangling_mode,
-            args.default_alignment,
-        )
-        cmpl_obj.source_path = os.path.abspath(input_file)
-        print("Generating AST and binary inline")
-        while c < end:
-            prev_c = c
-            try:
-                stmnt, c = get_stmnt(tokens, c, end, global_ctx)
-            except Exception as exc:
-                ln, col = _token_line_col(tokens, c)
-                raise SyntaxError(
-                    f"error when attempting to parse statement after {input_file}:{ln}:{col}"
-                ) from exc
-            lst_stmnt.append(stmnt)
-            try:
-                compile_stmnt(cmpl_obj, stmnt, global_ctx, None)
-            except Exception as exc:
-                lnA, colA = _token_line_col(tokens, prev_c)
-                lnB, colB = _token_line_col(tokens, c)
-                raise RuntimeError(
-                    f"compile error when compiling statement between {input_file}:{lnA}:{colA} and {input_file}:{lnB}:{colB}"
-                ) from exc
-        if args.compile_only:
-            cmpl_obj.finalize_global_initializer()
-        elif link_opts.run_method == LNK_RUN_STANDALONE:
-            main_var = global_ctx.var_name_strict("main")
-            if main_var is None:
-                raise NameError("Standalone output requires a definition of main")
-            cmpl_obj.emit_standalone_startup(main_var.get_link_name())
-        if not args.compile_only:
-            print("building dependency tree")
-            dep_tree = [("", sorted(cmpl_obj.linkages))]
-            for k in cmpl_obj.objects:
-                cur = cmpl_obj.objects[k]
-                dep_tree.append((k, sorted(cur.linkages)))
-            if link_opts.extern_deps is not None:
-                for k in link_opts.extern_deps:
-                    cur = link_opts.extern_deps[k]
-                    dep_tree.append((k, sorted(cur.linkages)))
-            dep_dct: Dict[str, List[str]] = dict(dep_tree)
-            used_deps = flatify_dep_desc(dep_dct, "")
-            def_deps = {k for k, _ in dep_tree if k}
-            unused_deps = def_deps - used_deps
-            if len(unused_deps):
-                print("UNUSED: " + ", ".join(sorted(unused_deps)))
-            if cmpl_opts.merge_and_link:
-                excl = unused_deps if link_opts.remove_unused_deps else None
-                cmpl_obj.merge_all(link_opts, link_opts.extern_deps, excl)
-                cmpl_obj.link_all()
+        cmpl_obj = _result.cmpl_obj
+        global_ctx = _result.global_ctx
+        lst_stmnt = _result.lst_stmnt
+        link_opts = _result.link_opts
         if args.output_disassembly is not None:
             outf, incl_addr_str, incl_sym_str = args.output_disassembly
             incl_addr = incl_addr_str.lower() in incl_addr_options
@@ -644,6 +588,25 @@ if args.subcommand == "compile":
             )
     else:
         print("Generating AST")
+        with open(input_file, "r") as fl:
+            _source = fl.read()
+        _source = cpp_preprocess(_source, _include_dirs)
+        tokens = get_list_tokens(_source)
+        global_ctx = CompileContext(
+            "",
+            None,
+            args.default_alignment,
+            name_mangling_mode=args.name_mangling_mode,
+        )
+        # Register built-in type alias: typedef unsigned char *va_list
+        _va_list_base = PrimitiveType.from_str_name(["unsigned", "char"])
+        _va_list_t = QualType(QualType.QUAL_PTR, _va_list_base)
+        global_ctx.new_type(
+            "va_list", TypeDefCtxMember("va_list", global_ctx, _va_list_t)
+        )
+        lst_stmnt: List[BaseStmnt] = []
+        c = 0
+        end = len(tokens)
         while c < end:
             prev_c = c
             try:
