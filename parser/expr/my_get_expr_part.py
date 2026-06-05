@@ -162,6 +162,9 @@ def my_get_expr_part(
     elif s == "__builtin_offsetof" and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_offsetof_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
+    elif s == "__stackvm_percpu_addr" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_stackvm_percpu_addr_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif s in _builtin_unary_specs and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_unary_expr(s, tokens, c + 2, end, context)
         return ExprOpPart(expr), c
@@ -200,6 +203,7 @@ from .CastOpExpr import CastOpExpr
 from .LiteralExpr import LiteralExpr
 from .NameRefExpr import NameRefExpr
 from .ParenthExpr import ParenthExpr
+from .PerCpuAddrExpr import PerCpuAddrExpr
 from .StmntExpr import StmntExpr
 from .VaIntrinsicExpr import VaIntrinsicExpr
 from .get_implicit_conv_expr import get_implicit_conv_expr
@@ -905,6 +909,23 @@ def _build_builtin_offsetof_expr(tokens, c, end, context):
     expr.l_val = offset
     expr.t_anot = size_l_t
     return expr, paren_end + 1
+
+
+def _build_stackvm_percpu_addr_expr(tokens, c, end, context):
+    name = "__stackvm_percpu_addr"
+    paren_end = _find_call_paren_end(tokens, c, end)
+    expr, c = get_expr(tokens, c, ",", paren_end, context)
+    if expr is None:
+        raise ParsingError(tokens, c, "%s expects one argument" % name)
+    if c != paren_end:
+        raise ParsingError(tokens, c, "%s expects exactly one argument" % name)
+    ptr_type = get_value_type(expr.t_anot)
+    if not isinstance(ptr_type, QualType) or ptr_type.qual_id != QualType.QUAL_PTR:
+        raise ParsingError(tokens, c, "%s argument must be a pointer" % name)
+    converted = get_implicit_conv_expr(expr, _builtin_void_ptr_t)
+    if converted is None:
+        raise ParsingError(tokens, c, "%s argument must be convertible to void *" % name)
+    return PerCpuAddrExpr(converted[0], _builtin_void_ptr_t), paren_end + 1
 
 
 def _build_va_intrinsic(name, tokens, c, end, context):

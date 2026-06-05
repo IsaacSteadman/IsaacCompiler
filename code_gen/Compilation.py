@@ -25,6 +25,13 @@ from .stackvm_binutils.debug_info import (
     StackVMDebugInfo,
     dumps_debug,
 )
+from .percpu import (
+    PERCPU_END_SYMBOLS,
+    PERCPU_SECTION_NAME,
+    PERCPU_SIZE_SYMBOLS,
+    PERCPU_START_SYMBOLS,
+    matches_percpu_section,
+)
 
 INIT_GLOBALS_LINK_NAME = "?Fz__init_globals"
 INIT_ARRAY_SECTION = ".init_array"
@@ -361,7 +368,24 @@ class Compilation(BaseCmplObj):
                         "Unexpected Compile Object name = %r Type = %u"
                         % (cur.name, cur.typ)
                     )
-        for lst_objects in [funcs, globs]:
+        percpu_globs = [
+            obj for obj in globs if matches_percpu_section(obj.section_name or "")
+        ]
+        globs = [
+            obj for obj in globs if not matches_percpu_section(obj.section_name or "")
+        ]
+
+        def define_linker_value(names, value):
+            for name in names:
+                lnk = self.get_link(name)
+                if lnk.src is not None and lnk.src != value:
+                    raise NameError(
+                        "Redefinition of linker-defined name = '%s' is not allowed"
+                        % name
+                    )
+                lnk.src = value
+
+        def merge_objects(lst_objects):
             for cur in lst_objects:
                 assert isinstance(cur, CompileObject)
                 if excl is not None and cur.name in excl:
@@ -389,13 +413,31 @@ class Compilation(BaseCmplObj):
                     cur1 = cur.linkages[k1]
                     lnk = self.get_link(k1)
                     lnk.merge_from(cur1, mem_off)
-            if lst_objects is funcs:
-                self.code_segment_end = len(self.memory)
-                dsa = link_opts.data_seg_align
-                if dsa > 1:
-                    length = len(self.memory)
-                    self.memory.extend([0] * (dsa - length % dsa))
-                self.data_segment_start = len(self.memory)
+
+        merge_objects(funcs)
+        self.code_segment_end = len(self.memory)
+        dsa = link_opts.data_seg_align
+        if dsa > 1:
+            length = len(self.memory)
+            pad = (-length) % dsa
+            if pad:
+                self.memory.extend([0] * pad)
+        self.data_segment_start = len(self.memory)
+
+        percpu_start = len(self.memory)
+        define_linker_value(PERCPU_START_SYMBOLS, percpu_start)
+        merge_objects(percpu_globs)
+        percpu_end = len(self.memory)
+        percpu_unit_size = percpu_end - percpu_start
+        define_linker_value(PERCPU_END_SYMBOLS, percpu_end)
+        define_linker_value(PERCPU_SIZE_SYMBOLS, percpu_unit_size)
+        percpu_copies = getattr(link_opts, "percpu_copies", 1)
+        if percpu_unit_size > 0 and percpu_copies > 1:
+            unit = bytes(self.memory[percpu_start:percpu_end])
+            for _copy_index in range(1, percpu_copies):
+                self.memory.extend(unit)
+
+        merge_objects(globs)
         for k in self.string_pool:
             assert isinstance(k, bytes)
             cur = self.string_pool[k]
@@ -671,9 +713,10 @@ class Compilation(BaseCmplObj):
             INIT_ARRAY_SECTION: 2,
             FINI_ARRAY_SECTION: 3,
             ".data": 4,
-            ".rodata": 5,
-            ".bss": 6,
-            DEBUG_SECTION_NAME: 7,
+            PERCPU_SECTION_NAME: 5,
+            ".rodata": 6,
+            ".bss": 7,
+            DEBUG_SECTION_NAME: 8,
         }
 
         def section_sort_key(builder):

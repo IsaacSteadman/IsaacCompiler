@@ -103,6 +103,13 @@ def _parse_nonnegative_int_arg(value: str) -> int:
     return number
 
 
+def _parse_positive_int_arg(value: str) -> int:
+    number = int(value, 0)
+    if number < 1:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return number
+
+
 def _token_line_col(tokens, index):
     token = tokens[min(max(index, 0), len(tokens) - 1)]
     return token.line, token.col
@@ -212,6 +219,14 @@ compile_parser.add_argument(
     "and struct/union members; if omitted, keep the current no-alignment behavior",
 )
 compile_parser.add_argument(
+    "--percpu-copies",
+    metavar="count",
+    type=_parse_positive_int_arg,
+    default=1,
+    dest="percpu_copies",
+    help="reserve COUNT initialized .data..percpu units in direct linked output",
+)
+compile_parser.add_argument(
     "-o",
     "--output-binary",
     metavar="output_binary",
@@ -317,7 +332,7 @@ link_parser.add_argument(
     default=None,
     dest="linker_script",
     help="use a linker script defining .text, .init.text, .init_array, "
-    ".fini_array, .data, .rodata, and .bss",
+    ".fini_array, .data, .data..percpu, .rodata, and .bss",
 )
 link_parser.add_argument(
     "--allow-undefined",
@@ -350,6 +365,14 @@ link_parser.add_argument(
     default=True,
     dest="runtime_aliases",
     help="do not treat known mangled and unmangled runtime names as aliases",
+)
+link_parser.add_argument(
+    "--percpu-copies",
+    metavar="count",
+    type=_parse_positive_int_arg,
+    default=1,
+    dest="percpu_copies",
+    help="reserve COUNT initialized .data..percpu units (default: 1)",
 )
 
 # ---------------------------------------------------------------------------
@@ -505,6 +528,7 @@ if args.subcommand == "compile":
             ),
             args.default_alignment,
             args.name_mangling_mode,
+            args.percpu_copies,
         )
         cmpl_opts = CompilerOptions(
             link_opts,
@@ -665,6 +689,7 @@ elif args.subcommand == "link":
                 if args.linker_script is None
                 else load_linker_script(args.linker_script)
             ),
+            percpu_copies=args.percpu_copies,
         )
     except (LinkerError, OSError, ValueError) as exc:
         link_parser.error(str(exc))

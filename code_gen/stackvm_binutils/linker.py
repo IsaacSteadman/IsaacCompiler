@@ -30,6 +30,13 @@ from .object_file import (
     load_sbo,
     validate_object,
 )
+from ..percpu import (
+    PERCPU_END_SYMBOLS,
+    PERCPU_LINKER_DEFINED_SYMBOLS,
+    PERCPU_SECTION_NAME,
+    PERCPU_SIZE_SYMBOLS,
+    PERCPU_START_SYMBOLS,
+)
 
 
 DEFAULT_CODE_BASE = 0
@@ -41,11 +48,19 @@ DEFAULT_SECTION_ORDER = (
     ".init_array",
     ".fini_array",
     ".data",
+    PERCPU_SECTION_NAME,
     ".rodata",
     ".bss",
 )
 CODE_SECTIONS = {".text", ".init.text"}
-DATA_SECTIONS = {".init_array", ".fini_array", ".data", ".rodata", ".bss"}
+DATA_SECTIONS = {
+    ".init_array",
+    ".fini_array",
+    ".data",
+    PERCPU_SECTION_NAME,
+    ".rodata",
+    ".bss",
+}
 DEBUG_SECTIONS = {DEBUG_SECTION_NAME}
 LINKER_DEFINED_SYMBOLS = {
     "__init_begin",
@@ -59,6 +74,7 @@ LINKER_DEFINED_SYMBOLS = {
     "_start",
     "_end",
 }
+ALL_LINKER_DEFINED_SYMBOLS = LINKER_DEFINED_SYMBOLS | PERCPU_LINKER_DEFINED_SYMBOLS
 
 
 class LinkerError(Exception):
@@ -99,6 +115,18 @@ class LinkerScript:
 
     def __post_init__(self) -> None:
         sections = tuple(self.sections)
+        old_section_order = tuple(
+            name for name in DEFAULT_SECTION_ORDER if name != PERCPU_SECTION_NAME
+        )
+        if PERCPU_SECTION_NAME not in sections and set(sections) == set(
+            old_section_order
+        ):
+            insert_at = sections.index(".data") + 1
+            sections = (
+                sections[:insert_at]
+                + (PERCPU_SECTION_NAME,)
+                + sections[insert_at:]
+            )
         object.__setattr__(self, "sections", sections)
         if len(sections) != len(DEFAULT_SECTION_ORDER) or set(sections) != set(
             DEFAULT_SECTION_ORDER
@@ -156,10 +184,13 @@ class LinkOptions:
     runtime_aliases: bool = True
     symbol_aliases: Mapping[str, str] = field(default_factory=dict)
     script: LinkerScript = field(default_factory=LinkerScript)
+    percpu_copies: int = 1
 
     def __post_init__(self) -> None:
         if self.code_base < 0 or self.data_base < 0:
             raise ValueError("segment base addresses must be non-negative")
+        if self.percpu_copies < 1:
+            raise ValueError("percpu copies must be a positive integer")
         if self.data_alignment <= 0 or (
             self.data_alignment & (self.data_alignment - 1)
         ):
@@ -350,7 +381,7 @@ class _ObjectLinker:
             options.symbol_aliases,
         )
         self.linker_defined_keys = {
-            self.aliases.canonical(name) for name in LINKER_DEFINED_SYMBOLS
+            self.aliases.canonical(name) for name in ALL_LINKER_DEFINED_SYMBOLS
         }
         self.included: List[ObjectInput] = []
         self.selected: Dict[str, _Definition] = {}
@@ -564,10 +595,12 @@ class _ObjectLinker:
                 if (object_index, section_key) in debug_section_keys:
                     raise LinkerError(".debug sections cannot contain relocations")
         members_by_output = {name: [] for name in self.options.script.sections}
+        output_name_by_input_key = {}
         for section in input_sections:
             if section.key in debug_section_keys:
                 continue
             output_name = self.options.script.output_section_for(section.name)
+            output_name_by_input_key[section.key] = output_name
             expected_segment = (
                 ObjectSegment.CODE
                 if output_name in CODE_SECTIONS
@@ -595,6 +628,7 @@ class _ObjectLinker:
         memory = bytearray(self.options.code_base)
         input_section_addresses = {}
         section_layouts = []
+        output_section_unit_sizes = {}
 
         def place_output_section(name: str) -> SectionLayout:
             members = members_by_output[name]
@@ -619,6 +653,18 @@ class _ObjectLinker:
                 else:
                     memory.extend(section.data)
                     file_size += len(section.data)
+            unit_size = len(memory) - start
+            unit_file_size = file_size
+            if (
+                name == PERCPU_SECTION_NAME
+                and unit_size > 0
+                and self.options.percpu_copies > 1
+            ):
+                unit = bytes(memory[start : start + unit_size])
+                for _copy_index in range(1, self.options.percpu_copies):
+                    memory.extend(unit)
+                file_size = unit_file_size * self.options.percpu_copies
+            output_section_unit_sizes[name] = unit_size
             return SectionLayout(
                 name,
                 start,
@@ -728,6 +774,10 @@ class _ObjectLinker:
             "__bss_end": ".bss",
             "_end": ".bss",
         }
+        for name in PERCPU_START_SYMBOLS + PERCPU_END_SYMBOLS + PERCPU_SIZE_SYMBOLS:
+            linker_symbol_sections[name] = PERCPU_SECTION_NAME
+        percpu_layout = layout_by_name[PERCPU_SECTION_NAME]
+        percpu_unit_size = output_section_unit_sizes.get(PERCPU_SECTION_NAME, 0)
         linker_addresses = {
             "_start": layout_by_name[".text"].address,
             "__init_begin": layout_by_name[".init.text"].address,
@@ -740,6 +790,12 @@ class _ObjectLinker:
             "__bss_end": layout_by_name[".bss"].end,
             "_end": len(memory),
         }
+        for name in PERCPU_START_SYMBOLS:
+            linker_addresses[name] = percpu_layout.address
+        for name in PERCPU_END_SYMBOLS:
+            linker_addresses[name] = percpu_layout.address + percpu_unit_size
+        for name in PERCPU_SIZE_SYMBOLS:
+            linker_addresses[name] = percpu_unit_size
         selected_addresses = dict(object_selected_addresses)
         selected_addresses.update(
             {
@@ -763,6 +819,16 @@ class _ObjectLinker:
                     + relocation.offset
                     - section.object_offset
                 )
+                patch_addresses = [patch_address]
+                if output_name_by_input_key.get(section.key) == PERCPU_SECTION_NAME:
+                    percpu_unit_size = output_section_unit_sizes.get(
+                        PERCPU_SECTION_NAME, 0
+                    )
+                    if percpu_unit_size > 0:
+                        patch_addresses = [
+                            patch_address + copy_index * percpu_unit_size
+                            for copy_index in range(self.options.percpu_copies)
+                        ]
                 resolved_undefined_weak = False
                 if symbol.binding == SymbolBinding.LOCAL:
                     target_address = (
@@ -782,22 +848,23 @@ class _ObjectLinker:
                         resolved_undefined_weak = True
                 if target_address is None:
                     continue
-                addend = _read_addend(memory, patch_address)
-                if relocation.typ == RelocationType.ABS8:
-                    value = target_address + addend
-                    if (
-                        relocation.segment == ObjectSegment.DATA
-                        and not resolved_undefined_weak
-                    ):
-                        base_relocations.append(patch_address)
-                elif relocation.typ == RelocationType.PCREL8:
-                    value = target_address + addend - (patch_address + 8)
-                else:
-                    raise LinkerError(
-                        "unsupported relocation type %r in %s"
-                        % (relocation.typ, obj_input.display_name)
-                    )
-                _write_value(memory, patch_address, value)
+                for current_patch_address in patch_addresses:
+                    addend = _read_addend(memory, current_patch_address)
+                    if relocation.typ == RelocationType.ABS8:
+                        value = target_address + addend
+                        if (
+                            relocation.segment == ObjectSegment.DATA
+                            and not resolved_undefined_weak
+                        ):
+                            base_relocations.append(current_patch_address)
+                    elif relocation.typ == RelocationType.PCREL8:
+                        value = target_address + addend - (current_patch_address + 8)
+                    else:
+                        raise LinkerError(
+                            "unsupported relocation type %r in %s"
+                            % (relocation.typ, obj_input.display_name)
+                        )
+                    _write_value(memory, current_patch_address, value)
 
         linked_symbols = []
         for object_index, obj_input in enumerate(self.included):
@@ -1004,6 +1071,7 @@ def link_objects(
     runtime_aliases: bool = True,
     symbol_aliases: Optional[Mapping[str, str]] = None,
     linker_script: Optional[Union[LinkerScript, str]] = None,
+    percpu_copies: int = 1,
 ) -> LinkResult:
     return link(
         list(objects) + list(archives),
@@ -1015,6 +1083,7 @@ def link_objects(
             runtime_aliases,
             {} if symbol_aliases is None else symbol_aliases,
             LinkerScript() if linker_script is None else linker_script,
+            percpu_copies,
         ),
     )
 
@@ -1042,6 +1111,7 @@ def link_files(
     runtime_aliases: bool = True,
     symbol_aliases: Optional[Mapping[str, str]] = None,
     linker_script: Optional[Union[LinkerScript, str]] = None,
+    percpu_copies: int = 1,
 ) -> LinkResult:
     result = link_objects(
         [load_link_input(path) for path in input_paths],
@@ -1052,6 +1122,7 @@ def link_files(
         runtime_aliases=runtime_aliases,
         symbol_aliases=symbol_aliases,
         linker_script=linker_script,
+        percpu_copies=percpu_copies,
     )
     if output_path is not None:
         write_sbc(result.to_executable(), output_path)

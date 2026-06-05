@@ -1,6 +1,7 @@
 from Lexing import *
 from PrettyRepr import *
 from CompilingUtils import *
+import sys
 import traceback
 from typing import List
 
@@ -7223,7 +7224,10 @@ def compile_expr(
         assert isinstance(expr, CastOpExpr)
         assert expr.t_anot is not None
         if expr.cast_type == CastType.EXPLICIT:
-            print("WARN: Explicit casts are treated the same way as implicit casts")
+            print(
+                "WARN: Explicit casts are treated the same way as implicit casts",
+                file=sys.stderr,
+            )
         sz = compile_conv_general(cmpl_obj, expr, context, cmpl_data, temp_links)
     elif expr.expr_id == ExprType.BIN_OP:
         assert isinstance(expr, BinaryOpExpr)

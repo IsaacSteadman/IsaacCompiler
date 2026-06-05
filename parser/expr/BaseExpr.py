@@ -23,6 +23,7 @@ class ExprType(Enum):
     COMPOUND_LITERAL = 16  # C compound literal: (type){ ... }
     BUILTIN_CALL = 17  # compiler intrinsic call lowered by helper/runtime support
     ATOMIC_INTRINSIC = 18  # StackVM-backed atomic compiler intrinsics
+    PERCPU_ADDR = 19  # StackVM current-core per-CPU address calculation
 
 
 class BaseExpr(PrettyRepr):

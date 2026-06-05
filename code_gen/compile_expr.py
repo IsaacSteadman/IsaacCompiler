@@ -1,3 +1,4 @@
+import sys
 from typing import Optional, List, Tuple
 from ..parser.util import try_catch_wrapper_co_expr
 
@@ -397,6 +398,27 @@ def compile_expr(
             cmpl_data,
             temp_links,
         )
+    elif expr.expr_id == ExprType.PERCPU_ADDR:
+        assert isinstance(expr, PerCpuAddrExpr)
+        sz = compile_expr(
+            cmpl_obj,
+            expr.arg,
+            context,
+            cmpl_data,
+            None,
+            temp_links,
+        )
+        assert sz == 8
+        cmpl_obj.get_link(PERCPU_PRIMARY_START_SYMBOL).emit_lea(cmpl_obj.memory)
+        cmpl_obj.memory.append(BC_SUB8)
+        cmpl_obj.get_link(PERCPU_PRIMARY_SIZE_SYMBOL).emit_lea(cmpl_obj.memory)
+        cmpl_obj.memory.extend([BC_LOAD, BCR_SYSREG | BCR_SZ_8, SVSR_CORE_ID])
+        cmpl_obj.memory.append(BC_MUL8)
+        cmpl_obj.get_link(PERCPU_PRIMARY_START_SYMBOL).emit_lea(cmpl_obj.memory)
+        cmpl_obj.memory.append(BC_ADD8)
+        cmpl_obj.memory.append(BC_ADD8)
+        res_type = expr.t_anot
+        sz = 8
     elif expr.expr_id == ExprType.ATOMIC_INTRINSIC:
         assert isinstance(expr, AtomicIntrinsicExpr)
         assert cmpl_data is not None
@@ -559,7 +581,10 @@ def compile_expr(
         assert isinstance(expr, CastOpExpr)
         assert expr.t_anot is not None
         if expr.cast_type == CastType.EXPLICIT:
-            print("WARN: Explicit casts are treated the same way as implicit casts")
+            print(
+                "WARN: Explicit casts are treated the same way as implicit casts",
+                file=sys.stderr,
+            )
         sz = compile_conv_general(cmpl_obj, expr, context, cmpl_data, temp_links)
     elif expr.expr_id == ExprType.BIN_OP:
         assert isinstance(expr, BinaryOpExpr)
@@ -963,6 +988,7 @@ from .memory_access import (
     emit_tracked_abs_s8_load,
     emit_tracked_abs_s8_stor,
 )
+from .percpu import PERCPU_PRIMARY_SIZE_SYMBOL, PERCPU_PRIMARY_START_SYMBOL
 from .get_bc_conv_bits import get_bc_conv_bits
 from .setup_temp_links import setup_temp_links
 from .tear_down_temp_links import tear_down_temp_links
@@ -985,6 +1011,7 @@ from ..StackVM.PyStackVM import (
     BCR_ATOMIC_LOAD,
     BCR_ATOMIC_XCHG,
     BCR_ABS_S8,
+    BCR_SYSREG,
     BCR_SZ_8,
     BCR_TOS,
     BCS_SZ8_A,
@@ -1007,6 +1034,7 @@ from ..StackVM.PyStackVM import (
     BC_SUB1,
     BC_SUB8,
     BC_SWAP,
+    SVSR_CORE_ID,
     double_t,
     float_t,
 )
@@ -1021,6 +1049,7 @@ from ..parser.expr.LiteralExpr import LiteralExpr
 from ..parser.expr.NameRefExpr import NameRefExpr
 from ..parser.expr.OperatorType import OperatorType
 from ..parser.expr.ParenthExpr import ParenthExpr
+from ..parser.expr.PerCpuAddrExpr import PerCpuAddrExpr
 from ..parser.expr.SParenthExpr import SParenthExpr
 from ..parser.expr.SpecialDotExpr import SpecialDotExpr
 from ..parser.expr.SpecialPtrMemberExpr import SpecialPtrMemberExpr

@@ -446,6 +446,7 @@ class Preprocessor:
             "builtin_offsetof",
             "builtin_types_compatible_p",
             "builtin_constant_p",
+            "stackvm_percpu_addr",
         }
     )
     _SUPPORTED_FEATURES: FrozenSet[str] = frozenset()
