@@ -54,6 +54,20 @@ def get_vars_from_compile_data(
         return get_vars_from_compile_data(cmpl_data.parent) + cmpl_data.vars
 
 
+def _leave_scopes_until(
+    cmpl_obj: "BaseCmplObj",
+    cmpl_data: "LocalCompileData",
+    target: Optional["LocalCompileData"],
+    context: "CompileContext",
+) -> None:
+    cur = cmpl_data
+    while cur is not target:
+        if cur is None:
+            raise ValueError("Control-flow cleanup target is not an ancestor scope")
+        cur.compile_leave_scope(cmpl_obj, context)
+        cur = cur.parent
+
+
 def _record_statement_debug_line(
     cmpl_obj: "BaseCmplObj",
     stmnt: "BaseStmnt",
@@ -178,8 +192,11 @@ def compile_stmnt(
         cmpl_data1 = LocalCompileData(cmpl_data)
         lnk_begin_loop = Linkage()
         lnk_end_loop = Linkage()
-        cmpl_data1.cur_breakable = (lnk_begin_loop, lnk_end_loop)
-        sz0 = compile_stmnt(cmpl_obj, stmnt.init, stmnt.context, cmpl_data1)
+        lnk_continue = Linkage()
+        cmpl_data1.cur_breakable = BreakableScope(
+            lnk_continue, lnk_end_loop, cmpl_data1, cmpl_data1
+        )
+        compile_stmnt(cmpl_obj, stmnt.init, stmnt.context, cmpl_data1)
         lnk_begin_loop.src = len(cmpl_obj.memory)
         lnk_end_body = Linkage()
         sz = compile_expr(cmpl_obj, stmnt.cond, stmnt.context, cmpl_data1)
@@ -188,15 +205,16 @@ def compile_stmnt(
         emit_rel_jumpif(cmpl_obj.memory, lnk_end_loop)
         compile_stmnt(cmpl_obj, stmnt.stmnt, stmnt.context, cmpl_data1)
         lnk_end_body.src = len(cmpl_obj.memory)
+        lnk_continue.src = len(cmpl_obj.memory)
         if stmnt.incr is not None:
             sz = compile_expr(cmpl_obj, stmnt.incr, stmnt.context, cmpl_data1, void_t)
             assert sz == 0
         emit_rel_jump(cmpl_obj.memory, lnk_begin_loop)
         lnk_end_loop.src = len(cmpl_obj.memory)
-        sz_cls = emit_load_i_const(cmpl_obj.memory, sz0, False)
-        cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
+        cmpl_data1.compile_leave_scope(cmpl_obj, stmnt.context)
         lnk_begin_loop.fill_all(cmpl_obj.memory)
         lnk_end_body.fill_all(cmpl_obj.memory)
+        lnk_continue.fill_all(cmpl_obj.memory)
         lnk_end_loop.fill_all(cmpl_obj.memory)
     elif stmnt.stmnt_type == StmntType.WHILE:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
@@ -205,7 +223,9 @@ def compile_stmnt(
         cmpl_data1 = LocalCompileData(cmpl_data)
         lnk_begin_loop = Linkage()
         lnk_end_loop = Linkage()
-        cmpl_data1.cur_breakable = (lnk_begin_loop, lnk_end_loop)
+        cmpl_data1.cur_breakable = BreakableScope(
+            lnk_begin_loop, lnk_end_loop, cmpl_data1, cmpl_data1
+        )
         lnk_begin_loop.src = len(cmpl_obj.memory)
         sz = compile_expr(cmpl_obj, stmnt.cond, context, cmpl_data)
         assert sz == 1  # assert sz == sizeof(bool)
@@ -214,16 +234,25 @@ def compile_stmnt(
         compile_stmnt(cmpl_obj, stmnt.stmnt, context, cmpl_data1)
         emit_rel_jump(cmpl_obj.memory, lnk_begin_loop)
         lnk_end_loop.src = len(cmpl_obj.memory)
+        cmpl_data1.compile_leave_scope(cmpl_obj, context)
         lnk_begin_loop.fill_all(cmpl_obj.memory)
         lnk_end_loop.fill_all(cmpl_obj.memory)
     elif stmnt.stmnt_type == StmntType.CONTINUE:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert cmpl_data.cur_breakable is not None
-        emit_rel_jump(cmpl_obj.memory, cmpl_data.cur_breakable[0])
+        breakable = cmpl_data.cur_breakable
+        if breakable.continue_link is None:
+            raise SyntaxError("continue statement is not inside a loop")
+        _leave_scopes_until(
+            cmpl_obj, cmpl_data, breakable.continue_cleanup_target, context
+        )
+        emit_rel_jump(cmpl_obj.memory, breakable.continue_link)
     elif stmnt.stmnt_type == StmntType.BRK:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert cmpl_data.cur_breakable is not None
-        emit_rel_jump(cmpl_obj.memory, cmpl_data.cur_breakable[1])
+        breakable = cmpl_data.cur_breakable
+        _leave_scopes_until(cmpl_obj, cmpl_data, breakable.break_cleanup_target, context)
+        emit_rel_jump(cmpl_obj.memory, breakable.break_link)
     elif stmnt.stmnt_type == StmntType.RTN:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, ReturnStmnt)
@@ -290,9 +319,15 @@ def compile_stmnt(
         lnk_end_switch = Linkage()
         old_breakable = cmpl_data.cur_breakable
         # Keep the enclosing continue target; replace break target with ours.
-        cmpl_data1.cur_breakable = (
-            old_breakable[0] if old_breakable is not None else None,
+        cmpl_data1.cur_breakable = BreakableScope(
+            old_breakable.continue_link if old_breakable is not None else None,
             lnk_end_switch,
+            (
+                old_breakable.continue_cleanup_target
+                if old_breakable is not None
+                else None
+            ),
+            cmpl_data1,
         )
 
         # One Linkage per segment (points to the start of that segment's body).
@@ -366,7 +401,7 @@ def compile_stmnt(
 from .BaseCmplObj import BaseCmplObj
 from .CompileObject import CompileObject
 from .Linkage import Linkage
-from .LocalCompileData import LocalCompileData
+from .LocalCompileData import BreakableScope, LocalCompileData
 from .LocalRef import LocalRef
 from .compile_curly import compile_curly
 from .compile_expr import compile_expr

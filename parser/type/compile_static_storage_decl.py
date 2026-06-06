@@ -329,6 +329,8 @@ def compile_static_storage_decl(
     if ctx_var.uses_stack_storage():
         return None
     maybe_deduce_array_extent(decl_type, init_args)
+    if contains_variable_length_array_type(decl_type):
+        raise TypeError("Variable-length arrays require automatic local storage")
     size = size_of(decl_type)
     register_context_symbol(
         cmpl_obj,
@@ -406,6 +408,7 @@ from .qual_atomic_type_util import (
     compare_no_cvr,
     is_flexible_array_type,
 )
+from .vla import contains_variable_length_array_type
 from .eval_const_expr import eval_const_expr
 from ...StackVM.PyStackVM import BC_NE0
 from ...code_gen.byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic

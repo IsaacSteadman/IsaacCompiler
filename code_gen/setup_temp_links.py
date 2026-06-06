@@ -28,7 +28,7 @@ def setup_temp_links(
             bp_off = align_up(bp_off + sz_var, align) - sz_var
         temp_links[c] = (
             expr.temps[c],
-            LocalRef.from_bp_off_pre_inc(bp_off, sz_var),
+            cmpl_data.make_local_ref(bp_off, sz_var, True),
         )
         bp_off += sz_var
     sz_add = bp_off - bp_off_start
@@ -44,7 +44,6 @@ def setup_temp_links(
 from .BaseCmplObj import BaseCmplObj
 from .BaseLink import BaseLink
 from .LocalCompileData import LocalCompileData
-from .LocalRef import LocalRef
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import BC_ADD_SP1
 from ..parser.expr.BaseExpr import BaseExpr

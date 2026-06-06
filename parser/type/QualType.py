@@ -176,7 +176,10 @@ class QualType(BaseType):
         elif self.qual_id == QualType.QUAL_ARR:
             s = "array of "
             if self.ext_inf is not None:
-                s += "%u " % self.ext_inf
+                if isinstance(self.ext_inf, int):
+                    s += "%u " % self.ext_inf
+                else:
+                    s += "<runtime-bound> "
         elif self.qual_id == QualType.QUAL_FN:
             _variadic = (
                 isinstance(self.ext_inf, list)
@@ -270,7 +273,8 @@ class QualType(BaseType):
         if len(init_args) == 0 and self.qual_id == QualType.QUAL_REF:
             raise ValueError("Cannot declare a reference without instantiating it")
         maybe_deduce_array_extent(self, init_args)
-        sz_var = size_of(self)
+        is_vla = contains_variable_length_array_type(self)
+        sz_var = vla_metadata_size(self) if is_vla else size_of(self)
         ctx_var = None
         decl_ctx_var = None
         link = None
@@ -362,6 +366,43 @@ class QualType(BaseType):
                 cmpl_obj, init_args, context, ref, cmpl_data, temp_links
             )
         elif self.qual_id in [QualType.QUAL_PTR, QualType.QUAL_REF, QualType.QUAL_ARR]:
+            if is_vla:
+                if self.qual_id != QualType.QUAL_ARR:
+                    raise TypeError(
+                        "Variable-length array qualifiers must resolve to an array"
+                    )
+                if len(init_args) != 0:
+                    raise TypeError("Variable-length arrays cannot be initialized")
+                if not is_local or ctx_var is None or cmpl_data is None:
+                    raise TypeError("Variable-length arrays require local stack storage")
+                from ...code_gen.vla import emit_runtime_sizeof
+
+                sz_cls = emit_load_i_const(
+                    cmpl_obj.memory, vla_metadata_size(self), False
+                )
+                cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls])
+                size_lnk = cmpl_data.reserve_stack_storage(
+                    ctx_var, vla_metadata_size(self), None, True
+                )
+                emit_runtime_sizeof(
+                    cmpl_obj, self, context, cmpl_data, temp_links
+                )
+                size_lnk.emit_stor(
+                    cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic
+                )
+                size_lnk.emit_load(
+                    cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic
+                )
+                cmpl_obj.memory.extend([BC_ADD_SP8])
+                vla_lnk = DynamicLocalRef(
+                    cmpl_data.bp_off,
+                    0,
+                    cmpl_data.dynamic_stack_size_links + [size_lnk],
+                    vla_size_link=size_lnk,
+                )
+                cmpl_data.setitem(name, (ctx_var, vla_lnk), vla_metadata_size(self))
+                cmpl_data.dynamic_stack_size_links.append(size_lnk)
+                return vla_metadata_size(self)
             if (
                 self.qual_id == QualType.QUAL_ARR
                 and len(init_args) == 1
@@ -531,8 +572,21 @@ class QualType(BaseType):
         ]:
             return self.tgt_type.compile_var_de_init(cmpl_obj, context, ref, cmpl_data)
         elif self.qual_id == QualType.QUAL_ARR:
-            # if self.ext_inf is None: return -1
-            # if ref.ref_type == VAR_REF_TOS_NAMED:
+            if contains_variable_length_array_type(self):
+                if ref.ref_type != VAR_REF_TOS_NAMED:
+                    raise TypeError("Cannot de-initialize unnamed VLA storage")
+                assert isinstance(ref, VarRefTosNamed)
+                if cmpl_data is None:
+                    raise TypeError("VLA de-initialization requires local data")
+                lnk = cmpl_data.get_local(ref.ctx_var.get_link_name())
+                size_lnk = getattr(lnk, "vla_size_link", None)
+                if size_lnk is None:
+                    raise TypeError("Missing VLA size metadata for de-initialization")
+                size_lnk.emit_load(
+                    cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic
+                )
+                cmpl_obj.memory.extend([BC_RST_SP8])
+                return 0
             return -1
         elif self.qual_id == QualType.QUAL_FN:
             raise TypeError("cannot destroy a function")
@@ -555,6 +609,7 @@ from .qual_atomic_type_util import (
 )
 from .align_size_of import size_of
 from ...code_gen.LocalRef import LocalRef
+from ...code_gen.DynamicLocalRef import DynamicLocalRef
 from ...code_gen.Compilation import CompileObjectType, Compilation
 from ...code_gen.LocalCompileData import LocalCompileData
 from .LocalScope import LocalScope
@@ -572,6 +627,7 @@ from .make_void_fn import make_void_fn
 from ..expr.BaseExpr import BaseExpr, ExprType
 from .PrimitiveType import PrimitiveType, get_primitive_conv_bits
 from .compile_static_storage_decl import compile_static_storage_decl
+from .vla import contains_variable_length_array_type, vla_metadata_size
 from .helpers.VarRef import (
     VAR_REF_LNK_PREALLOC,
     VAR_REF_TOS_NAMED,
@@ -580,5 +636,5 @@ from .helpers.VarRef import (
 )
 from .register_context_symbol import register_context_symbol
 from ...code_gen.compile_curly import compile_curly
-from ...StackVM.PyStackVM import BC_RET, BC_ADD_SP1
+from ...StackVM.PyStackVM import BC_RET, BC_ADD_SP1, BC_ADD_SP8, BC_RST_SP8
 from .is_fn_type import is_fn_type

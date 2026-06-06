@@ -5,6 +5,20 @@ from ..parser.type.align_util import align_up
 _T = TypeVar("_T")
 
 
+class BreakableScope(object):
+    def __init__(
+        self,
+        continue_link: Optional["Linkage"],
+        break_link: "Linkage",
+        continue_cleanup_target: Optional["LocalCompileData"],
+        break_cleanup_target: "LocalCompileData",
+    ):
+        self.continue_link = continue_link
+        self.break_link = break_link
+        self.continue_cleanup_target = continue_cleanup_target
+        self.break_cleanup_target = break_cleanup_target
+
+
 class LocalCompileData(object):
     def __init__(self, parent: Optional["LocalCompileData"] = None):
         initial_bp_off = 0 if parent is None else parent.bp_off
@@ -13,17 +27,21 @@ class LocalCompileData(object):
             [initial_bp_off] if parent is None else parent._frame_max_ref
         )
         self.scope_bp_off_start: int = initial_bp_off
-        self.vars: List[Tuple["ContextVariable", "LocalRef"]] = []
+        self.vars: List[Tuple["ContextVariable", "BaseLink"]] = []
+        self.local_stack_sizes: List[int] = []
         self.local_links: Dict[str, int] = {}
         self.sizes = {}  # TODO: appears unused
         self.parent = parent
+        self.dynamic_stack_size_links: List["BaseLink"] = (
+            [] if parent is None else list(parent.dynamic_stack_size_links)
+        )
         self.local_labels: Dict[str, "Linkage"] = (
             {} if parent is None else parent.local_labels
         )
         self.local_label_references: Set[str] = (
             set() if parent is None else parent.local_label_references
         )
-        self.cur_breakable: Optional[Tuple["Linkage", "Linkage"]] = (
+        self.cur_breakable: Optional[BreakableScope] = (
             None if parent is None else parent.cur_breakable
         )
         self.res_data: Optional[Tuple["BaseType", "BaseLink"]] = None
@@ -42,9 +60,47 @@ class LocalCompileData(object):
     def max_frame_size(self) -> int:
         return self._frame_max_ref[0]
 
+    def _emit_rst_sp(self, cmpl_obj: "BaseCmplObj", stack_sz: int) -> None:
+        if stack_sz:
+            sz_cls = emit_load_i_const(cmpl_obj.memory, stack_sz, False)
+            cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
+
+    def _compile_leave_scope_lifo(
+        self, cmpl_obj: "BaseCmplObj", context: "CompileContext"
+    ):
+        from ..parser.type.vla import contains_variable_length_array_type
+
+        fixed_to_pop = 0
+        c = len(self.vars)
+        while c > 0:
+            c -= 1
+            assert isinstance(c, int)
+            ctx_var, _lnk = self.vars[c]
+            stack_sz = self.local_stack_sizes[c]
+            if contains_variable_length_array_type(ctx_var.typ):
+                self._emit_rst_sp(cmpl_obj, fixed_to_pop)
+                fixed_to_pop = 0
+                res = ctx_var.typ.compile_var_de_init(
+                    cmpl_obj, context, VarRefTosNamed(ctx_var), self
+                )
+                assert res == 0, "unexpected VLA de-initialization result"
+                fixed_to_pop += stack_sz
+                continue
+            res = ctx_var.typ.compile_var_de_init(
+                cmpl_obj, context, VarRefTosNamed(ctx_var), self
+            )
+            assert res == -1, "cannot do complex de-initialization"
+            fixed_to_pop += stack_sz
+        self._emit_rst_sp(cmpl_obj, fixed_to_pop)
+
     def compile_leave_scope(self, cmpl_obj: "BaseCmplObj", context: "CompileContext"):
+        from ..parser.type.vla import contains_variable_length_array_type
+
         stack_sz = self.bp_off - self.scope_bp_off_start
         if not stack_sz:
+            return
+        if any(contains_variable_length_array_type(ctx_var.typ) for ctx_var, _ in self.vars):
+            self._compile_leave_scope_lifo(cmpl_obj, context)
             return
         c = len(
             self.vars
@@ -53,7 +109,6 @@ class LocalCompileData(object):
             c -= 1
             assert isinstance(c, int)
             ctx_var, lnk = self.vars[c]
-            sz_var = size_of(ctx_var.typ)
             # TODO: change steps involved
             # step 1:
             #   do deinitialization (non-trivial destructors including member variables)
@@ -64,9 +119,7 @@ class LocalCompileData(object):
                 cmpl_obj, context, VarRefTosNamed(ctx_var), self
             )
             assert res == -1, "cannot do complex de-initialization"
-        if stack_sz != 0:
-            sz_cls = emit_load_i_const(cmpl_obj.memory, stack_sz, False)
-            cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
+        self._emit_rst_sp(cmpl_obj, stack_sz)
 
     def get_rel_bp_off(self):
         parent = self.parent
@@ -82,19 +135,28 @@ class LocalCompileData(object):
         self.local_label_references.add(k)
         return self.get_label(k)
 
-    def get_local(self, k: str) -> "LocalRef":
+    def get_local(self, k: str) -> "BaseLink":
         return self[k][1]
 
-    def put_local(
+    def make_local_ref(self, bp_off: int, sz_var: int, bp_off_pre_inc: bool) -> "BaseLink":
+        if self.dynamic_stack_size_links:
+            base_bp_off = bp_off + sz_var if bp_off_pre_inc else bp_off
+            return DynamicLocalRef(
+                base_bp_off, sz_var, self.dynamic_stack_size_links
+            )
+        return (
+            LocalRef.from_bp_off_pre_inc(bp_off, sz_var)
+            if bp_off_pre_inc
+            else LocalRef.from_bp_off_post_inc(bp_off, sz_var)
+        )
+
+    def reserve_stack_storage(
         self,
         ctx_var: "ContextVariable",
-        link_name: str = None,
         sz_var: Optional[int] = None,
         bp_off: Optional[int] = None,
         bp_off_pre_inc: bool = False,
-    ) -> "LocalRef":
-        if link_name is None:
-            link_name = ctx_var.get_link_name()
+    ) -> "BaseLink":
         if sz_var is None:
             sz_var = size_of(ctx_var.typ)
         if bp_off is None:
@@ -106,19 +168,32 @@ class LocalCompileData(object):
                 bp_off = align_up(bp_off + sz_var, align) - sz_var
             else:
                 bp_off = align_up(bp_off, align)
-        lnk = (
-            LocalRef.from_bp_off_pre_inc(bp_off, sz_var)
-            if bp_off_pre_inc
-            else LocalRef.from_bp_off_post_inc(bp_off, sz_var)
-        )
-        # print "PUT_LOCAL: link_name=%r, initial-bp_off=%r, lnk.RelAddr=%r" % (link_name, self.bp_off, lnk.RelAddr)
-        self.setitem(link_name, (ctx_var, lnk))
+        lnk = self.make_local_ref(bp_off, sz_var, bp_off_pre_inc)
         if add_bp:
             self.bp_off = bp_off + sz_var
+        return lnk
+
+    def put_local(
+        self,
+        ctx_var: "ContextVariable",
+        link_name: str = None,
+        sz_var: Optional[int] = None,
+        bp_off: Optional[int] = None,
+        bp_off_pre_inc: bool = False,
+    ) -> "BaseLink":
+        if link_name is None:
+            link_name = ctx_var.get_link_name()
+        if sz_var is None:
+            sz_var = size_of(ctx_var.typ)
+        lnk = self.reserve_stack_storage(
+            ctx_var, sz_var, bp_off, bp_off_pre_inc
+        )
+        # print "PUT_LOCAL: link_name=%r, initial-bp_off=%r, lnk.RelAddr=%r" % (link_name, self.bp_off, lnk.RelAddr)
+        self.setitem(link_name, (ctx_var, lnk), sz_var)
         # print "PUT_LOCAL: final-bp_off=%r" % self.bp_off
         return lnk
 
-    def __getitem__(self, k: str) -> Tuple["ContextVariable", "LocalRef"]:
+    def __getitem__(self, k: str) -> Tuple["ContextVariable", "BaseLink"]:
         try:
             return self.vars[self.local_links[k]]
         except KeyError:
@@ -126,20 +201,26 @@ class LocalCompileData(object):
                 raise
             return self.parent[k]
 
-    def setitem(self, k: str, v: Tuple["ContextVariable", "LocalRef"]):
+    def setitem(
+        self,
+        k: str,
+        v: Tuple["ContextVariable", "BaseLink"],
+        stack_size: int = 0,
+    ):
         var_index = self.local_links.get(k, None)
         if var_index is not None:
             raise KeyError("Variable '%s' already exists" % k)
         self.local_links[k] = len(self.vars)
         self.vars.append(v)
+        self.local_stack_sizes.append(stack_size)
 
-    def strict_get(self, k: str, default: _T = None) -> Union["LocalRef", _T]:
+    def strict_get(self, k: str, default: _T = None) -> Union["BaseLink", _T]:
         var_index = self.local_links.get(k, None)
         if var_index is None:
             return default
         return self.vars[var_index][1]
 
-    def get(self, k: str, default: _T = None) -> Union["LocalRef", _T]:
+    def get(self, k: str, default: _T = None) -> Union["BaseLink", _T]:
         lnk = self.strict_get(k, None)
         if lnk is None:
             if self.parent is None:
@@ -150,6 +231,7 @@ class LocalCompileData(object):
 
 from .BaseCmplObj import BaseCmplObj
 from .BaseLink import BaseLink
+from .DynamicLocalRef import DynamicLocalRef
 from ..parser.type.BaseType import BaseType
 from ..parser.type.ContextVariable import ContextVariable
 from .Linkage import Linkage

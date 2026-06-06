@@ -43,6 +43,12 @@ def align_of(
                     default_alignment=resolved_default_alignment,
                     owner=owner,
                 )
+            if typ.ext_inf is not None and not isinstance(typ.ext_inf, int):
+                return align_of(
+                    typ.tgt_type,
+                    default_alignment=resolved_default_alignment,
+                    owner=owner,
+                )
             if is_arg or typ.ext_inf is None:
                 return default_align_for_size(8, resolved_default_alignment)
             return align_of(
@@ -167,6 +173,8 @@ def size_of(
         if typ.qual_id == QualType.QUAL_ARR:
             if typ.ext_inf is None and isinstance(owner, StructType):
                 return 0
+            if typ.ext_inf is not None and not isinstance(typ.ext_inf, int):
+                return 8
             if is_arg or typ.ext_inf is None:
                 return 8
             return (

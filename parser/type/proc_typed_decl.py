@@ -172,29 +172,17 @@ def proc_typed_decl(
                 ext_inf = None
                 if tokens[c].str != "]":
                     expr, c = get_expr(tokens, c, "]", end, context)
-                    if not isinstance(expr, LiteralExpr):
-                        raise ParsingError(
-                            tokens, c, "Expected Literal Integer for bounds of array"
-                        )
-                    else:
-                        assert isinstance(expr, LiteralExpr)
-                        if expr.t_lit != LiteralExpr.LIT_INT:
+                    const_value = eval_const_expr(expr)
+                    if const_value is not None and not isinstance(
+                        const_value, StaticAddress
+                    ):
+                        ext_inf = int(const_value)
+                        if ext_inf < 0:
                             raise ParsingError(
-                                tokens,
-                                c,
-                                "Expected Literal Integer for bounds of array",
+                                tokens, c, "Array bounds cannot be negative"
                             )
-                        else:
-                            radix = 10
-                            if len(expr.v_lit) > 1 and expr.v_lit.startswith("0"):
-                                ch = expr.v_lit[1].lower()
-                                if ch.isdigit() or ch == "o":
-                                    radix = 8
-                                elif ch == "x":
-                                    radix = 16
-                                elif ch == "b":
-                                    radix = 2
-                            ext_inf = int(expr.v_lit, radix)
+                    else:
+                        ext_inf = expr
                 c += 1
                 rtn.add_qual_type(QualType.QUAL_ARR, ext_inf)
             elif tokens[c].str == "," or tokens[c].str == ";" or tokens[c].str == "{":
@@ -229,7 +217,8 @@ from .GNUAttributes import GNUAttributes
 from ..ParsingError import ParsingError
 from ...lexer.lexer import Token, TokenType, tok_to_str
 from ..expr.get_expr import get_expr
-from ..expr.LiteralExpr import LiteralExpr
 from ...ParseConstants import CLOSE_GROUPS, OPEN_GROUPS
 from ..constants import KEYWORDS
 from .CompileContext import CompileContext
+from .eval_const_expr import eval_const_expr
+from .StaticAddress import StaticAddress

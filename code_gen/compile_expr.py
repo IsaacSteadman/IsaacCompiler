@@ -350,7 +350,7 @@ def compile_expr(
         sz_ret = size_of(res_type)
         sz_cls_ret = emit_load_i_const(cmpl_obj.memory, sz_ret, False)
         cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls_ret])
-        lnk_ret = LocalRef.from_bp_off_pre_inc(cmpl_data.bp_off, sz_ret)
+        lnk_ret = cmpl_data.make_local_ref(cmpl_data.bp_off, sz_ret, True)
         cmpl_data.bp_off += sz_ret
         c = len(expr.lst_args)
         while c > 0:
@@ -845,7 +845,9 @@ def compile_expr(
             # Build inner scope; its bp_off must skip over the result slot so
             # that inner locals are allocated above it (at lower stack addresses).
             inner_cmpl_data = LocalCompileData(cmpl_data)
-            result_lnk = LocalRef(-(inner_cmpl_data.bp_off + sz_result), sz_result)
+            result_lnk = inner_cmpl_data.make_local_ref(
+                inner_cmpl_data.bp_off, sz_result, True
+            )
             inner_cmpl_data.bp_off += sz_result
 
             # Compile intermediate statements (their results are discarded).
@@ -986,7 +988,6 @@ from .BaseCmplObj import BaseCmplObj
 from .BaseLink import BaseLink
 from .CompileExprException import CompileExprException
 from .LocalCompileData import LocalCompileData
-from .LocalRef import LocalRef
 from .byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
 from .branch_emit import emit_rel_call
 from .compile_bin_op_expr import compile_bin_op_expr
