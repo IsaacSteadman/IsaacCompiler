@@ -1,4 +1,4 @@
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional
 
 from ....PrettyRepr import PrettyRepr, get_pretty_repr, get_pretty_repr_enum
 from ....ParseConstants import LST_INIT_TYPES, INIT_NONE

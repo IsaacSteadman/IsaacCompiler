@@ -65,11 +65,12 @@ class BaseType(PrettyRepr):
         raise NotImplementedError("Not Implemented")
 
 
+from ...code_gen.BaseCmplObj import BaseCmplObj
+from ...code_gen.BaseLink import BaseLink
+from .helpers.VarRef import VarRef
+from ..expr.BaseExpr import BaseExpr
+
 if TYPE_CHECKING:
-    from .helpers.VarRef import VarRef
-    from ..type.CompileContext import CompileContext
     from ..stmnt.CurlyStmnt import CurlyStmnt
-    from ..expr.BaseExpr import BaseExpr
-    from ...code_gen.BaseCmplObj import BaseCmplObj
-    from ...code_gen.BaseLink import BaseLink
     from ...code_gen.LocalCompileData import LocalCompileData
+    from ..type.CompileContext import CompileContext

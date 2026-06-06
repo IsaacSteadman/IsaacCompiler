@@ -59,13 +59,13 @@ class CurlyStmnt(BaseStmnt):
         self.implicit_ctx_vars.append(ctx_var)
 
 
-from .get_stmnt import get_stmnt
 from ...PrettyRepr import get_pretty_repr
-from ..type.CompileContext import CompileContext
 from ..type.LocalScope import LocalScope
-from ...lexer.lexer import Token
 from ..expr.LiteralExpr import LiteralExpr
+from ..type.QualType import QualType
 from ..type.ContextVariable import ContextVariable
 from ..type.PrimitiveType import PrimitiveType, PrimitiveTypeId
-from ..type.QualType import QualType
 from ..type.VarDeclMods import VarDeclMods
+from .get_stmnt import get_stmnt
+from ...lexer.lexer import Token
+from ..type.CompileContext import CompileContext

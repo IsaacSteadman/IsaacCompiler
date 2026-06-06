@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional
 from .ContextMember import ContextMember
 from ...PrettyRepr import PrettyRepr, get_pretty_repr
 from ...code_gen.NameMangling import (
@@ -320,10 +320,10 @@ class CompileContext(ContextMember, PrettyRepr):
         )
 
 
-from .ContextVariable import ContextVariable
-from .is_fn_type import is_fn_type
 from .VarDeclMods import VarDeclMods
+from .is_fn_type import is_fn_type
+from .ContextVariable import ContextVariable
 from .qual_atomic_type_util import compare_no_cvr
-from .LocalScope import LocalScope
 from .OverloadedCtxVar import OverloadedCtxVar
+from .LocalScope import LocalScope
 from .BaseType import BaseType, TypeClass

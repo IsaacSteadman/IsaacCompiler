@@ -1,8 +1,8 @@
-from typing import Callable, List, Optional, Tuple, Any, TYPE_CHECKING
+from typing import Callable, List, Optional, Tuple, Any
 
 
 def try_catch_wrapper0(
-    fn: Callable[[List["Token"], int, int, "CompileContext"], Tuple[Any, int]]
+    fn: Callable[[List["Token"], int, int, "CompileContext"], Tuple[Any, int]],
 ) -> Callable[[List["Token"], int, int, "CompileContext"], Tuple[Any, int]]:
     def new_fn(tokens, c, end, context):
         try:
@@ -22,7 +22,7 @@ def try_catch_wrapper0(
 def try_catch_wrapper1(
     fn: Callable[
         [List["Token"], int, Optional[str], int, "CompileContext"], Tuple[Any, int]
-    ]
+    ],
 ) -> Callable[
     [List["Token"], int, Optional[str], int, "CompileContext"], Tuple[Any, int]
 ]:
@@ -73,11 +73,10 @@ def try_catch_wrapper_co_expr(fn):
     return new_fn
 
 
-if TYPE_CHECKING:
-    from ..lexer.lexer import Token
-    from .context.CompileContext import CompileContext
-    from .expr.BaseExpr import BaseExpr
-    from .type.BaseType import BaseType
-    from ..code_gen.BaseCmplObj import BaseCmplObj
-    from ..code_gen.LocalCompileData import LocalCompileData
-    from ..code_gen.BaseLink import BaseLink
+from ..lexer.lexer import Token
+from .type.CompileContext import CompileContext
+from .expr.BaseExpr import BaseExpr
+from .type.BaseType import BaseType
+from ..code_gen.BaseCmplObj import BaseCmplObj
+from ..code_gen.LocalCompileData import LocalCompileData
+from ..code_gen.BaseLink import BaseLink

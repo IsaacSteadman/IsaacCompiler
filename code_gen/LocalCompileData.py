@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Set, TYPE_CHECKING, Tuple, TypeVar, Union
+from typing import Dict, List, Optional, Set, Tuple, TypeVar, Union
 
 from ..parser.type.align_util import align_up
 

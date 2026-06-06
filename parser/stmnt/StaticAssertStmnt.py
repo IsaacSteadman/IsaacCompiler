@@ -13,12 +13,8 @@ Supported constant expressions:
   - Parentheses
 """
 
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional
 from .BaseStmnt import BaseStmnt, StmntType
-
-if TYPE_CHECKING:
-    from ...lexer.lexer import Token
-    from ..type.CompileContext import CompileContext
 
 
 class StaticAssertStmnt(BaseStmnt):
@@ -585,3 +581,5 @@ from ..type.proc_typed_decl import proc_typed_decl
 from ..type.align_size_of import size_of
 from ...lexer.lexer import Token, TokenType
 from ..expr.LiteralExpr import LiteralExpr
+from ...lexer.lexer import Token
+from ..type.CompileContext import CompileContext
