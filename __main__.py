@@ -412,6 +412,10 @@ if _raw_argv and _raw_argv[0] in {"gcc", "cc"}:
     from .gcc_driver import run_gcc_driver
 
     raise SystemExit(run_gcc_driver(_raw_argv[1:]))
+if _raw_argv and _raw_argv[0] == "as":
+    from .svm_as_driver import run_svm_as
+
+    raise SystemExit(run_svm_as(_raw_argv[1:]))
 if (
     _raw_argv
     and _raw_argv[0] not in _KNOWN_SUBCOMMANDS

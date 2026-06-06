@@ -54,6 +54,8 @@ _SVC_MAGIC = b"\xf7SVE\0\0\0\0"
 # Recognised input file classifications (by extension).
 _SOURCE_EXTS = {".c", ".cc", ".cpp", ".cxx", ".c++", ".cp", ".i", ".ii"}
 _OBJECT_EXTS = {".sbo", ".sba", ".o", ".a", ".obj", ".lib"}
+# Assembly sources (case-sensitive: ``.S`` is preprocessed, ``.s`` is not).
+_ASM_EXTS = {".s", ".S"}
 
 # -std=<name> -> __STDC_VERSION__ value (None means "leave the macro undefined").
 _STD_VERSIONS = {
@@ -297,18 +299,28 @@ def find_file_name(name: str, lib_dirs: List[str]) -> str:
 # ---------------------------------------------------------------------------
 # Input classification
 # ---------------------------------------------------------------------------
-def classify_inputs(inputs: List[str]) -> Tuple[List[str], List[str]]:
-    """Split inputs into (sources, link_inputs) by file extension."""
+def classify_inputs(
+    inputs: List[str],
+) -> Tuple[List[str], List[str], List[str]]:
+    """Split inputs into (sources, asm_sources, link_inputs) by file extension.
+
+    Assembly extensions are matched case-sensitively so the ``.S`` (preprocess)
+    vs ``.s`` (verbatim) distinction survives; everything else compares
+    case-insensitively.
+    """
     sources: List[str] = []
+    asm_sources: List[str] = []
     link_inputs: List[str] = []
     for path in inputs:
-        ext = os.path.splitext(path)[1].lower()
-        if ext in _SOURCE_EXTS:
+        ext = os.path.splitext(path)[1]
+        if ext in _ASM_EXTS:
+            asm_sources.append(path)
+        elif ext.lower() in _SOURCE_EXTS:
             sources.append(path)
         else:
             # Objects, archives and anything unrecognised go to the linker.
             link_inputs.append(path)
-    return sources, link_inputs
+    return sources, asm_sources, link_inputs
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +399,43 @@ def _compile_source_to_object(
     )
 
 
+def _assemble_source_to_object(
+    source: str,
+    output: str,
+    args,
+    defines: Dict[str, MacroDef],
+    undefines: List[str],
+    warn: _WarningOptions,
+) -> None:
+    """Assemble a ``.s`` / ``.S`` file into a ``.sbo`` object.
+
+    ``.S`` (uppercase) is preprocessed first -- with ``__ASSEMBLER__`` defined
+    and the active ``-D`` / ``-U`` / ``-I`` flags -- exactly as GCC drives
+    ``cpp`` before ``as``.  ``.s`` (lowercase) is assembled verbatim.
+    """
+    from .code_gen.stackvm_binutils.svm_as import AssemblerError, assemble_object
+
+    try:
+        with open(source, "r") as fl:
+            text = fl.read()
+    except OSError as exc:
+        raise GccDriverError(str(exc)) from exc
+    if os.path.splitext(source)[1] == ".S":
+        include_dirs = _include_dirs_for(source, args.include_dirs, args.nostdinc)
+        as_defines = dict(defines)
+        as_defines.setdefault(
+            "__ASSEMBLER__", MacroDef("__ASSEMBLER__", None, "1")
+        )
+        text = preprocess(
+            text, include_dirs, as_defines, undefines, warn.warnings_as_errors
+        )
+    try:
+        obj = assemble_object(text)
+    except AssemblerError as exc:
+        raise GccDriverError("%s: %s" % (source, exc)) from exc
+    write_sbo(obj, output)
+
+
 def _run_preprocess_only(
     args,
     defines: Dict[str, MacroDef],
@@ -432,6 +481,7 @@ def _run_preprocess_only(
 def _run_compile_only(
     args,
     sources: List[str],
+    asm_sources: List[str],
     link_inputs: List[str],
     defines: Dict[str, MacroDef],
     undefines: List[str],
@@ -444,7 +494,8 @@ def _run_compile_only(
             % ", ".join(link_inputs),
             file=sys.stderr,
         )
-    if args.output is not None and len(sources) > 1:
+    total = len(sources) + len(asm_sources)
+    if args.output is not None and total > 1:
         raise GccDriverError("cannot specify -o with -c and multiple source files")
     for source in sources:
         output = args.output if args.output is not None else _object_output_name(source)
@@ -452,12 +503,17 @@ def _run_compile_only(
         _compile_source_to_object(
             source, output, args, defines, undefines, warn, use_runtime_deps
         )
+    for source in asm_sources:
+        output = args.output if args.output is not None else _object_output_name(source)
+        _check_output_parent(output)
+        _assemble_source_to_object(source, output, args, defines, undefines, warn)
     return 0
 
 
 def _link(
     args,
     sources: List[str],
+    asm_sources: List[str],
     link_inputs: List[str],
     defines: Dict[str, MacroDef],
     undefines: List[str],
@@ -472,8 +528,10 @@ def _link(
     # Convenience hosted path: a single translation unit, no extra objects,
     # no libraries and no linker script -> compile and link in-process so the
     # produced image embeds the runtime and a startup wrapper that calls main.
+    # Any assembly inputs force the general object-then-link path.
     convenience = (
         len(sources) == 1
+        and not asm_sources
         and not link_inputs
         and not args.libs
         and linker_script_path is None
@@ -505,8 +563,8 @@ def _link(
         _write_standalone_image(result.cmpl_obj, output)
         return 0
 
-    # General path: compile every source to a temporary object, then run the
-    # raw linker over the objects, archives and resolved libraries.
+    # General path: compile/assemble every source to a temporary object, then
+    # run the raw linker over the objects, archives and resolved libraries.
     with tempfile.TemporaryDirectory(prefix="isaacc-gcc-") as tmpdir:
         object_paths: List[str] = []
         for index, source in enumerate(sources):
@@ -515,6 +573,11 @@ def _link(
             _compile_source_to_object(
                 source, obj_path, args, defines, undefines, warn, use_runtime_deps
             )
+            object_paths.append(obj_path)
+        for index, source in enumerate(asm_sources):
+            base = os.path.splitext(os.path.basename(source))[0]
+            obj_path = os.path.join(tmpdir, f"asm{index}_{base}.sbo")
+            _assemble_source_to_object(source, obj_path, args, defines, undefines, warn)
             object_paths.append(obj_path)
 
         prefer_static = args.static
@@ -585,13 +648,27 @@ def run_gcc_driver(argv: List[str]) -> int:
         if namespace.preprocess_only:
             return _run_preprocess_only(namespace, defines, undefines, warn)
 
-        sources, link_inputs = classify_inputs(namespace.inputs)
+        sources, asm_sources, link_inputs = classify_inputs(namespace.inputs)
         if namespace.compile_only:
             return _run_compile_only(
-                namespace, sources, link_inputs, defines, undefines, warn, use_runtime_deps
+                namespace,
+                sources,
+                asm_sources,
+                link_inputs,
+                defines,
+                undefines,
+                warn,
+                use_runtime_deps,
             )
         return _link(
-            namespace, sources, link_inputs, defines, undefines, warn, use_runtime_deps
+            namespace,
+            sources,
+            asm_sources,
+            link_inputs,
+            defines,
+            undefines,
+            warn,
+            use_runtime_deps,
         )
     except (GccDriverError, PreprocessorError) as exc:
         print("error: %s" % exc, file=sys.stderr)

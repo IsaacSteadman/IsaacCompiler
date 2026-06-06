@@ -476,10 +476,11 @@ class GccDriverUnitTests(unittest.TestCase):
         )
 
     def test_classify_inputs_splits_sources_and_link_inputs(self):
-        sources, link_inputs = self.gd.classify_inputs(
-            ["a.c", "b.cpp", "c.sbo", "d.sba", "weird.xyz"]
+        sources, asm_sources, link_inputs = self.gd.classify_inputs(
+            ["a.c", "b.cpp", "boot.S", "ctx.s", "c.sbo", "d.sba", "weird.xyz"]
         )
         self.assertEqual(sources, ["a.c", "b.cpp"])
+        self.assertEqual(asm_sources, ["boot.S", "ctx.s"])
         self.assertEqual(link_inputs, ["c.sbo", "d.sba", "weird.xyz"])
 
     def test_resolve_macros_respects_command_order(self):
