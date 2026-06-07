@@ -24,6 +24,7 @@ class ExprType(Enum):
     BUILTIN_CALL = 17  # compiler intrinsic call lowered by helper/runtime support
     ATOMIC_INTRINSIC = 18  # StackVM-backed atomic compiler intrinsics
     PERCPU_ADDR = 19  # StackVM current-core per-CPU address calculation
+    BUILTIN_SPECIAL = 20  # compiler-only builtin with custom code generation
 
 
 class BaseExpr(PrettyRepr):

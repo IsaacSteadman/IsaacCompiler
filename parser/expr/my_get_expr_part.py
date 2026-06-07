@@ -150,6 +150,44 @@ def my_get_expr_part(
         expr, c = _build_builtin_expect_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
     elif (
+        s == "__builtin_expect_with_probability"
+        and c + 1 < end
+        and tokens[c + 1].str == "("
+    ):
+        expr, c = _build_builtin_expect_probability_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
+    elif s == "__builtin_constant_p" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_constant_p_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
+    elif s == "__builtin_choose_expr" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_choose_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
+    elif s in {"__builtin_object_size", "__builtin_dynamic_object_size"} and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_object_size_expr(s, tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
+    elif s == "__builtin_alloca" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_alloca_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
+    elif s in {
+        "__builtin_return_address",
+        "__builtin_frame_address",
+    } and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_frame_expr(s, tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
+    elif s == "__builtin_prefetch" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_prefetch_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
+    elif s in {"__builtin_trap", "__builtin_unreachable"} and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_terminator_expr(s, tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
+    elif s in {
+        "__builtin_add_overflow",
+        "__builtin_sub_overflow",
+        "__builtin_mul_overflow",
+    } and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_overflow_expr(s, tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
+    elif (
         s == "__builtin_types_compatible_p" and c + 1 < end and tokens[c + 1].str == "("
     ):
         expr, c = _build_builtin_types_compatible_expr(tokens, c + 2, end, context)
@@ -197,6 +235,7 @@ from .CurlyExpr import CurlyExpr
 from .DesigInitExpr import DesigInitExpr
 from .AtomicIntrinsicExpr import AtomicIntrinsicExpr
 from .BuiltinCallExpr import BuiltinCallExpr
+from .BuiltinSpecialExpr import BuiltinSpecialExpr
 from .CastOpExpr import CastOpExpr
 from .LiteralExpr import LiteralExpr
 from .NameRefExpr import NameRefExpr
@@ -216,16 +255,28 @@ from .expr_part.ParentOpPart import ParenthOpPart
 from .expr_part.SParenthOpPart import SParenthOpPart
 from .expr_part.SimpleOpPart import SimpleOpPart
 from ...lexer.lexer import BreakSymClass, OperatorClass, Token, TokenType
-from ..type.PrimitiveType import PrimitiveType, bool_t, size_l_t, void_t
+from ..type.PrimitiveType import (
+    INT_TYPE_CODES,
+    PrimitiveType,
+    PrimitiveTypeId,
+    bool_t,
+    size_l_t,
+    void_t,
+)
 from ..type.QualType import QualType
+from ..type.eval_const_expr import eval_const_expr
 
 _builtin_result_int_t = PrimitiveType.from_str_name(["signed", "int"])
+_builtin_arg_s32_t = PrimitiveType.from_str_name(["signed", "int"])
+_builtin_arg_s64_t = PrimitiveType.from_str_name(["signed", "long", "long"])
 _builtin_arg_u16_t = PrimitiveType.from_str_name(["unsigned", "short"])
 _builtin_arg_u32_t = PrimitiveType.from_str_name(["unsigned", "int"])
 _builtin_arg_u64_t = size_l_t
 _builtin_ret_u16_t = PrimitiveType.from_str_name(["unsigned", "short"])
 _builtin_ret_u32_t = PrimitiveType.from_str_name(["unsigned", "int"])
 _builtin_ret_u64_t = size_l_t
+_builtin_arg_s128_t = PrimitiveType.from_str_name(["signed", "__int128"])
+_builtin_arg_u128_t = PrimitiveType.from_str_name(["unsigned", "__int128"])
 
 
 class _BuiltinUnarySpec(NamedTuple):
@@ -329,6 +380,15 @@ _builtin_unary_specs: Dict[str, _BuiltinUnarySpec] = {
     ),
     "__builtin_ffsll": _make_builtin_unary_spec(
         "__svm_ffs8", _builtin_arg_u64_t, _builtin_result_int_t
+    ),
+    "__builtin_clrsb": _make_builtin_unary_spec(
+        "__svm_clrsb4", _builtin_arg_s32_t, _builtin_result_int_t
+    ),
+    "__builtin_clrsbl": _make_builtin_unary_spec(
+        "__svm_clrsb8", _builtin_arg_s64_t, _builtin_result_int_t
+    ),
+    "__builtin_clrsbll": _make_builtin_unary_spec(
+        "__svm_clrsb8", _builtin_arg_s64_t, _builtin_result_int_t
     ),
 }
 
@@ -695,6 +755,230 @@ def _build_builtin_expect_expr(tokens, c, end, context):
     return expr, paren_end + 1
 
 
+def _build_builtin_expect_probability_expr(tokens, c, end, context):
+    name = "__builtin_expect_with_probability"
+    args, paren_end = _parse_builtin_expr_args(name, tokens, c, end, context)
+    if len(args) != 3:
+        raise ParsingError(tokens, c, "%s expects exactly three arguments" % name)
+    return args[0], paren_end + 1
+
+
+def _make_int_literal(value, typ=None):
+    if typ is None:
+        typ = _builtin_result_int_t
+    expr = LiteralExpr(LiteralExpr.LIT_INT, str(value))
+    expr.l_val = value
+    expr.t_anot = typ
+    return expr
+
+
+def _parse_builtin_expr_args(name, tokens, c, end, context):
+    paren_end = _find_call_paren_end(tokens, c, end)
+    args = []
+    while c < paren_end:
+        expr, c = get_expr(tokens, c, ",", paren_end, context)
+        if expr is None:
+            break
+        args.append(expr)
+        if c < paren_end:
+            if tokens[c].str != ",":
+                raise ParsingError(tokens, c, "Expected ',' in %s argument list" % name)
+            c += 1
+    return args, paren_end
+
+
+def _top_level_call_commas(tokens, c, end):
+    commas = []
+    lvl = 0
+    ternary_lvl = 0
+    while c < end:
+        s = tokens[c].str
+        if s in _GROUP_OPEN_TO_CLOSE:
+            lvl += 1
+        elif s in _GROUP_CLOSES:
+            lvl -= 1
+        elif s == "?" and lvl == 0:
+            ternary_lvl += 1
+        elif s == ":" and lvl == 0 and ternary_lvl > 0:
+            ternary_lvl -= 1
+        elif s == "," and lvl == 0 and ternary_lvl == 0:
+            commas.append(c)
+        c += 1
+    return commas
+
+
+def _build_builtin_constant_p_expr(tokens, c, end, context):
+    name = "__builtin_constant_p"
+    args, paren_end = _parse_builtin_expr_args(name, tokens, c, end, context)
+    if len(args) != 1:
+        raise ParsingError(tokens, c, "%s expects exactly one argument" % name)
+    return _make_int_literal(1 if eval_const_expr(args[0]) is not None else 0), paren_end + 1
+
+
+def _build_builtin_choose_expr(tokens, c, end, context):
+    paren_end = _find_call_paren_end(tokens, c, end)
+    commas = _top_level_call_commas(tokens, c, paren_end)
+    if len(commas) != 2:
+        raise ParsingError(
+            tokens, c, "__builtin_choose_expr expects exactly three arguments"
+        )
+    cond_expr, cond_c = get_expr(tokens, c, None, commas[0], context)
+    if cond_expr is None or cond_c != commas[0]:
+        raise ParsingError(tokens, c, "__builtin_choose_expr condition is invalid")
+    cond_value = eval_const_expr(cond_expr)
+    if cond_value is None:
+        raise ParsingError(
+            tokens, c, "__builtin_choose_expr condition must be constant"
+        )
+    branch_start, branch_end = (
+        (commas[0] + 1, commas[1]) if cond_value else (commas[1] + 1, paren_end)
+    )
+    expr, expr_c = get_expr(tokens, branch_start, None, branch_end, context)
+    if expr is None or expr_c != branch_end:
+        raise ParsingError(
+            tokens, branch_start, "__builtin_choose_expr branch is invalid"
+        )
+    return expr, paren_end + 1
+
+
+def _build_builtin_object_size_expr(name, tokens, c, end, context):
+    args, paren_end = _parse_builtin_expr_args(name, tokens, c, end, context)
+    if len(args) != 2:
+        raise ParsingError(tokens, c, "%s expects exactly two arguments" % name)
+    return _make_int_literal((1 << 64) - 1, size_l_t), paren_end + 1
+
+
+def _build_builtin_alloca_expr(tokens, c, end, context):
+    name = "__builtin_alloca"
+    args, paren_end = _parse_builtin_expr_args(name, tokens, c, end, context)
+    if len(args) != 1:
+        raise ParsingError(tokens, c, "%s expects exactly one argument" % name)
+    converted = get_implicit_conv_expr(args[0], size_l_t)
+    if converted is None:
+        raise ParsingError(tokens, c, "%s argument must be convertible to size_t" % name)
+    return (
+        BuiltinSpecialExpr(
+            name,
+            BuiltinSpecialExpr.KIND_ALLOCA,
+            [converted[0]],
+            _builtin_void_ptr_t,
+        ),
+        paren_end + 1,
+    )
+
+
+def _build_builtin_frame_expr(name, tokens, c, end, context):
+    args, paren_end = _parse_builtin_expr_args(name, tokens, c, end, context)
+    if len(args) != 1:
+        raise ParsingError(tokens, c, "%s expects exactly one argument" % name)
+    level = eval_const_expr(args[0])
+    if level is None or level < 0:
+        raise ParsingError(tokens, c, "%s level must be a non-negative constant" % name)
+    kind = (
+        BuiltinSpecialExpr.KIND_RETURN_ADDRESS
+        if name == "__builtin_return_address"
+        else BuiltinSpecialExpr.KIND_FRAME_ADDRESS
+    )
+    return (
+        BuiltinSpecialExpr(name, kind, [], _builtin_void_ptr_t, int(level)),
+        paren_end + 1,
+    )
+
+
+def _build_builtin_prefetch_expr(tokens, c, end, context):
+    name = "__builtin_prefetch"
+    args, paren_end = _parse_builtin_expr_args(name, tokens, c, end, context)
+    if len(args) < 1 or len(args) > 3:
+        raise ParsingError(tokens, c, "%s expects one to three arguments" % name)
+    for opt_arg in args[1:]:
+        if eval_const_expr(opt_arg) is None:
+            raise ParsingError(
+                tokens, c, "%s rw/locality arguments must be constant" % name
+            )
+    return (
+        BuiltinSpecialExpr(
+            name, BuiltinSpecialExpr.KIND_PREFETCH, [args[0]], void_t
+        ),
+        paren_end + 1,
+    )
+
+
+def _build_builtin_terminator_expr(name, tokens, c, end, context):
+    args, paren_end = _parse_builtin_expr_args(name, tokens, c, end, context)
+    if len(args) != 0:
+        raise ParsingError(tokens, c, "%s expects no arguments" % name)
+    kind = (
+        BuiltinSpecialExpr.KIND_TRAP
+        if name == "__builtin_trap"
+        else BuiltinSpecialExpr.KIND_UNREACHABLE
+    )
+    return BuiltinSpecialExpr(name, kind, [], void_t), paren_end + 1
+
+
+def _build_builtin_overflow_expr(name, tokens, c, end, context):
+    args, paren_end = _parse_builtin_expr_args(name, tokens, c, end, context)
+    if len(args) != 3:
+        raise ParsingError(tokens, c, "%s expects exactly three arguments" % name)
+    result_ptr_type = get_value_type(args[2].t_anot)
+    if (
+        not isinstance(result_ptr_type, QualType)
+        or result_ptr_type.qual_id != QualType.QUAL_PTR
+    ):
+        raise ParsingError(tokens, c, "%s third argument must be a pointer" % name)
+    result_type = get_base_prim_type(result_ptr_type.tgt_type)
+    if (
+        not isinstance(result_type, PrimitiveType)
+        or result_type.typ not in INT_TYPE_CODES
+        or result_type.typ == PrimitiveTypeId.TYP_BOOL
+    ):
+        raise ParsingError(
+            tokens, c, "%s result pointer must point to an integer type" % name
+        )
+    result_size = size_of(result_type)
+    if result_size not in {1, 2, 4, 8}:
+        raise ParsingError(
+            tokens, c, "%s currently supports 1, 2, 4, and 8 byte results" % name
+        )
+    signed = bool(result_type.sign)
+    wide_type = _builtin_arg_s128_t if signed else _builtin_arg_u128_t
+    converted_args = []
+    for index, arg in enumerate(args[:2], start=1):
+        converted = get_implicit_conv_expr(arg, wide_type)
+        if converted is None:
+            raise ParsingError(
+                tokens,
+                c,
+                "%s argument %u must be convertible to %s"
+                % (name, index, wide_type.to_user_str()),
+            )
+        converted_args.append(converted[0])
+    ptr_conv = get_implicit_conv_expr(args[2], result_ptr_type)
+    if ptr_conv is None:
+        raise ParsingError(tokens, c, "%s third argument is not convertible" % name)
+    op = {"__builtin_add_overflow": "add", "__builtin_sub_overflow": "sub", "__builtin_mul_overflow": "mul"}[name]
+    suffix = ("%s%u" % ("s" if signed else "u", result_size))
+    helper_name = "__svm_%s_overflow_%s" % (op, suffix)
+    helper_arg_types = [
+        wide_type,
+        wide_type,
+        QualType(QualType.QUAL_PTR, result_type),
+    ]
+    return (
+        BuiltinCallExpr(
+            name,
+            converted_args + [ptr_conv[0]],
+            _get_builtin_helper_link_name(
+                helper_name,
+                helper_arg_types,
+                _builtin_result_int_t,
+                context,
+            ),
+            _builtin_result_int_t,
+        ),
+        paren_end + 1,
+    )
+
+
 def _build_builtin_types_compatible_expr(tokens, c, end, context):
     paren_end = _find_call_paren_end(tokens, c, end)
     comma_pos = _find_top_level_call_comma(tokens, c, paren_end)
@@ -967,6 +1251,12 @@ from ..type.ContextVariable import ContextVariable
 from ..type.IdentifiedQualType import IdentifiedQualType
 from ..type.StructType import StructType
 from ..type.UnionType import UnionType
-from ..type.qual_atomic_type_util import compare_no_cvr, get_value_type, is_atomic_type
+from ..type.qual_atomic_type_util import (
+    compare_no_cvr,
+    get_base_prim_type,
+    get_value_type,
+    is_atomic_type,
+)
 from ..type.proc_typed_decl import proc_typed_decl
 from ..type.BaseType import BaseType
+from ..type.align_size_of import size_of

@@ -125,6 +125,91 @@ int __svm_ffs8(unsigned long long x) {
     return n;
 }
 
+int __svm_clrsb4(int x) {
+    unsigned int ux = (unsigned int)x;
+    unsigned int sign = ux >> 31;
+    int bit = 30;
+    int n = 0;
+    while (bit >= 0) {
+        if (((ux >> bit) & 1) != sign) {
+            break;
+        }
+        n = n + 1;
+        bit = bit - 1;
+    }
+    return n;
+}
+
+int __svm_clrsb8(long long x) {
+    unsigned long long ux = (unsigned long long)x;
+    unsigned long long sign = ux >> 63;
+    int bit = 62;
+    int n = 0;
+    while (bit >= 0) {
+        if (((ux >> bit) & 1) != sign) {
+            break;
+        }
+        n = n + 1;
+        bit = bit - 1;
+    }
+    return n;
+}
+
+#define SVM_SIGNED_MIN(BITS) (-(((signed __int128)1) << ((BITS) - 1)))
+#define SVM_SIGNED_MAX(BITS) ((((signed __int128)1) << ((BITS) - 1)) - 1)
+#define SVM_UNSIGNED_MAX(BITS) ((((unsigned __int128)1) << (BITS)) - 1)
+
+#define SVM_DEF_SIGNED_OVERFLOW(SUFFIX, TYPE, BITS) \
+int __svm_add_overflow_s##SUFFIX(signed __int128 a, signed __int128 b, TYPE *out) { \
+    signed __int128 r = a + b; \
+    *out = (TYPE)r; \
+    if (r < SVM_SIGNED_MIN(BITS)) { return 1; } \
+    if (r > SVM_SIGNED_MAX(BITS)) { return 1; } \
+    return 0; \
+} \
+int __svm_sub_overflow_s##SUFFIX(signed __int128 a, signed __int128 b, TYPE *out) { \
+    signed __int128 r = a - b; \
+    *out = (TYPE)r; \
+    if (r < SVM_SIGNED_MIN(BITS)) { return 1; } \
+    if (r > SVM_SIGNED_MAX(BITS)) { return 1; } \
+    return 0; \
+} \
+int __svm_mul_overflow_s##SUFFIX(signed __int128 a, signed __int128 b, TYPE *out) { \
+    signed __int128 r = a * b; \
+    *out = (TYPE)r; \
+    if (r < SVM_SIGNED_MIN(BITS)) { return 1; } \
+    if (r > SVM_SIGNED_MAX(BITS)) { return 1; } \
+    return 0; \
+}
+
+#define SVM_DEF_UNSIGNED_OVERFLOW(SUFFIX, TYPE, BITS) \
+int __svm_add_overflow_u##SUFFIX(unsigned __int128 a, unsigned __int128 b, TYPE *out) { \
+    unsigned __int128 r = a + b; \
+    *out = (TYPE)r; \
+    return r > SVM_UNSIGNED_MAX(BITS); \
+} \
+int __svm_sub_overflow_u##SUFFIX(unsigned __int128 a, unsigned __int128 b, TYPE *out) { \
+    unsigned __int128 r = a - b; \
+    *out = (TYPE)r; \
+    if (a < b) { return 1; } \
+    if (r > SVM_UNSIGNED_MAX(BITS)) { return 1; } \
+    return 0; \
+} \
+int __svm_mul_overflow_u##SUFFIX(unsigned __int128 a, unsigned __int128 b, TYPE *out) { \
+    unsigned __int128 r = a * b; \
+    *out = (TYPE)r; \
+    return r > SVM_UNSIGNED_MAX(BITS); \
+}
+
+SVM_DEF_SIGNED_OVERFLOW(1, signed char, 8)
+SVM_DEF_SIGNED_OVERFLOW(2, signed short, 16)
+SVM_DEF_SIGNED_OVERFLOW(4, int, 32)
+SVM_DEF_SIGNED_OVERFLOW(8, long long, 64)
+SVM_DEF_UNSIGNED_OVERFLOW(1, unsigned char, 8)
+SVM_DEF_UNSIGNED_OVERFLOW(2, unsigned short, 16)
+SVM_DEF_UNSIGNED_OVERFLOW(4, unsigned int, 32)
+SVM_DEF_UNSIGNED_OVERFLOW(8, unsigned long long, 64)
+
 unsigned long long strlen(const char *str) {
     unsigned long long n = 0;
     while (str[n] != 0) {

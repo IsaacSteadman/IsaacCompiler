@@ -191,6 +191,87 @@ def _compile_atomic_intrinsic_expr(
     raise ValueError("Unknown atomic intrinsic id: %d" % expr.intrinsic_id)
 
 
+def _emit_frame_pointer_at_level(cmpl_obj: "BaseCmplObj", level: int) -> None:
+    cmpl_obj.memory.extend([BC_LOAD, BCR_REG_BP | BCR_SZ_8])
+    for _ in range(level):
+        emit_load_i_const(cmpl_obj.memory, 8, False, 3)
+        cmpl_obj.memory.extend([BC_ADD8, BC_LOAD, BCR_ABS_S8 | BCR_SZ_8])
+
+
+def _compile_builtin_special_expr(
+    cmpl_obj: "BaseCmplObj",
+    expr: "BuiltinSpecialExpr",
+    context: "CompileContext",
+    cmpl_data: "LocalCompileData",
+    temp_links: List[Tuple["BaseType", "BaseLink"]],
+) -> Tuple[int, "BaseType"]:
+    if expr.kind in {
+        BuiltinSpecialExpr.KIND_TRAP,
+        BuiltinSpecialExpr.KIND_UNREACHABLE,
+    }:
+        cmpl_obj.memory.append(BC_HLT)
+        return 0, void_t
+
+    if expr.kind == BuiltinSpecialExpr.KIND_PREFETCH:
+        if expr.args:
+            compile_expr(cmpl_obj, expr.args[0], context, cmpl_data, void_t, temp_links)
+        return 0, void_t
+
+    if expr.kind == BuiltinSpecialExpr.KIND_FRAME_ADDRESS:
+        _emit_frame_pointer_at_level(cmpl_obj, int(expr.int_value or 0))
+        return 8, expr.t_anot
+
+    if expr.kind == BuiltinSpecialExpr.KIND_RETURN_ADDRESS:
+        _emit_frame_pointer_at_level(cmpl_obj, int(expr.int_value or 0))
+        cmpl_obj.memory.extend([BC_LOAD, BCR_ABS_S8 | BCR_SZ_8])
+        return 8, expr.t_anot
+
+    if expr.kind == BuiltinSpecialExpr.KIND_ALLOCA:
+        if cmpl_data is None:
+            raise TypeError("__builtin_alloca requires automatic stack storage")
+        char_t = PrimitiveType.from_str_name(["char"])
+        hidden_type = QualType(QualType.QUAL_ARR, char_t, expr.args[0])
+        hidden_name = "__builtin_alloca_%u_%u" % (
+            len(cmpl_data.vars),
+            len(cmpl_obj.memory),
+        )
+        hidden_var = ContextVariable(hidden_name, hidden_type)
+        hidden_var.parent = context
+
+        sz_cls_meta = emit_load_i_const(cmpl_obj.memory, 8, False)
+        cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls_meta])
+        size_lnk = cmpl_data.reserve_stack_storage(hidden_var, 8, None, True)
+
+        sz = compile_expr(
+            cmpl_obj, expr.args[0], context, cmpl_data, size_l_t, temp_links
+        )
+        assert sz == 8
+        emit_load_i_const(cmpl_obj.memory, 7, False, 3)
+        cmpl_obj.memory.append(BC_ADD8)
+        emit_load_i_const(cmpl_obj.memory, -8, True, 3)
+        cmpl_obj.memory.append(BC_AND8)
+        size_lnk.emit_stor(
+            cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        size_lnk.emit_load(
+            cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        cmpl_obj.memory.extend([BC_ADD_SP8])
+
+        vla_lnk = DynamicLocalRef(
+            cmpl_data.bp_off,
+            0,
+            cmpl_data.dynamic_stack_size_links + [size_lnk],
+            vla_size_link=size_lnk,
+        )
+        cmpl_data.setitem(hidden_var.get_link_name(), (hidden_var, vla_lnk), 8)
+        cmpl_data.dynamic_stack_size_links.append(size_lnk)
+        vla_lnk.emit_lea(cmpl_obj.memory)
+        return 8, expr.t_anot
+
+    raise ValueError("Unknown builtin special kind: %d" % expr.kind)
+
+
 @try_catch_wrapper_co_expr
 def compile_expr(
     cmpl_obj: "BaseCmplObj",
@@ -403,6 +484,12 @@ def compile_expr(
             context,
             cmpl_data,
             temp_links,
+        )
+    elif expr.expr_id == ExprType.BUILTIN_SPECIAL:
+        assert isinstance(expr, BuiltinSpecialExpr)
+        assert cmpl_data is not None
+        sz, res_type = _compile_builtin_special_expr(
+            cmpl_obj, expr, context, cmpl_data, temp_links
         )
     elif expr.expr_id == ExprType.PERCPU_ADDR:
         assert isinstance(expr, PerCpuAddrExpr)
@@ -995,6 +1082,7 @@ from .compile_conv_general import compile_conv_general
 from .compile_expr import compile_expr
 from .compile_stmnt import compile_stmnt
 from .CompileObject import CompileObject
+from .DynamicLocalRef import DynamicLocalRef
 from .memory_access import (
     emit_atomic_load_variant,
     emit_tracked_abs_s8_load,
@@ -1014,6 +1102,7 @@ from ..StackVM.PyStackVM import (
     BC128_SUB128S,
     BC128_SUB128U,
     BCR_ABS_C,
+    BCR_ABS_S8,
     BCR_ATOMIC_CAS,
     BCR_ATOMIC_FADD,
     BCR_ATOMIC_FAND,
@@ -1022,7 +1111,7 @@ from ..StackVM.PyStackVM import (
     BCR_ATOMIC_FXOR,
     BCR_ATOMIC_LOAD,
     BCR_ATOMIC_XCHG,
-    BCR_ABS_S8,
+    BCR_REG_BP,
     BCR_SYSREG,
     BCR_SZ_8,
     BCR_TOS,
@@ -1030,12 +1119,15 @@ from ..StackVM.PyStackVM import (
     BC_ADD1,
     BC_ADD8,
     BC_ADD_SP1,
+    BC_ADD_SP8,
+    BC_AND8,
     BC_CALL,
     BC_CMP1,
     BC_CONV,
     BC_EQ0,
     BC_FSUB_16,
     BC_FSUB_2,
+    BC_HLT,
     BC_INT128,
     BC_LOAD,
     BC_MUL8,
@@ -1054,6 +1146,7 @@ from ..parser.expr.BaseExpr import BaseExpr, ExprType
 from ..parser.expr.AtomicIntrinsicExpr import AtomicIntrinsicExpr
 from ..parser.expr.BinaryOpExpr import BinaryOpExpr
 from ..parser.expr.BuiltinCallExpr import BuiltinCallExpr
+from ..parser.expr.BuiltinSpecialExpr import BuiltinSpecialExpr
 from ..parser.expr.CastOpExpr import CastOpExpr, CastType
 from ..parser.expr.CompoundLiteralExpr import CompoundLiteralExpr
 from ..parser.expr.FnCallExpr import FnCallExpr
@@ -1080,6 +1173,7 @@ from ..parser.type.PrimitiveType import (
     PrimitiveType,
     INT_TYPE_CODES,
     bool_t,
+    size_l_t,
     void_t,
     prim_types,
 )
