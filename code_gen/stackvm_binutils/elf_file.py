@@ -1606,3 +1606,246 @@ def load_elf_executable(source: Union[str, BinaryIO]) -> StackVMExecutable:
 
 def is_elf_path(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in {".o", ".elf"} or os.path.basename(path) == "vmlinux"
+
+
+# ---------------------------------------------------------------------------
+# Generic, read-only ELF inspection API.
+#
+# The dump/load helpers above translate ELF <-> the native StackVM dataclasses
+# (and so only surface the information those dataclasses model).  The host
+# binutils CLIs (nm/objdump/readelf/size/strip/objcopy) instead need to walk an
+# ELF image at the section/symbol/program-header level regardless of whether it
+# is a relocatable object or a linked executable.  ``read_elf_image`` provides
+# exactly that view, reusing the section/symbol structs already defined here.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ElfSectionInfo:
+    name: str
+    typ: int
+    flags: int
+    addr: int
+    offset: int
+    size: int
+    link: int
+    info: int
+    align: int
+    entsize: int
+    data: bytes  # empty for SHT_NOBITS
+
+    @property
+    def is_alloc(self) -> bool:
+        return bool(self.flags & SHF_ALLOC)
+
+    @property
+    def is_exec(self) -> bool:
+        return bool(self.flags & SHF_EXECINSTR)
+
+    @property
+    def is_writable(self) -> bool:
+        return bool(self.flags & SHF_WRITE)
+
+    @property
+    def is_nobits(self) -> bool:
+        return self.typ == SHT_NOBITS
+
+
+@dataclass
+class ElfSymbolInfo:
+    name: str
+    value: int
+    size: int
+    binding: int  # STB_*
+    typ: int  # STT_*
+    shndx: int
+    section_name: str  # "" for UND/ABS; otherwise the owning section name
+
+    @property
+    def is_undefined(self) -> bool:
+        return self.shndx == SHN_UNDEF
+
+    @property
+    def is_absolute(self) -> bool:
+        return self.shndx == SHN_ABS
+
+    @property
+    def is_global(self) -> bool:
+        return self.binding != STB_LOCAL
+
+    @property
+    def is_weak(self) -> bool:
+        return self.binding == STB_WEAK
+
+
+@dataclass
+class ElfRelocationInfo:
+    offset: int
+    symbol_index: int
+    symbol_name: str
+    typ: int  # R_STACKVM_*
+    addend: int
+    section_name: str  # the section the relocation patches
+
+
+@dataclass
+class ElfProgramHeaderInfo:
+    typ: int
+    flags: int
+    offset: int
+    vaddr: int
+    filesz: int
+    memsz: int
+    align: int
+
+
+@dataclass
+class ElfImage:
+    e_type: int
+    e_machine: int
+    entry: int
+    sections: List[ElfSectionInfo]
+    symbols: List[ElfSymbolInfo]
+    relocations: List[ElfRelocationInfo]
+    program_headers: List[ElfProgramHeaderInfo]
+
+    def section_by_name(self, name: str) -> Optional[ElfSectionInfo]:
+        for section in self.sections:
+            if section.name == name:
+                return section
+        return None
+
+
+def read_elf_image(data: bytes) -> ElfImage:
+    """Parse *data* into a structural, read-only :class:`ElfImage`.
+
+    Works for both relocatable objects (``ET_REL``) and linked executables
+    (``ET_EXEC``).  The null section (index 0) is preserved so symbol section
+    indices line up with their owning sections.
+    """
+    e_type, e_phoff, e_phnum, e_shoff, e_shnum, e_shstrndx = _check_ident_and_header(
+        data
+    )
+    e_machine = _ELF_HEADER.unpack_from(data)[2]
+    entry = _ELF_HEADER.unpack_from(data)[4]
+
+    headers = _read_section_headers(data, e_shoff, e_shnum)
+    _attach_section_names(data, headers, e_shstrndx)
+
+    sections = [
+        ElfSectionInfo(
+            header["name"],
+            header["type"],
+            header["flags"],
+            header["addr"],
+            header["offset"],
+            header["size"],
+            header["link"],
+            header["info"],
+            header["align"],
+            header["entsize"],
+            _section_payload(data, header),
+        )
+        for header in headers
+    ]
+
+    symbols: List[ElfSymbolInfo] = []
+    for header in headers:
+        if header["type"] != SHT_SYMTAB:
+            continue
+        sym_payload = _section_payload(data, header)
+        if len(sym_payload) % _SYMBOL.size:
+            raise ValueError("ELF symbol table is truncated")
+        link = header["link"]
+        if link >= len(headers):
+            raise ValueError("ELF symbol table string-table link is out of range")
+        strtab = _section_payload(data, headers[link])
+        for offset in range(0, len(sym_payload), _SYMBOL.size):
+            st_name, st_info, _st_other, st_shndx, st_value, st_size = _SYMBOL.unpack_from(
+                sym_payload, offset
+            )
+            if offset == 0 and st_name == 0 and st_info == 0 and st_shndx == SHN_UNDEF:
+                # Skip the reserved leading null symbol.
+                continue
+            if st_shndx not in (SHN_UNDEF, SHN_ABS) and st_shndx < len(headers):
+                section_name = headers[st_shndx]["name"]
+            else:
+                section_name = ""
+            symbols.append(
+                ElfSymbolInfo(
+                    _decode_c_string(strtab, st_name),
+                    st_value,
+                    st_size,
+                    st_info >> 4,
+                    st_info & 0xF,
+                    st_shndx,
+                    section_name,
+                )
+            )
+
+    relocations: List[ElfRelocationInfo] = []
+    for header in headers:
+        if header["type"] != SHT_RELA:
+            continue
+        payload = _section_payload(data, header)
+        if len(payload) % _RELA.size:
+            raise ValueError("ELF relocation section is truncated")
+        target_name = (
+            headers[header["info"]]["name"] if header["info"] < len(headers) else ""
+        )
+        for offset in range(0, len(payload), _RELA.size):
+            r_offset, r_info, r_addend = _RELA.unpack_from(payload, offset)
+            sym_index = r_info >> 32
+            sym_name = (
+                symbols[sym_index - 1].name
+                if 0 < sym_index <= len(symbols)
+                else ""
+            )
+            relocations.append(
+                ElfRelocationInfo(
+                    r_offset,
+                    sym_index,
+                    sym_name,
+                    r_info & 0xFFFFFFFF,
+                    r_addend,
+                    target_name,
+                )
+            )
+
+    program_headers: List[ElfProgramHeaderInfo] = []
+    for index in range(e_phnum):
+        offset = e_phoff + index * _PROGRAM_HEADER.size
+        if offset + _PROGRAM_HEADER.size > len(data):
+            raise ValueError("ELF program headers extend past end of file")
+        (
+            p_type,
+            p_flags,
+            p_offset,
+            p_vaddr,
+            _p_paddr,
+            p_filesz,
+            p_memsz,
+            p_align,
+        ) = _PROGRAM_HEADER.unpack_from(data, offset)
+        program_headers.append(
+            ElfProgramHeaderInfo(
+                p_type, p_flags, p_offset, p_vaddr, p_filesz, p_memsz, p_align
+            )
+        )
+
+    return ElfImage(
+        e_type,
+        e_machine,
+        entry,
+        sections,
+        symbols,
+        relocations,
+        program_headers,
+    )
+
+
+def read_elf(source: Union[str, BinaryIO]) -> ElfImage:
+    if hasattr(source, "read"):
+        return read_elf_image(source.read())
+    with open(source, "rb") as fl:
+        return read_elf_image(fl.read())

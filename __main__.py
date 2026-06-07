@@ -424,6 +424,32 @@ if _raw_argv and _raw_argv[0] == "as":
     from .svm_as_driver import run_svm_as
 
     raise SystemExit(run_svm_as(_raw_argv[1:]))
+# Host binutils CLIs kbuild invokes (workstream C2): nm/objdump/readelf/size/
+# strip/objcopy plus the ranlib archive helper and the kallsyms generator.
+_BINUTILS_TOOLS = {
+    "nm",
+    "objdump",
+    "readelf",
+    "size",
+    "strip",
+    "objcopy",
+    "ranlib",
+    "kallsyms",
+}
+if _raw_argv and _raw_argv[0] in _BINUTILS_TOOLS:
+    from .code_gen.stackvm_binutils import host_cli
+
+    _tool_runner = {
+        "nm": host_cli.run_nm,
+        "objdump": host_cli.run_objdump,
+        "readelf": host_cli.run_readelf,
+        "size": host_cli.run_size,
+        "strip": host_cli.run_strip,
+        "objcopy": host_cli.run_objcopy,
+        "ranlib": host_cli.run_ranlib,
+        "kallsyms": host_cli.run_kallsyms,
+    }[_raw_argv[0]]
+    raise SystemExit(_tool_runner(_raw_argv[1:]))
 if (
     _raw_argv
     and _raw_argv[0] not in _KNOWN_SUBCOMMANDS
