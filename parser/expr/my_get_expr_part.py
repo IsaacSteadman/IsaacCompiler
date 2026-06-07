@@ -16,6 +16,30 @@ from ..util import try_catch_wrapper0
 
 _GROUP_OPEN_TO_CLOSE = {"(": ")", "[": "]", "{": "}"}
 _GROUP_CLOSES = set(_GROUP_OPEN_TO_CLOSE.values())
+_LABEL_ADDRESS_EXPR_START_KEYWORDS = {
+    "return",
+    "case",
+    "goto",
+    "if",
+    "while",
+    "for",
+    "switch",
+}
+
+
+def _is_label_address_start(tokens, c, end):
+    if tokens[c].str != "&&" or c + 1 >= end or tokens[c + 1].type_id != TokenType.NAME:
+        return False
+    if c == 0:
+        return True
+    prev = tokens[c - 1]
+    if prev.str in {")", "]", "}", "++", "--"}:
+        return False
+    if prev.type_id == TokenType.NAME:
+        return prev.str in _LABEL_ADDRESS_EXPR_START_KEYWORDS
+    if LiteralExpr.is_literal_token(prev):
+        return False
+    return True
 
 
 def _scan_group_end_and_top_level_commas(tokens, c, end):
@@ -61,6 +85,10 @@ def my_get_expr_part(
     s = tokens[c].str
     if LiteralExpr.is_literal_token(tokens[c]):
         rtn = LiteralExpr()
+        c = rtn.build(tokens, c, end, context)
+        return ExprOpPart(rtn), c
+    elif _is_label_address_start(tokens, c, end):
+        rtn = LabelAddressExpr()
         c = rtn.build(tokens, c, end, context)
         return ExprOpPart(rtn), c
     elif s == ".":
@@ -238,6 +266,7 @@ from .BuiltinCallExpr import BuiltinCallExpr
 from .BuiltinSpecialExpr import BuiltinSpecialExpr
 from .CastOpExpr import CastOpExpr
 from .LiteralExpr import LiteralExpr
+from .LabelAddressExpr import LabelAddressExpr
 from .NameRefExpr import NameRefExpr
 from .ParenthExpr import ParenthExpr
 from .PerCpuAddrExpr import PerCpuAddrExpr

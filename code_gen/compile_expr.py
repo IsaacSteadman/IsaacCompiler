@@ -282,7 +282,7 @@ def compile_expr(
     temp_links: Optional[List[Tuple["BaseType", "BaseLink"]]] = None,
 ):
     if type_coerce is void_t:
-        if expr.expr_id in {ExprType.LITERAL, ExprType.NAME}:
+        if expr.expr_id in {ExprType.LITERAL, ExprType.NAME, ExprType.LABEL_ADDRESS}:
             return 0
     owns_temps = temp_links is None
     if owns_temps:
@@ -510,6 +510,12 @@ def compile_expr(
         cmpl_obj.get_link(PERCPU_PRIMARY_START_SYMBOL).emit_lea(cmpl_obj.memory)
         cmpl_obj.memory.append(BC_ADD8)
         cmpl_obj.memory.append(BC_ADD8)
+        res_type = expr.t_anot
+        sz = 8
+    elif expr.expr_id == ExprType.LABEL_ADDRESS:
+        assert isinstance(expr, LabelAddressExpr)
+        assert cmpl_data is not None
+        cmpl_data.reference_label(expr.label_name).emit_lea(cmpl_obj.memory)
         res_type = expr.t_anot
         sz = 8
     elif expr.expr_id == ExprType.ATOMIC_INTRINSIC:
@@ -1150,6 +1156,7 @@ from ..parser.expr.BuiltinSpecialExpr import BuiltinSpecialExpr
 from ..parser.expr.CastOpExpr import CastOpExpr, CastType
 from ..parser.expr.CompoundLiteralExpr import CompoundLiteralExpr
 from ..parser.expr.FnCallExpr import FnCallExpr
+from ..parser.expr.LabelAddressExpr import LabelAddressExpr
 from ..parser.expr.LiteralExpr import LiteralExpr
 from ..parser.expr.NameRefExpr import NameRefExpr
 from ..parser.expr.OperatorType import OperatorType

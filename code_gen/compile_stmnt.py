@@ -384,7 +384,33 @@ def compile_stmnt(
     elif stmnt.stmnt_type == StmntType.GOTO:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, GotoStmnt)
-        emit_rel_jump(cmpl_obj.memory, cmpl_data.reference_label(stmnt.label_name))
+        if stmnt.indirect_expr is not None:
+            assert stmnt.indirect_expr.t_anot is not None
+            _target_pt, _target_vt, is_target_ref = get_tgt_ref_type(
+                stmnt.indirect_expr.t_anot
+            )
+            sz = compile_expr(
+                cmpl_obj,
+                stmnt.indirect_expr,
+                context,
+                cmpl_data,
+                None,
+            )
+            assert sz == 8
+            if is_target_ref:
+                emit_tracked_abs_s8_load(
+                    cmpl_obj,
+                    8,
+                    is_volatile_storage_type(
+                        stmnt.indirect_expr.t_anot, through_ref=True
+                    ),
+                    atomic_access=is_atomic_storage_type(
+                        stmnt.indirect_expr.t_anot, through_ref=True
+                    ),
+                )
+            cmpl_obj.memory.append(BC_JMP)
+        else:
+            emit_rel_jump(cmpl_obj.memory, cmpl_data.reference_label(stmnt.label_name))
     elif stmnt.stmnt_type == StmntType.LABEL:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, LabelStmnt)
@@ -407,6 +433,7 @@ from .compile_curly import compile_curly
 from .compile_expr import compile_expr
 from .constants import CURRENT_CMPL_CONDITIONS
 from .branch_emit import emit_rel_jump, emit_rel_jumpif
+from .memory_access import emit_tracked_abs_s8_load
 from .stackvm_binutils.assemble import assemble
 from ..PrettyRepr import format_pretty
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
@@ -419,6 +446,7 @@ from ..StackVM.PyStackVM import (
     BC_CMP8,
     BC_EQ0,
     BC_INT128,
+    BC_JMP,
     BC_LOAD,
     BC_RET,
     BC_RST_SP1,
@@ -440,7 +468,12 @@ from ..parser.type.BaseType import BaseType
 from ..parser.type.ContextVariable import ContextVariable
 from ..parser.stmnt.DeclStmnt import DeclStmnt
 from ..parser.type.CompileContext import CompileContext
-from ..parser.type.qual_atomic_type_util import get_value_type
+from ..parser.type.qual_atomic_type_util import (
+    get_tgt_ref_type,
+    get_value_type,
+    is_atomic_storage_type,
+    is_volatile_storage_type,
+)
 from ..parser.type.align_size_of import size_of
 from ..parser.type.PrimitiveType import void_t
 from ..parser.stmnt.helpers.SingleVarDecl import SingleVarDecl
