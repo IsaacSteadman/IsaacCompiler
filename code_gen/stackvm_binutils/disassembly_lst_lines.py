@@ -30,7 +30,9 @@ _INT128_OPS = [
     "BSWAP4",
     "BSWAP8",
 ]
-_INVTLB_OPS = ["INVTLB_BEGIN", "INVTLB_COMMIT"]
+_INVTLB_OPS = ["LOCAL", "ALL_LOCAL", "SINGLE", "MULTI", "ACK"]
+# Sub-ops that carry an extra flags byte after the sub-op byte.
+_INVTLB_OPS_WITH_FLAGS = (0x02, 0x03)  # SINGLE, MULTI
 # Atomic BCR codes that consume an extra ordering byte in the instruction stream
 _ATOMIC_ORDERING = ("RELAXED", "ACQUIRE", "RELEASE", "SEQ_CST")
 _LOAD_ATOMIC_BCR = {
@@ -209,6 +211,9 @@ def disassembly_lst_lines(
             op = memory[c]
             op_name = _INVTLB_OPS[op] if op < len(_INVTLB_OPS) else "0x%02X" % op
             s = "INVTLB-%s" % op_name
+            if op in _INVTLB_OPS_WITH_FLAGS:
+                c += 1
+                s = "%s flags=0x%02X" % (s, memory[c])
         elif byt == BC_RET_E:
             c += 1
             typ0 = memory[c]
