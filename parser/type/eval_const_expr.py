@@ -54,6 +54,11 @@ def eval_const_expr(expr: "BaseExpr"):
         if inner_value is None:
             return None
         return _coerce_const_cast(expr.type_name, inner_value)
+    if isinstance(expr, InlineIfExpr):
+        cond_value = eval_const_expr(expr.cond)
+        if cond_value is None or isinstance(cond_value, StaticAddress):
+            return None
+        return eval_const_expr(expr.if_true if cond_value else expr.if_false)
     if isinstance(expr, NameRefExpr):
         ctx_var = expr.ctx_var
         if (
@@ -85,11 +90,25 @@ def eval_const_expr(expr: "BaseExpr"):
         return None
     if isinstance(expr, BinaryOpExpr):
         left_value = eval_const_expr(expr.a)
+        if left_value is None or isinstance(left_value, StaticAddress):
+            return None
+        if expr.type_id == BinaryExprSubType.SS_AND:
+            if not left_value:
+                return 0
+            right_value = eval_const_expr(expr.b)
+            if right_value is None or isinstance(right_value, StaticAddress):
+                return None
+            return int(bool(right_value))
+        if expr.type_id == BinaryExprSubType.SS_OR:
+            if left_value:
+                return 1
+            right_value = eval_const_expr(expr.b)
+            if right_value is None or isinstance(right_value, StaticAddress):
+                return None
+            return int(bool(right_value))
         right_value = eval_const_expr(expr.b)
         if (
-            left_value is None
-            or right_value is None
-            or isinstance(left_value, StaticAddress)
+            right_value is None
             or isinstance(right_value, StaticAddress)
         ):
             return None
@@ -131,14 +150,11 @@ def eval_const_expr(expr: "BaseExpr"):
             return int(left_value == right_value)
         if expr.type_id == BinaryExprSubType.NE:
             return int(left_value != right_value)
-        if expr.type_id == BinaryExprSubType.SS_AND:
-            return int(bool(left_value) and bool(right_value))
-        if expr.type_id == BinaryExprSubType.SS_OR:
-            return int(bool(left_value) or bool(right_value))
     return None
 
 
 from ..expr.BinaryOpExpr import BinaryExprSubType, BinaryOpExpr
+from ..expr.InlineIfExpr import InlineIfExpr
 from ..expr.NameRefExpr import NameRefExpr
 from ..expr.ParenthExpr import ParenthExpr
 from ..expr.UnaryOpExpr import UnaryExprSubType, UnaryOpExpr

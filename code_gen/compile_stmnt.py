@@ -89,6 +89,26 @@ def _record_statement_debug_line(
     cmpl_obj.add_debug_line(start_offset, source_file, line, column)
 
 
+def _const_truth(expr: "BaseExpr") -> Optional[bool]:
+    value = eval_const_expr(expr)
+    if value is None or isinstance(value, StaticAddress):
+        return None
+    return bool(value)
+
+
+def _expr_is_terminator(expr: Optional["BaseExpr"]) -> bool:
+    while isinstance(expr, ParenthExpr) and len(expr.lst_expr) == 1:
+        expr = expr.lst_expr[0]
+    return (
+        isinstance(expr, BuiltinSpecialExpr)
+        and expr.kind
+        in {
+            BuiltinSpecialExpr.KIND_TRAP,
+            BuiltinSpecialExpr.KIND_UNREACHABLE,
+        }
+    )
+
+
 def compile_stmnt(
     cmpl_obj: "BaseCmplObj",
     stmnt: "BaseStmnt",
@@ -152,7 +172,7 @@ def compile_stmnt(
                 cmpl_data,
             )
         _record_statement_debug_line(cmpl_obj, stmnt, debug_start_offset)
-        return sz_off
+        return False
     elif stmnt.stmnt_type == StmntType.IF:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, IfElse)
@@ -160,6 +180,16 @@ def compile_stmnt(
         assert stmnt.cond.t_anot is not None, "type annotation required: " + repr(
             stmnt.cond
         )
+        const_cond = _const_truth(stmnt.cond)
+        if const_cond is not None:
+            selected_stmnt = stmnt.stmnt if const_cond else stmnt.else_stmnt
+            terminated = False
+            if selected_stmnt is not None:
+                terminated = compile_stmnt(
+                    cmpl_obj, selected_stmnt, context, cmpl_data
+                )
+            _record_statement_debug_line(cmpl_obj, stmnt, debug_start_offset)
+            return terminated
         # assert stmnt.cond.t_anot is bool
         sz = compile_expr(
             cmpl_obj, stmnt.cond, context, cmpl_data, get_value_type(stmnt.cond.t_anot)
@@ -172,19 +202,24 @@ def compile_stmnt(
         cmpl_obj.memory.append(BC_EQ0)
         lnk_after_if = Linkage()
         emit_rel_jumpif(cmpl_obj.memory, lnk_after_if)
-        compile_stmnt(cmpl_obj, stmnt.stmnt, context, cmpl_data)
+        then_terminated = compile_stmnt(cmpl_obj, stmnt.stmnt, context, cmpl_data)
+        else_terminated = False
         if stmnt.else_stmnt is not None:
             # jump past the else-statement
             lnk_after_else = Linkage()
             emit_rel_jump(cmpl_obj.memory, lnk_after_else)
             lnk_after_if.src = len(cmpl_obj.memory)
             lnk_after_if.fill_all(cmpl_obj.memory)
-            compile_stmnt(cmpl_obj, stmnt.else_stmnt, context, cmpl_data)
+            else_terminated = compile_stmnt(
+                cmpl_obj, stmnt.else_stmnt, context, cmpl_data
+            )
             lnk_after_else.src = len(cmpl_obj.memory)
             lnk_after_else.fill_all(cmpl_obj.memory)
         else:
             lnk_after_if.src = len(cmpl_obj.memory)
             lnk_after_if.fill_all(cmpl_obj.memory)
+        _record_statement_debug_line(cmpl_obj, stmnt, debug_start_offset)
+        return then_terminated and stmnt.else_stmnt is not None and else_terminated
     elif stmnt.stmnt_type == StmntType.FOR:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, ForLoop)
@@ -198,7 +233,13 @@ def compile_stmnt(
         cmpl_data1.cur_breakable = BreakableScope(
             lnk_continue, lnk_end_loop, cmpl_data1, cmpl_data1
         )
-        compile_stmnt(cmpl_obj, stmnt.init, stmnt.context, cmpl_data1)
+        if compile_stmnt(cmpl_obj, stmnt.init, stmnt.context, cmpl_data1):
+            return True
+        const_cond = _const_truth(stmnt.cond)
+        if const_cond is False:
+            cmpl_data1.compile_leave_scope(cmpl_obj, stmnt.context)
+            _record_statement_debug_line(cmpl_obj, stmnt, debug_start_offset)
+            return False
         lnk_begin_loop.src = len(cmpl_obj.memory)
         lnk_end_body = Linkage()
         sz = compile_expr(cmpl_obj, stmnt.cond, stmnt.context, cmpl_data1)
@@ -222,6 +263,10 @@ def compile_stmnt(
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, WhileLoop)
         # assert stmnt.cond.t_anot is bool
+        const_cond = _const_truth(stmnt.cond)
+        if const_cond is False:
+            _record_statement_debug_line(cmpl_obj, stmnt, debug_start_offset)
+            return False
         cmpl_data1 = LocalCompileData(cmpl_data)
         lnk_begin_loop = Linkage()
         lnk_end_loop = Linkage()
@@ -249,12 +294,14 @@ def compile_stmnt(
             cmpl_obj, cmpl_data, breakable.continue_cleanup_target, context
         )
         emit_rel_jump(cmpl_obj.memory, breakable.continue_link)
+        return True
     elif stmnt.stmnt_type == StmntType.BRK:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert cmpl_data.cur_breakable is not None
         breakable = cmpl_data.cur_breakable
         _leave_scopes_until(cmpl_obj, cmpl_data, breakable.break_cleanup_target, context)
         emit_rel_jump(cmpl_obj.memory, breakable.break_link)
+        return True
     elif stmnt.stmnt_type == StmntType.RTN:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, ReturnStmnt)
@@ -283,12 +330,16 @@ def compile_stmnt(
         # TODO:   except there is an additional argument that represents the return value
         # already sortof done
         cmpl_obj.memory.extend([BC_RET])
+        return True
     elif stmnt.stmnt_type == StmntType.SEMI_COLON:
         assert cmpl_data is not None and isinstance(cmpl_obj, CompileObject)
         assert isinstance(stmnt, SemiColonStmnt)
+        terminates = _expr_is_terminator(stmnt.expr)
         if stmnt.expr is not None:
             sz = compile_expr(cmpl_obj, stmnt.expr, context, cmpl_data, void_t)
             assert sz == 0
+        if terminates:
+            return True
     elif stmnt.stmnt_type == StmntType.NAMESPACE:
         assert isinstance(stmnt, NamespaceStmnt)
         for inner_stmnt in stmnt.lst_stmnts:
@@ -371,7 +422,8 @@ def compile_stmnt(
         for seg_idx, (_, seg_stmnts) in enumerate(stmnt.segments):
             seg_linkages[seg_idx].src = len(cmpl_obj.memory)
             for seg_stmnt in seg_stmnts:
-                compile_stmnt(cmpl_obj, seg_stmnt, stmnt.context, cmpl_data1)
+                if compile_stmnt(cmpl_obj, seg_stmnt, stmnt.context, cmpl_data1):
+                    break
 
         # --- Step 5: end-of-switch — pop the switch expression off the stack ---
         lnk_end_switch.src = len(cmpl_obj.memory)
@@ -423,7 +475,7 @@ def compile_stmnt(
     else:
         raise ValueError("Unrecognized Statement Type")
     _record_statement_debug_line(cmpl_obj, stmnt, debug_start_offset)
-    return 0
+    return False
 
 
 from .BaseCmplObj import BaseCmplObj
@@ -480,6 +532,11 @@ from ..parser.type.align_size_of import size_of
 from ..parser.type.PrimitiveType import void_t
 from ..parser.stmnt.helpers.SingleVarDecl import SingleVarDecl
 from ..parser.type.helpers.VarRef import VarRefLnkPrealloc, VarRefTosNamed
+from ..parser.expr.BaseExpr import BaseExpr
+from ..parser.expr.BuiltinSpecialExpr import BuiltinSpecialExpr
+from ..parser.expr.ParenthExpr import ParenthExpr
+from ..parser.type.StaticAddress import StaticAddress
+from ..parser.type.eval_const_expr import eval_const_expr
 
 _DEBUG_STMNT_TYPES = {
     StmntType.ASM,

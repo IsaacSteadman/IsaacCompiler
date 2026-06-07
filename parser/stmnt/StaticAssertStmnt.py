@@ -177,6 +177,25 @@ def _find_top_level_call_comma(
     return None
 
 
+def _top_level_call_commas(tokens: List["Token"], c: int, end: int) -> List[int]:
+    commas = []
+    lvl = 1
+    ternary_lvl = 0
+    while c < end:
+        if tokens[c].str in ("(", "[", "{"):
+            lvl += 1
+        elif tokens[c].str in (")", "]", "}"):
+            lvl -= 1
+        elif tokens[c].str == "?" and lvl == 1:
+            ternary_lvl += 1
+        elif tokens[c].str == ":" and lvl == 1 and ternary_lvl > 0:
+            ternary_lvl -= 1
+        elif tokens[c].str == "," and lvl == 1 and ternary_lvl == 0:
+            commas.append(c)
+        c += 1
+    return commas
+
+
 def _find_top_level_colon(tokens: List["Token"], c: int, end: int) -> Optional[int]:
     lvl = 0
     while c < end:
@@ -188,6 +207,28 @@ def _find_top_level_colon(tokens: List["Token"], c: int, end: int) -> Optional[i
         elif s == ":" and lvl == 0:
             return c
         c += 1
+    return None
+
+
+def _find_top_level_ternary(tokens: List["Token"], start: int, end: int):
+    lvl = 0
+    q_pos = None
+    nested = 0
+    for k in range(start, end):
+        s = tokens[k].str
+        if s in ("(", "[", "{"):
+            lvl += 1
+        elif s in (")", "]", "}"):
+            lvl -= 1
+        elif lvl == 0 and s == "?":
+            if q_pos is None:
+                q_pos = k
+            else:
+                nested += 1
+        elif lvl == 0 and s == ":" and q_pos is not None:
+            if nested == 0:
+                return q_pos, k
+            nested -= 1
     return None
 
 
@@ -341,6 +382,14 @@ def _eval_tokens(
     if start >= end:
         raise ValueError("empty expression")
 
+    ternary = _find_top_level_ternary(tokens, start, end)
+    if ternary is not None:
+        q_pos, colon_pos = ternary
+        cond = _eval_tokens(tokens, start, q_pos, context)
+        if cond:
+            return _eval_tokens(tokens, q_pos + 1, colon_pos, context)
+        return _eval_tokens(tokens, colon_pos + 1, end, context)
+
     n = end - start
 
     # --- Single token ---
@@ -380,6 +429,69 @@ def _eval_tokens(
         except Exception:
             pass
         raise ValueError("sizeof argument is not a type")
+
+    # --- __builtin_expect(expr, expected) / __builtin_expect_with_probability(...) ---
+    if (
+        tokens[start].str in {
+            "__builtin_expect",
+            "__builtin_expect_with_probability",
+        }
+        and start + 1 < end
+        and tokens[start + 1].str == "("
+    ):
+        paren_end = _find_call_paren_end(tokens, start + 2, end)
+        if paren_end != end - 1:
+            raise ValueError("%s must occupy the whole expression" % tokens[start].str)
+        comma_pos = _find_top_level_call_comma(tokens, start + 2, paren_end)
+        if comma_pos is None:
+            raise ValueError("%s expects arguments" % tokens[start].str)
+        return _eval_tokens(tokens, start + 2, comma_pos, context)
+
+    # --- __builtin_constant_p(expr) ---
+    if (
+        tokens[start].str == "__builtin_constant_p"
+        and start + 1 < end
+        and tokens[start + 1].str == "("
+    ):
+        paren_end = _find_call_paren_end(tokens, start + 2, end)
+        if paren_end != end - 1:
+            raise ValueError("__builtin_constant_p must occupy the whole expression")
+        try:
+            _eval_tokens(tokens, start + 2, paren_end, context)
+        except Exception:
+            return 0
+        return 1
+
+    # --- __builtin_choose_expr(const_expr, true_expr, false_expr) ---
+    if (
+        tokens[start].str == "__builtin_choose_expr"
+        and start + 1 < end
+        and tokens[start + 1].str == "("
+    ):
+        paren_end = _find_call_paren_end(tokens, start + 2, end)
+        if paren_end != end - 1:
+            raise ValueError("__builtin_choose_expr must occupy the whole expression")
+        commas = _top_level_call_commas(tokens, start + 2, paren_end)
+        if len(commas) != 2:
+            raise ValueError("__builtin_choose_expr expects three arguments")
+        cond = _eval_tokens(tokens, start + 2, commas[0], context)
+        if cond:
+            return _eval_tokens(tokens, commas[0] + 1, commas[1], context)
+        return _eval_tokens(tokens, commas[1] + 1, paren_end, context)
+
+    # --- __builtin_object_size / __builtin_dynamic_object_size ---
+    if (
+        tokens[start].str in {
+            "__builtin_object_size",
+            "__builtin_dynamic_object_size",
+        }
+        and start + 1 < end
+        and tokens[start + 1].str == "("
+    ):
+        paren_end = _find_call_paren_end(tokens, start + 2, end)
+        if paren_end != end - 1:
+            raise ValueError("%s must occupy the whole expression" % tokens[start].str)
+        return (1 << 64) - 1
 
     # --- __builtin_offsetof(type, member) ---
     if (
