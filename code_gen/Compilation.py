@@ -32,6 +32,13 @@ from .percpu import (
     PERCPU_START_SYMBOLS,
     matches_percpu_section,
 )
+from .tls import (
+    TLS_ALIGN_SYMBOL,
+    TLS_SIZE_SYMBOL,
+    TLS_TEMPLATE_END_SYMBOL,
+    TLS_TEMPLATE_START_SYMBOL,
+    matches_tls_section,
+)
 from ..parser.type.align_util import align_up
 
 INIT_GLOBALS_LINK_NAME = "?Fz__init_globals"
@@ -422,8 +429,14 @@ class Compilation(BaseCmplObj):
         percpu_globs = [
             obj for obj in globs if matches_percpu_section(obj.section_name or "")
         ]
+        tls_globs = [
+            obj for obj in globs if matches_tls_section(obj.section_name or "")
+        ]
         globs = [
-            obj for obj in globs if not matches_percpu_section(obj.section_name or "")
+            obj
+            for obj in globs
+            if not matches_percpu_section(obj.section_name or "")
+            and not matches_tls_section(obj.section_name or "")
         ]
 
         def define_linker_value(names, value):
@@ -487,6 +500,22 @@ class Compilation(BaseCmplObj):
             unit = bytes(self.memory[percpu_start:percpu_end])
             for _copy_index in range(1, percpu_copies):
                 self.memory.extend(unit)
+
+        # TLS template (.tdata).  These objects form the initialisation image a
+        # loader copies into each thread's TLS block; generated code addresses a
+        # thread-local as SVSR_TLS_BASE + (var - __tls_template_start).
+        tls_align = max((obj.alignment for obj in tls_globs), default=1)
+        if tls_align > 1:
+            aligned = align_up(len(self.memory), tls_align)
+            if aligned > len(self.memory):
+                self.memory.extend([0] * (aligned - len(self.memory)))
+        tls_start = len(self.memory)
+        define_linker_value([TLS_TEMPLATE_START_SYMBOL], tls_start)
+        merge_objects(tls_globs)
+        tls_end = len(self.memory)
+        define_linker_value([TLS_TEMPLATE_END_SYMBOL], tls_end)
+        define_linker_value([TLS_SIZE_SYMBOL], tls_end - tls_start)
+        define_linker_value([TLS_ALIGN_SYMBOL], tls_align)
 
         merge_objects(globs)
         for k in self.string_pool:

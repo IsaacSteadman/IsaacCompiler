@@ -20,16 +20,21 @@ class DeclStmnt(BaseStmnt):
         self, tokens: List["Token"], c: int, end: int, context: "CompileContext"
     ) -> int:
         ext_spec = 0
+        is_thread_local = False
         while tokens[c].type_id == TokenType.NAME and tokens[c].str in {
             "extern",
             "static",
             "inline",
             "_Noreturn",
+            "_Thread_local",
+            "__thread",
         }:
             if tokens[c].str == "static":
                 ext_spec = 1
             elif tokens[c].str == "extern":
                 ext_spec = 2
+            elif tokens[c].str in ("_Thread_local", "__thread"):
+                is_thread_local = True
             # inline is a no-op hint for this compiler
             c += 1
         ctor_attr_cursor = c
@@ -144,7 +149,12 @@ class DeclStmnt(BaseStmnt):
 
             def _copy_named_decl_attrs(inst: "ContextVariable") -> "ContextVariable":
                 inst.align_override = named_qual_type.align_override
+                inst.is_thread_local = is_thread_local
                 inst.section_name = named_qual_type.section_name
+                if is_thread_local and inst.section_name is None:
+                    # Thread-local objects default into the TLS template section
+                    # unless the declaration pins an explicit section.
+                    inst.section_name = TLS_SECTION_NAME
                 inst.alias_name = named_qual_type.alias_name
                 inst.cleanup_name = named_qual_type.cleanup_name
                 inst.noreturn = named_qual_type.noreturn
@@ -382,4 +392,5 @@ from ..type.BaseType import TypeClass
 from ..type.qual_atomic_type_util import get_base_prim_type
 from ..type.LocalScope import LocalScope
 from ..type.PrimitiveType import void_t
+from ...code_gen.tls import TLS_SECTION_NAME
 from ...PrettyRepr import get_pretty_repr

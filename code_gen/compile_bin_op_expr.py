@@ -128,6 +128,7 @@ def compile_bin_op_expr(
             else cmpl_obj.get_link(lnk_name)
         )
         assert isinstance(lnk, BaseLink)
+        lnk = wrap_tls_link(cmpl_obj, ctx_var, lnk)
         a_value_type = ctx_var.typ
         sizeof_a = size_of(ctx_var.typ)
         sz_out_b = compile_expr(
@@ -354,6 +355,7 @@ from .LocalCompileData import LocalCompileData
 from .byte_copy_cmpl_intrinsic import byte_copy_cmpl_intrinsic
 from .compile_expr import compile_expr
 from .memory_access import emit_tracked_abs_s8_load, emit_tracked_abs_s8_stor
+from .tls import wrap_tls_link
 from ..PrettyRepr import format_pretty
 from .stackvm_binutils.emit_load_i_const import emit_load_i_const
 from ..StackVM.PyStackVM import (

@@ -8,7 +8,14 @@ def get_stmnt(
 ) -> Tuple["BaseStmnt", int]:
     start = c
     position = tokens[c].line, tokens[c].col
-    _DECL_SPECIFIERS = {"extern", "static", "inline", "_Noreturn"}
+    _DECL_SPECIFIERS = {
+        "extern",
+        "static",
+        "inline",
+        "_Noreturn",
+        "_Thread_local",
+        "__thread",
+    }
     decl_c = c
     leading_attr_specs = []
     while (

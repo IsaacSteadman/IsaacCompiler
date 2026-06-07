@@ -53,6 +53,8 @@ KEYWORDS = (
         "asm",
         "_Noreturn",
         "_Static_assert",
+        "_Thread_local",
+        "__thread",
     }
     | MODIFIERS
     | BASE_TYPE_MODS

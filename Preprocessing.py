@@ -122,6 +122,7 @@ class Preprocessor:
         "__typeof__": "typeof",
         "__restrict__": "restrict",
         "__restrict": "restrict",
+        "__thread": "_Thread_local",
     }
 
     def __init__(

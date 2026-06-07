@@ -588,6 +588,7 @@ def compile_expr(
             else cmpl_obj.get_link(lnk_name)
         )
         assert isinstance(lnk, BaseLink)
+        lnk = wrap_tls_link(cmpl_obj, ctx_var, lnk)
         if type_coerce is None:
             if res_type is None:
                 raise TypeError("Cannot process NameRefExpr without t_anot")
@@ -1104,6 +1105,7 @@ from .memory_access import (
     emit_tracked_abs_s8_stor,
 )
 from .percpu import PERCPU_PRIMARY_SIZE_SYMBOL, PERCPU_PRIMARY_START_SYMBOL
+from .tls import wrap_tls_link
 from .get_bc_conv_bits import get_bc_conv_bits
 from .setup_temp_links import setup_temp_links
 from .tear_down_temp_links import tear_down_temp_links

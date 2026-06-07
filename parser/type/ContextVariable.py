@@ -21,6 +21,7 @@ class ContextVariable(ContextMember, PrettyRepr):
         self.mods = mods if isinstance(mods, VarDeclMods) else VarDeclMods(mods)
         self.bit_field_width: Optional[int] = None
         self.align_override: Optional[int] = None
+        self.is_thread_local: bool = False
         self.section_name: Optional[str] = None
         self.alias_name: Optional[str] = None
         self.cleanup_name: Optional[str] = None
@@ -113,6 +114,10 @@ class ContextVariable(ContextMember, PrettyRepr):
         return select_external_link_name(self.name, isaac_name, mode)
 
     def uses_stack_storage(self) -> bool:
+        # Thread-local objects have thread storage duration: they live in the
+        # per-thread TLS block (the ``.tdata`` template), never on the stack.
+        if self.is_thread_local:
+            return False
         return (
             self.parent is not None
             and self.parent.is_local_scope()
