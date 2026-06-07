@@ -1351,12 +1351,20 @@ def _build_sysv_hash(nbucket: int, name_indices: Sequence[Tuple[str, int]]) -> b
 
 
 def _build_dynsym(
-    dynamic_symbols: Sequence[str],
+    exports: Sequence[str],
+    imports: Sequence[str],
     symbols: Optional[Sequence[object]],
     sections: Sequence[_ElfSection],
     dynstr: _StringTable,
 ) -> Tuple[bytes, List[Tuple[str, int]]]:
-    """Build ``.dynsym`` for the exported *dynamic_symbols* into *dynstr*."""
+    """Build ``.dynsym`` for the *exports* (defined globals this object
+    provides) and *imports* (undefined references the loader must bind).
+
+    Defined exports carry their owning-section index and value; imports are
+    emitted as ``STB_GLOBAL`` / ``SHN_UNDEF`` entries with a zero value.  Every
+    name -- export or import -- gets a ``.hash`` chain entry so the dynamic
+    loader can resolve it by name.
+    """
 
     by_name = {}
     for symbol in symbols or ():
@@ -1364,7 +1372,8 @@ def _build_dynsym(
         by_name.setdefault(name, symbol)
     dynsym = bytearray(_SYMBOL.pack(0, 0, 0, SHN_UNDEF, 0, 0))
     name_indices: List[Tuple[str, int]] = []
-    for table_index, name in enumerate(dynamic_symbols, start=1):
+    table_index = 1
+    for name in exports:
         symbol = by_name.get(name)
         binding = getattr(symbol, "binding", SymbolBinding.GLOBAL)
         typ = getattr(symbol, "typ", SymbolType.NOTYPE)
@@ -1383,6 +1392,14 @@ def _build_dynsym(
             )
         )
         name_indices.append((name, table_index))
+        table_index += 1
+    import_info = (
+        _elf_symbol_binding(SymbolBinding.GLOBAL) << 4
+    ) | _elf_symbol_type(SymbolType.NOTYPE)
+    for name in imports:
+        dynsym.extend(_SYMBOL.pack(dynstr.add(name), import_info, 0, SHN_UNDEF, 0, 0))
+        name_indices.append((name, table_index))
+        table_index += 1
     return bytes(dynsym), name_indices
 
 
@@ -1400,6 +1417,7 @@ def _build_dynamic_segment(
     alloc_sections: Sequence[_ElfSection],
     symbols: Optional[Sequence[object]],
     dynamic_symbols: Sequence[str],
+    dynamic_imports: Sequence[str],
     base_relocations: Sequence[int],
     memory: bytes,
     needed: Sequence[str],
@@ -1420,7 +1438,7 @@ def _build_dynamic_segment(
     soname_offset = dynstr.add(soname) if soname else 0
     needed_offsets = [dynstr.add(name) for name in needed]
     dynsym_bytes, name_indices = _build_dynsym(
-        dynamic_symbols, symbols, alloc_sections, dynstr
+        dynamic_symbols, dynamic_imports, symbols, alloc_sections, dynstr
     )
     nbucket = max(1, len(name_indices))
     hash_bytes = _build_sysv_hash(nbucket, name_indices)
@@ -1517,6 +1535,7 @@ def dumps_elf_executable(
     soname: Optional[str] = None,
     needed: Sequence[str] = (),
     dynamic_symbols: Sequence[str] = (),
+    dynamic_imports: Sequence[str] = (),
 ) -> bytes:
     memory = bytes(executable.memory)
     file_size = len(memory) if executable.file_size is None else executable.file_size
@@ -1563,6 +1582,7 @@ def dumps_elf_executable(
             alloc_sections,
             symbols,
             dynamic_symbols,
+            dynamic_imports,
             executable.base_relocations,
             bytes(image),
             needed,
@@ -1736,6 +1756,7 @@ def write_elf_executable(
     soname: Optional[str] = None,
     needed: Sequence[str] = (),
     dynamic_symbols: Sequence[str] = (),
+    dynamic_imports: Sequence[str] = (),
 ) -> None:
     data = dumps_elf_executable(
         executable,
@@ -1748,6 +1769,7 @@ def write_elf_executable(
         soname=soname,
         needed=needed,
         dynamic_symbols=dynamic_symbols,
+        dynamic_imports=dynamic_imports,
     )
     if hasattr(target, "write"):
         target.write(data)
@@ -2114,12 +2136,15 @@ class ElfImage:
     program_headers: List[ElfProgramHeaderInfo]
     notes: List[ElfNoteInfo] = None
     dynamic: List[ElfDynamicEntry] = None
+    dynamic_symbols: List[ElfSymbolInfo] = None
 
     def __post_init__(self) -> None:
         if self.notes is None:
             self.notes = []
         if self.dynamic is None:
             self.dynamic = []
+        if self.dynamic_symbols is None:
+            self.dynamic_symbols = []
 
     def section_by_name(self, name: str) -> Optional[ElfSectionInfo]:
         for section in self.sections:
@@ -2168,9 +2193,15 @@ def read_elf_image(data: bytes) -> ElfImage:
         for header in headers
     ]
 
+    # Read every symbol table (``.symtab`` and ``.dynsym``) keyed by its own
+    # section-header index, so a relocation can resolve names through the symbol
+    # table named by *its* ``sh_link`` (``.rela.dyn`` -> ``.dynsym``,
+    # ``.rela.text`` -> ``.symtab``).
     symbols: List[ElfSymbolInfo] = []
-    for header in headers:
-        if header["type"] != SHT_SYMTAB:
+    dynamic_symbols: List[ElfSymbolInfo] = []
+    symbols_by_section: Dict[int, List[ElfSymbolInfo]] = {}
+    for header_index, header in enumerate(headers):
+        if header["type"] not in (SHT_SYMTAB, SHT_DYNSYM):
             continue
         sym_payload = _section_payload(data, header)
         if len(sym_payload) % _SYMBOL.size:
@@ -2179,18 +2210,20 @@ def read_elf_image(data: bytes) -> ElfImage:
         if link >= len(headers):
             raise ValueError("ELF symbol table string-table link is out of range")
         strtab = _section_payload(data, headers[link])
-        for offset in range(0, len(sym_payload), _SYMBOL.size):
+        table: List[ElfSymbolInfo] = []
+        for index, offset in enumerate(range(0, len(sym_payload), _SYMBOL.size)):
             st_name, st_info, _st_other, st_shndx, st_value, st_size = _SYMBOL.unpack_from(
                 sym_payload, offset
             )
-            if offset == 0 and st_name == 0 and st_info == 0 and st_shndx == SHN_UNDEF:
-                # Skip the reserved leading null symbol.
+            if index == 0:
+                # The reserved leading null symbol; skip it but keep the 1-based
+                # indices used by relocation ``r_info`` aligned.
                 continue
             if st_shndx not in (SHN_UNDEF, SHN_ABS) and st_shndx < len(headers):
                 section_name = headers[st_shndx]["name"]
             else:
                 section_name = ""
-            symbols.append(
+            table.append(
                 ElfSymbolInfo(
                     _decode_c_string(strtab, st_name),
                     st_value,
@@ -2201,6 +2234,11 @@ def read_elf_image(data: bytes) -> ElfImage:
                     section_name,
                 )
             )
+        symbols_by_section[header_index] = table
+        if header["type"] == SHT_DYNSYM:
+            dynamic_symbols.extend(table)
+        else:
+            symbols.extend(table)
 
     relocations: List[ElfRelocationInfo] = []
     for header in headers:
@@ -2212,12 +2250,13 @@ def read_elf_image(data: bytes) -> ElfImage:
         target_name = (
             headers[header["info"]]["name"] if header["info"] < len(headers) else ""
         )
+        reloc_symbols = symbols_by_section.get(header["link"], [])
         for offset in range(0, len(payload), _RELA.size):
             r_offset, r_info, r_addend = _RELA.unpack_from(payload, offset)
             sym_index = r_info >> 32
             sym_name = (
-                symbols[sym_index - 1].name
-                if 0 < sym_index <= len(symbols)
+                reloc_symbols[sym_index - 1].name
+                if 0 < sym_index <= len(reloc_symbols)
                 else ""
             )
             relocations.append(
@@ -2295,6 +2334,7 @@ def read_elf_image(data: bytes) -> ElfImage:
         program_headers,
         notes,
         dynamic,
+        dynamic_symbols,
     )
 
 

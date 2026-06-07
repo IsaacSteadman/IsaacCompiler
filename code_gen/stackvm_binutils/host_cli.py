@@ -48,6 +48,7 @@ from .elf_file import (
     PT_LOAD,
     PT_NOTE,
     R_STACKVM_64,
+    R_STACKVM_COPY,
     R_STACKVM_GLOB_DAT,
     R_STACKVM_JUMP_SLOT,
     R_STACKVM_NONE,
@@ -391,6 +392,7 @@ _RELOC_NAMES = {
     R_STACKVM_RELATIVE: "R_STACKVM_RELATIVE",
     R_STACKVM_GLOB_DAT: "R_STACKVM_GLOB_DAT",
     R_STACKVM_JUMP_SLOT: "R_STACKVM_JUMP_SLOT",
+    R_STACKVM_COPY: "R_STACKVM_COPY",
 }
 _PT_NAMES = {PT_LOAD: "LOAD", PT_DYNAMIC: "DYNAMIC", PT_NOTE: "NOTE"}
 _DT_NAMES = {
@@ -421,6 +423,34 @@ def _phdr_flag_chars(flags: int) -> str:
     )
 
 
+def _format_symbol_table(name: str, syms: Sequence[ElfSymbolInfo]) -> List[str]:
+    lines = [
+        "Symbol table '%s' contains %d entries:" % (name, len(syms) + 1),
+        "   Num:    Value          Size Type    Bind   Ndx Name",
+        "     0: %016x %5d %-7s %-6s UND " % (0, 0, "NOTYPE", "LOCAL"),
+    ]
+    for index, symbol in enumerate(syms, start=1):
+        if symbol.is_undefined:
+            ndx = "UND"
+        elif symbol.is_absolute:
+            ndx = "ABS"
+        else:
+            ndx = str(symbol.shndx)
+        lines.append(
+            "  %4d: %016x %5d %-7s %-6s %3s %s"
+            % (
+                index,
+                symbol.value,
+                symbol.size,
+                _STT_NAMES.get(symbol.typ, "%#x" % symbol.typ),
+                _STB_NAMES.get(symbol.binding, "%#x" % symbol.binding),
+                ndx,
+                symbol.name,
+            )
+        )
+    return lines
+
+
 def format_readelf(
     path: str,
     image: ElfImage,
@@ -432,6 +462,7 @@ def format_readelf(
     relocs: bool,
     notes: bool = False,
     dynamic: bool = False,
+    dyn_syms: bool = False,
 ) -> List[str]:
     lines: List[str] = []
     if file_header:
@@ -480,28 +511,12 @@ def format_readelf(
                 )
             )
     if symbols:
-        lines.append("Symbol table '.symtab' contains %d entries:" % (len(image.symbols) + 1))
-        lines.append("   Num:    Value          Size Type    Bind   Ndx Name")
-        lines.append("     0: %016x %5d %-7s %-6s UND " % (0, 0, "NOTYPE", "LOCAL"))
-        for index, symbol in enumerate(image.symbols, start=1):
-            if symbol.is_undefined:
-                ndx = "UND"
-            elif symbol.is_absolute:
-                ndx = "ABS"
-            else:
-                ndx = str(symbol.shndx)
-            lines.append(
-                "  %4d: %016x %5d %-7s %-6s %3s %s"
-                % (
-                    index,
-                    symbol.value,
-                    symbol.size,
-                    _STT_NAMES.get(symbol.typ, "%#x" % symbol.typ),
-                    _STB_NAMES.get(symbol.binding, "%#x" % symbol.binding),
-                    ndx,
-                    symbol.name,
-                )
-            )
+        lines.extend(_format_symbol_table(".symtab", image.symbols))
+        # GNU readelf -s also prints the dynamic symbol table when present.
+        if image.dynamic_symbols:
+            lines.extend(_format_symbol_table(".dynsym", image.dynamic_symbols))
+    elif dyn_syms:
+        lines.extend(_format_symbol_table(".dynsym", image.dynamic_symbols))
     if relocs:
         if not image.relocations:
             lines.append("There are no relocations in this file.")
@@ -564,6 +579,7 @@ def run_readelf(argv: Sequence[str]) -> int:
     parser.add_argument("-r", "--relocs", action="store_true")
     parser.add_argument("-n", "--notes", action="store_true")
     parser.add_argument("-d", "--dynamic", action="store_true")
+    parser.add_argument("--dyn-syms", action="store_true", dest="dyn_syms")
     args = parser.parse_args(argv)
 
     any_selected = any(
@@ -576,10 +592,11 @@ def run_readelf(argv: Sequence[str]) -> int:
             args.relocs,
             args.notes,
             args.dynamic,
+            args.dyn_syms,
         ]
     )
     if not any_selected:
-        parser.error("no output requested; use -h/-S/-s/-l/-r/-n/-d or -a")
+        parser.error("no output requested; use -h/-S/-s/-l/-r/-n/-d/--dyn-syms or -a")
     try:
         for path in args.files:
             image = load_image(path)
@@ -593,6 +610,7 @@ def run_readelf(argv: Sequence[str]) -> int:
                 relocs=args.all or args.relocs,
                 notes=args.all or args.notes,
                 dynamic=args.all or args.dynamic,
+                dyn_syms=args.dyn_syms,
             ):
                 print(line)
     except HostToolError as exc:

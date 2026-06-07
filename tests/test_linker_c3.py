@@ -26,17 +26,29 @@ from IsaacCompiler.code_gen.stackvm_binutils.elf_file import (
     DT_FLAGS_1,
     DT_HASH,
     DT_NEEDED,
+    DT_RELA,
+    DT_RELAENT,
+    DT_RELASZ,
     DT_SONAME,
     DT_STRTAB,
     DT_SYMTAB,
     ET_DYN,
     NT_GNU_BUILD_ID,
+    PF_R,
+    PF_W,
     PT_DYNAMIC,
+    PT_LOAD,
     R_STACKVM_64,
+    R_STACKVM_COPY,
+    R_STACKVM_GLOB_DAT,
+    R_STACKVM_JUMP_SLOT,
+    R_STACKVM_NONE,
     R_STACKVM_PC64,
+    R_STACKVM_RELATIVE,
     SHT_DYNAMIC,
     SHT_DYNSYM,
     SHT_HASH,
+    SHT_RELA,
     parse_build_id_note,
     read_elf_image,
 )
@@ -142,6 +154,45 @@ def _exporting_object():
         ],
     )
     return obj
+
+
+def _importing_object():
+    """A sectioned object that exports ``api`` and references two *undefined*
+    externals (a function ``ext_fn`` and a data object ``ext_data``) the dynamic
+    loader is expected to bind.  It also holds an absolute data pointer to its own
+    ``api`` so the shared link produces an ``R_STACKVM_RELATIVE`` ``.rela.dyn``."""
+
+    return StackVMObject(
+        _patch(0) + b"A" * 8,  # call ext_fn[0:8], api body[8:16]
+        _patch(0) + _patch(0),  # self_ptr -> api [0:8], ext_ptr -> ext_data [8:16]
+        [
+            _func("api", 0),
+            ObjectSymbol(
+                "ext_fn", 0, 0, ObjectSegment.CODE, SymbolBinding.GLOBAL,
+                SymbolType.FUNCTION, SymbolFlags.UNDEFINED,
+            ),
+            ObjectSymbol(
+                "ext_data", 0, 0, ObjectSegment.DATA, SymbolBinding.GLOBAL,
+                SymbolType.OBJECT, SymbolFlags.UNDEFINED,
+            ),
+            ObjectSymbol(
+                "self_ptr", 0, 8, ObjectSegment.DATA, SymbolBinding.GLOBAL,
+                SymbolType.OBJECT, section_index=1,
+            ),
+        ],
+        [
+            # api -> ext_fn (PC-relative call to an import; left for the loader)
+            ObjectRelocation(0, 1, ObjectSegment.CODE, RelocationType.PCREL8, 0),
+            # self_ptr = &api (absolute -> base relocation -> .rela.dyn)
+            ObjectRelocation(0, 0, ObjectSegment.DATA, RelocationType.ABS8, 1),
+            # ext_ptr = &ext_data (absolute reference to an import)
+            ObjectRelocation(8, 2, ObjectSegment.DATA, RelocationType.ABS8, 1),
+        ],
+        sections=[
+            ObjectSection(".text", 0, 16, 1, ObjectSegment.CODE, SectionFlags.EXECUTABLE),
+            ObjectSection(".data", 0, 16, 1, ObjectSegment.DATA),
+        ],
+    )
 
 
 class GcSectionsTests(unittest.TestCase):
@@ -373,6 +424,113 @@ class SharedObjectTests(unittest.TestCase):
         self.assertTrue(flags1 & DF_1_PIE)
 
 
+class DynamicLinkingAbiTests(unittest.TestCase):
+    """The dynamic-linking ABI: relocation types, imports/exports in
+    ``.dynsym``, the ``.rela.dyn``/``DT_RELA*`` contract, and the read/write
+    ``PT_DYNAMIC`` segment."""
+
+    def test_relocation_types_are_defined_and_distinct(self):
+        # The dynamic relocation types sit next to the base set defined for ELF.
+        self.assertEqual(
+            (R_STACKVM_GLOB_DAT, R_STACKVM_JUMP_SLOT, R_STACKVM_COPY), (4, 5, 6)
+        )
+        all_types = [
+            R_STACKVM_NONE, R_STACKVM_64, R_STACKVM_PC64, R_STACKVM_RELATIVE,
+            R_STACKVM_GLOB_DAT, R_STACKVM_JUMP_SLOT, R_STACKVM_COPY,
+        ]
+        self.assertEqual(len(set(all_types)), len(all_types))
+        # The inspector/readelf recognises every type by name (so a future
+        # GOT/PLT emitter's relocations render rather than printing as raw hex).
+        from IsaacCompiler.code_gen.stackvm_binutils.host_cli import _RELOC_NAMES
+
+        for typ in all_types:
+            self.assertIn(typ, _RELOC_NAMES)
+        self.assertEqual(_RELOC_NAMES[R_STACKVM_COPY], "R_STACKVM_COPY")
+
+    def test_shared_object_records_imports_and_exports(self):
+        result = link_objects(
+            [("libbar.sbo", _importing_object())],
+            shared=True,
+            soname="libbar.so.1",
+            needed=["libc.so.6"],
+        )
+        # Undefined references are imports, not link errors.
+        self.assertEqual(sorted(result.dynamic_imports), ["ext_data", "ext_fn"])
+        self.assertIn("api", result.dynamic_symbols)
+        self.assertNotIn("ext_fn", result.dynamic_symbols)
+
+        image = read_elf_image(result.to_elf())
+        by_name = {sym.name: sym for sym in image.dynamic_symbols}
+        self.assertIn("api", by_name)
+        self.assertFalse(by_name["api"].is_undefined)
+        for imported in ("ext_fn", "ext_data"):
+            self.assertIn(imported, by_name)
+            self.assertTrue(by_name[imported].is_undefined)
+            self.assertTrue(by_name[imported].is_global)
+        # The import names are real strings in .dynstr, and every dynsym entry
+        # (including the imports) is reachable through the .hash chain table.
+        dynstr = image.section_by_name(".dynstr").data
+        self.assertIn(b"ext_fn\0", dynstr)
+        nbucket, nchain = struct_unpack_hash(image.section_by_name(".hash").data)
+        self.assertGreaterEqual(nchain, len(image.dynamic_symbols) + 1)
+
+    def test_static_link_still_errors_on_undefined(self):
+        # Without -shared/-pie an undefined reference is a hard error...
+        with self.assertRaises(UndefinedSymbolError):
+            link_objects([("libbar.sbo", _importing_object())])
+        # ...but -shared (like ld) defers it to the loader.
+        result = link_objects([("libbar.sbo", _importing_object())], shared=True)
+        self.assertIn("ext_fn", result.dynamic_imports)
+
+    def test_shared_object_emits_rela_dyn_and_dt_rela(self):
+        result = link_objects([("libbar.sbo", _importing_object())], shared=True)
+        image = read_elf_image(result.to_elf())
+        rela = image.section_by_name(".rela.dyn")
+        self.assertIsNotNone(rela)
+        self.assertEqual(rela.typ, SHT_RELA)
+        # The self-pointer produced exactly one base (RELATIVE) relocation; the
+        # pointer to the undefined import was left for the loader, not rebased.
+        # (.rela.dyn is the only relocation section without --emit-relocs.)
+        dyn_relocs = [r for r in image.relocations if r.typ == R_STACKVM_RELATIVE]
+        self.assertEqual(len(dyn_relocs), 1)
+        tags = {e.tag: e.value for e in image.dynamic}
+        self.assertIn(DT_RELA, tags)
+        self.assertIn(DT_RELASZ, tags)
+        self.assertEqual(tags[DT_RELAENT], 24)
+        self.assertEqual(tags[DT_RELASZ], len(dyn_relocs) * tags[DT_RELAENT])
+        self.assertEqual(rela.size, tags[DT_RELASZ])
+
+    def test_dynamic_segment_is_read_write(self):
+        result = link_objects([("libbar.sbo", _importing_object())], shared=True)
+        image = read_elf_image(result.to_elf())
+        dyn_phdr = next(p for p in image.program_headers if p.typ == PT_DYNAMIC)
+        self.assertEqual(dyn_phdr.flags & (PF_R | PF_W), PF_R | PF_W)
+        dynamic_addr = next(e.value for e in image.dynamic if e.tag == DT_SYMTAB)
+        # A read/write PT_LOAD covers the dynamic metadata.
+        covering = [
+            p
+            for p in image.program_headers
+            if p.typ == PT_LOAD
+            and p.flags & (PF_R | PF_W) == (PF_R | PF_W)
+            and p.vaddr <= dynamic_addr < p.vaddr + p.memsz
+        ]
+        self.assertTrue(covering)
+
+    def test_pie_records_imports(self):
+        result = link_objects([("libbar.sbo", _importing_object())], pie=True)
+        self.assertTrue(result.is_pie)
+        self.assertIn("ext_fn", result.dynamic_imports)
+        image = read_elf_image(result.to_elf())
+        names = {s.name for s in image.dynamic_symbols if s.is_undefined}
+        self.assertIn("ext_fn", names)
+
+
+def struct_unpack_hash(data):
+    import struct
+
+    return struct.unpack_from("<II", data)
+
+
 class CliIntegrationTests(unittest.TestCase):
     def _compile(self, tmpdir, name, source):
         src = os.path.join(tmpdir, name + ".c")
@@ -414,6 +572,31 @@ class CliIntegrationTests(unittest.TestCase):
             self.assertIn("NT_GNU_BUILD_ID", notes)
             header = self._run("readelf", "-h", out)
             self.assertIn("DYN", header)
+
+    def test_readelf_dyn_syms_shows_imports_and_exports(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            obj = self._compile(
+                tmpdir,
+                "use",
+                "extern int helper(int);\nint api(int x){return helper(x)+1;}\n",
+            )
+            out = os.path.join(tmpdir, "libuse.so")
+            self._run(
+                "link", "--shared", "-soname", "libuse.so.1",
+                "--needed", "libc.so.6", "-o", out, obj,
+            )
+            dyn_syms = self._run("readelf", "--dyn-syms", out)
+            self.assertIn(".dynsym", dyn_syms)
+            self.assertIn("api", dyn_syms)
+            # The undefined import is listed against the UND section index.
+            helper_line = next(
+                line for line in dyn_syms.splitlines() if line.endswith(" helper")
+            )
+            self.assertIn("UND", helper_line)
+            # readelf -s prints both the static and dynamic symbol tables.
+            all_syms = self._run("readelf", "-s", out)
+            self.assertIn("Symbol table '.symtab'", all_syms)
+            self.assertIn("Symbol table '.dynsym'", all_syms)
 
     def test_link_gc_sections_via_cli(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -481,6 +481,7 @@ class LinkResult:
     is_pie: bool = False
     soname: Optional[str] = None
     needed: List[str] = field(default_factory=list)
+    dynamic_imports: List[str] = field(default_factory=list)
 
     @property
     def symbol_addresses(self) -> Dict[str, int]:
@@ -520,6 +521,7 @@ class LinkResult:
             soname=self.soname,
             needed=self.needed,
             dynamic_symbols=self.dynamic_symbols,
+            dynamic_imports=self.dynamic_imports,
         )
 
 
@@ -916,7 +918,16 @@ class _ObjectLinker:
         all_input_sections = self._build_input_sections()
         live_keys, removed_sections = self._compute_live_sections(all_input_sections)
         unresolved_names = self._unresolved_names(live_keys)
-        if unresolved_names and not self.options.allow_undefined:
+        # A shared object / PIE leaves its undefined references for the dynamic
+        # loader to bind at run time (they are emitted as ``SHN_UNDEF`` imports in
+        # ``.dynsym``), so they are not link-time errors -- matching ``ld``'s
+        # default ``-shared`` behaviour.
+        tolerate_undefined = (
+            self.options.allow_undefined
+            or self.options.shared
+            or self.options.pie
+        )
+        if unresolved_names and not tolerate_undefined:
             raise UndefinedSymbolError(unresolved_names)
         return self._layout_and_relocate(
             sorted(unresolved_names),
@@ -1429,8 +1440,11 @@ class _ObjectLinker:
             for name in localized_symbols:
                 global_symbols.pop(name, None)
 
-        # Exported dynamic symbol table for shared objects / PIE.
+        # Dynamic symbol table for shared objects / PIE: the defined globals this
+        # object exports plus the undefined references it imports (which the
+        # dynamic loader binds at run time).
         dynamic_symbols: List[str] = []
+        dynamic_imports: List[str] = []
         if self.options.shared or self.options.pie:
             seen: Set[str] = set()
             for symbol in linked_symbols:
@@ -1442,6 +1456,10 @@ class _ObjectLinker:
                 ):
                     seen.add(symbol.name)
                     dynamic_symbols.append(symbol.name)
+            for name in unresolved_names:
+                if name not in seen:
+                    seen.add(name)
+                    dynamic_imports.append(name)
 
         build_id = self._compute_build_id(memory, sorted(base_relocations))
 
@@ -1466,6 +1484,7 @@ class _ObjectLinker:
             self.options.pie,
             self.options.soname,
             list(self.options.needed),
+            dynamic_imports,
         )
 
     def _compute_build_id(
@@ -1680,6 +1699,7 @@ def link_files(
                 soname=result.soname,
                 needed=result.needed,
                 dynamic_symbols=result.dynamic_symbols,
+                dynamic_imports=result.dynamic_imports,
             )
         else:
             write_sbc(result.to_executable(), output_path)
