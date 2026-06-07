@@ -127,7 +127,16 @@ def my_get_expr_part(
             # c is now at ')'; advance past it
             c = end_t
             return ExprOpPart(stmnt_expr), c
-        if comma_count == 0 and tokens[c].str != "_Generic":
+        if (
+            comma_count == 0
+            and tokens[c].str != "_Generic"
+            and not (
+                tokens[c].type_id == TokenType.NAME
+                and tokens[c].str.startswith("__builtin_")
+                and c + 1 < end_p
+                and tokens[c + 1].str == "("
+            )
+        ):
             type_name, type_c = proc_typed_decl(tokens, c, end_p, context)
             if type_c > start + 1 and type_name is not None:
                 type_name.typ, type_c = _consume_abstract_decl_suffixes(
