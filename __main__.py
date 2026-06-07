@@ -15,6 +15,7 @@ from .code_gen.stackvm_binutils.linker import (
     LinkerError,
     link_files,
     load_linker_script,
+    load_version_script,
 )
 from .code_gen.stackvm_binutils.elf_file import write_elf_object
 from .code_gen.stackvm_binutils.object_file import write_sbo
@@ -360,6 +361,141 @@ link_parser.add_argument(
     dest="percpu_copies",
     help="reserve COUNT initialized .data..percpu units (default: 1)",
 )
+link_parser.add_argument(
+    "--gc-sections",
+    action="store_true",
+    dest="gc_sections",
+    help="garbage-collect input sections unreachable from the entry/KEEP roots",
+)
+link_parser.add_argument(
+    "-e",
+    "--entry",
+    metavar="symbol",
+    default="_start",
+    dest="entry_symbol",
+    help="set the entry symbol used as a --gc-sections root (default: _start)",
+)
+link_parser.add_argument(
+    "-u",
+    "--undefined",
+    action="append",
+    default=[],
+    metavar="symbol",
+    dest="keep_symbols",
+    help="force SYMBOL to be a --gc-sections root (repeatable)",
+)
+link_parser.add_argument(
+    "--build-id",
+    nargs="?",
+    const="sha1",
+    default=None,
+    metavar="style",
+    dest="build_id",
+    help="emit a .note.gnu.build-id (style: sha1|md5|uuid|0xHEX|none)",
+)
+link_parser.add_argument(
+    "--emit-relocs",
+    action="store_true",
+    dest="emit_relocs",
+    help="retain symbolic relocations in the linked ELF (for KASLR)",
+)
+link_parser.add_argument(
+    "--version-script",
+    metavar="file",
+    default=None,
+    dest="version_script",
+    help="apply a GNU symbol-version script (localizes matched symbols)",
+)
+link_parser.add_argument(
+    "--whole-archive",
+    action="store_true",
+    dest="_whole_archive_flag",
+    help="include every member of the archives that follow",
+)
+link_parser.add_argument(
+    "--no-whole-archive",
+    action="store_true",
+    dest="_no_whole_archive_flag",
+    help="turn off --whole-archive for the archives that follow",
+)
+link_parser.add_argument(
+    "-shared",
+    "--shared",
+    action="store_true",
+    dest="shared",
+    help="produce a shared object (ET_DYN) with a dynamic section",
+)
+link_parser.add_argument(
+    "-pie",
+    "--pie",
+    action="store_true",
+    dest="pie",
+    help="produce a position-independent executable (ET_DYN)",
+)
+link_parser.add_argument(
+    "-soname",
+    "--soname",
+    metavar="name",
+    default=None,
+    dest="soname",
+    help="set the DT_SONAME of a shared object",
+)
+link_parser.add_argument(
+    "--needed",
+    action="append",
+    default=[],
+    metavar="name",
+    dest="needed",
+    help="record a DT_NEEDED dependency (repeatable)",
+)
+
+# Options that consume a following value token; used to reconstruct the
+# positional ``--whole-archive`` regions (argparse cannot preserve the relative
+# order of a batched positional list and the surrounding flags).
+_LINK_VALUE_OPTS = {
+    "-o", "--output-binary", "-M", "-Map", "--map", "--map-file", "-T", "--script",
+    "--code-base", "--data-base", "-a", "--data-seg-align", "--percpu-copies",
+    "--version-script", "-e", "--entry", "-soname", "--soname", "--needed",
+    "-u", "--undefined",
+}
+_BUILD_ID_STYLES = {"sha1", "md5", "uuid", "none", "default", "tree"}
+
+
+def _compute_whole_archive_flags(link_argv, input_paths):
+    """Return a per-input boolean list marking inputs inside a
+    ``--whole-archive`` region, reconstructed from the raw link argv."""
+
+    flags_in_order = []
+    state = False
+    skip_next = False
+    for index, token in enumerate(link_argv):
+        if skip_next:
+            skip_next = False
+            continue
+        if token == "--whole-archive":
+            state = True
+            continue
+        if token == "--no-whole-archive":
+            state = False
+            continue
+        if token == "--build-id":
+            nxt = link_argv[index + 1] if index + 1 < len(link_argv) else None
+            if nxt is not None and (
+                nxt in _BUILD_ID_STYLES or nxt.lower().startswith("0x")
+            ):
+                skip_next = True
+            continue
+        base = token.split("=", 1)[0]
+        if base in _LINK_VALUE_OPTS:
+            if "=" not in token:
+                skip_next = True
+            continue
+        if token.startswith("-") and token != "-":
+            continue
+        flags_in_order.append(state)
+    if len(flags_in_order) != len(input_paths):
+        return [False] * len(input_paths)
+    return flags_in_order
 
 # ---------------------------------------------------------------------------
 # 'addr2line' subcommand
@@ -663,6 +799,7 @@ elif args.subcommand == "link":
             os.path.dirname(os.path.abspath(target))
         ):
             link_parser.error("parent directory does not exist: %s" % target)
+    whole_archive_flags = _compute_whole_archive_flags(sys.argv[2:], args.inputs)
     try:
         result = link_files(
             args.inputs,
@@ -679,18 +816,35 @@ elif args.subcommand == "link":
                 else load_linker_script(args.linker_script)
             ),
             percpu_copies=args.percpu_copies,
+            whole_archive_flags=whole_archive_flags,
+            gc_sections=args.gc_sections,
+            entry_symbol=args.entry_symbol,
+            keep_symbols=args.keep_symbols,
+            build_id=args.build_id,
+            emit_relocs=args.emit_relocs,
+            version_script=(
+                None
+                if args.version_script is None
+                else load_version_script(args.version_script)
+            ),
+            shared=args.shared,
+            pie=args.pie,
+            soname=args.soname,
+            needed=args.needed,
         )
     except (LinkerError, OSError, ValueError) as exc:
         link_parser.error(str(exc))
-    print(
-        "Linked %u object(s): code end %#x, data start %#x, image size %#x"
-        % (
-            len(result.included_objects),
-            result.code_segment_end,
-            result.data_segment_start,
-            len(result.memory),
-        )
+    summary = "Linked %u object(s): code end %#x, data start %#x, image size %#x" % (
+        len(result.included_objects),
+        result.code_segment_end,
+        result.data_segment_start,
+        len(result.memory),
     )
+    if result.removed_sections:
+        summary += " (gc removed %u section(s))" % len(result.removed_sections)
+    if result.build_id:
+        summary += " build-id %s" % result.build_id.hex()
+    print(summary)
 
 # ---------------------------------------------------------------------------
 # 'addr2line' subcommand logic

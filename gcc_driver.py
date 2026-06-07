@@ -33,6 +33,7 @@ from .code_gen.stackvm_binutils.linker import (
     LinkerError,
     link_files,
     load_linker_script,
+    load_version_script,
 )
 from .code_gen.stackvm_binutils.elf_file import write_elf_object
 from .code_gen.stackvm_binutils.object_file import write_sbo
@@ -133,6 +134,8 @@ def build_gcc_parser() -> argparse.ArgumentParser:
     parser.add_argument("-nostdinc", action="store_true", dest="nostdinc")
     parser.add_argument("-nodefaultlibs", action="store_true", dest="nodefaultlibs")
     parser.add_argument("-shared", action="store_true", dest="shared")
+    parser.add_argument("-pie", action="store_true", dest="pie")
+    parser.add_argument("-no-pie", "-nopie", action="store_true", dest="no_pie")
     parser.add_argument("-static", action="store_true", dest="static")
     parser.add_argument("-march", default=None, dest="march", metavar="arch")
     parser.add_argument("-print-file-name", default=None, dest="print_file_name")
@@ -518,6 +521,66 @@ def _run_compile_only(
     return 0
 
 
+def collect_linker_options(args) -> Dict[str, object]:
+    """Translate ``-Wl,`` pass-through options into linker keyword arguments.
+
+    GCC forwards comma-separated ``-Wl,<opt>[,<opt>...]`` tokens to ``ld``; the
+    StackVM driver understands the workstream-C3 subset (``--gc-sections``,
+    ``--build-id``, ``--emit-relocs``, ``-soname``, ``--version-script``,
+    ``--entry``, ``--needed``).
+    """
+
+    wl_args: List[str] = []
+    for warning in args.warnings:
+        if warning.startswith("l,"):
+            wl_args.extend(part for part in warning[2:].split(",") if part)
+    opts: Dict[str, object] = {
+        "gc_sections": False,
+        "build_id": None,
+        "emit_relocs": False,
+        "soname": None,
+        "version_script": None,
+        "needed": [],
+        "entry_symbol": "_start",
+        "keep_symbols": [],
+    }
+    index = 0
+    while index < len(wl_args):
+        token = wl_args[index]
+        if token == "--gc-sections":
+            opts["gc_sections"] = True
+        elif token == "--no-gc-sections":
+            opts["gc_sections"] = False
+        elif token == "--emit-relocs":
+            opts["emit_relocs"] = True
+        elif token == "--build-id":
+            opts["build_id"] = "sha1"
+        elif token.startswith("--build-id="):
+            opts["build_id"] = token.split("=", 1)[1]
+        elif token in ("-soname", "--soname") and index + 1 < len(wl_args):
+            index += 1
+            opts["soname"] = wl_args[index]
+        elif token.startswith("-soname="):
+            opts["soname"] = token.split("=", 1)[1]
+        elif token.startswith("--soname="):
+            opts["soname"] = token.split("=", 1)[1]
+        elif token in ("--version-script", "-version-script") and index + 1 < len(wl_args):
+            index += 1
+            opts["version_script"] = wl_args[index]
+        elif token.startswith("--version-script="):
+            opts["version_script"] = token.split("=", 1)[1]
+        elif token in ("-e", "--entry") and index + 1 < len(wl_args):
+            index += 1
+            opts["entry_symbol"] = wl_args[index]
+        elif token.startswith("--entry="):
+            opts["entry_symbol"] = token.split("=", 1)[1]
+        elif token in ("-u", "--undefined") and index + 1 < len(wl_args):
+            index += 1
+            opts["keep_symbols"].append(wl_args[index])
+        index += 1
+    return opts
+
+
 def _link(
     args,
     sources: List[str],
@@ -532,6 +595,8 @@ def _link(
     _check_output_parent(output)
 
     linker_script_path = args.linker_scripts[-1] if args.linker_scripts else None
+    link_opts = collect_linker_options(args)
+    pie = bool(getattr(args, "pie", False)) and not bool(getattr(args, "no_pie", False))
 
     # Convenience hosted path: a single translation unit, no extra objects,
     # no libraries and no linker script -> compile and link in-process so the
@@ -543,6 +608,12 @@ def _link(
         and not link_inputs
         and not args.libs
         and linker_script_path is None
+        and not args.shared
+        and not pie
+        and not link_opts["gc_sections"]
+        and link_opts["build_id"] is None
+        and not link_opts["emit_relocs"]
+        and link_opts["version_script"] is None
     )
     if convenience:
         from .compile_api import build_compilation
@@ -595,6 +666,11 @@ def _link(
         if not all_inputs:
             raise GccDriverError("no input files")
 
+        version_script = (
+            load_version_script(link_opts["version_script"])
+            if link_opts["version_script"]
+            else None
+        )
         try:
             link_files(
                 all_inputs,
@@ -606,6 +682,16 @@ def _link(
                     if linker_script_path is None
                     else load_linker_script(linker_script_path)
                 ),
+                gc_sections=link_opts["gc_sections"],
+                entry_symbol=link_opts["entry_symbol"],
+                keep_symbols=link_opts["keep_symbols"],
+                build_id=link_opts["build_id"],
+                emit_relocs=link_opts["emit_relocs"],
+                version_script=version_script,
+                shared=args.shared,
+                pie=pie,
+                soname=link_opts["soname"],
+                needed=link_opts["needed"],
             )
         except (LinkerError, OSError, ValueError) as exc:
             raise GccDriverError(str(exc)) from exc

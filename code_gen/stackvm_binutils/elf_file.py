@@ -35,6 +35,10 @@ R_STACKVM_NONE = 0
 R_STACKVM_64 = 1
 R_STACKVM_PC64 = 2
 R_STACKVM_RELATIVE = 3
+# Dynamic-linking relocation types (see Documentation/DynamicLinking.html).
+R_STACKVM_GLOB_DAT = 4  # write the symbol's absolute value into a GOT slot
+R_STACKVM_JUMP_SLOT = 5  # write the symbol's absolute value into a PLT/GOT slot
+R_STACKVM_COPY = 6  # copy initialised data from a shared object at load time
 
 EI_CLASS = 4
 EI_DATA = 5
@@ -45,8 +49,12 @@ EV_CURRENT = 1
 
 ET_REL = 1
 ET_EXEC = 2
+ET_DYN = 3
 
 PT_LOAD = 1
+PT_DYNAMIC = 2
+PT_INTERP = 3
+PT_NOTE = 4
 
 PF_X = 1
 PF_W = 2
@@ -57,8 +65,11 @@ SHT_PROGBITS = 1
 SHT_SYMTAB = 2
 SHT_STRTAB = 3
 SHT_RELA = 4
+SHT_HASH = 5
+SHT_DYNAMIC = 6
 SHT_NOTE = 7
 SHT_NOBITS = 8
+SHT_DYNSYM = 11
 
 SHF_WRITE = 1
 SHF_ALLOC = 2
@@ -74,14 +85,54 @@ STT_FUNC = 2
 STT_SECTION = 3
 STT_FILE = 4
 
+STV_DEFAULT = 0
+STV_INTERNAL = 1
+STV_HIDDEN = 2
+STV_PROTECTED = 3
+
 SHN_UNDEF = 0
 SHN_ABS = 0xFFF1
+
+# Dynamic-section (.dynamic) tags used by the StackVM dynamic ABI.
+DT_NULL = 0
+DT_NEEDED = 1
+DT_PLTRELSZ = 2
+DT_PLTGOT = 3
+DT_HASH = 4
+DT_STRTAB = 5
+DT_SYMTAB = 6
+DT_RELA = 7
+DT_RELASZ = 8
+DT_RELAENT = 9
+DT_STRSZ = 10
+DT_SYMENT = 11
+DT_INIT = 12
+DT_FINI = 13
+DT_SONAME = 14
+DT_REL = 17
+DT_RELSZ = 18
+DT_RELENT = 19
+DT_PLTREL = 20
+DT_JMPREL = 23
+DT_INIT_ARRAY = 25
+DT_FINI_ARRAY = 26
+DT_INIT_ARRAYSZ = 27
+DT_FINI_ARRAYSZ = 28
+DT_FLAGS = 30
+DT_FLAGS_1 = 0x6FFFFFFB
+
+DF_1_PIE = 0x08000000
+
+NT_GNU_BUILD_ID = 3
+_GNU_NOTE_NAME = b"GNU\0"
+_BUILD_ID_NOTE_SECTION = ".note.gnu.build-id"
 
 _ELF_HEADER = struct.Struct("<16sHHIQQQIHHHHHH")
 _SECTION_HEADER = struct.Struct("<IIQQQQIIQQ")
 _PROGRAM_HEADER = struct.Struct("<IIQQQQQQ")
 _SYMBOL = struct.Struct("<IBBHQQ")
 _RELA = struct.Struct("<QQq")
+_DYN = struct.Struct("<qQ")
 _NOTE_HEADER = struct.Struct("<III")
 _STACKVM_NOTE_DESC = struct.Struct("<8sQQQQQQQ")
 _SYMMETA_HEADER = struct.Struct("<8sQ")
@@ -1201,10 +1252,10 @@ def _symbol_section_index(symbol: object, sections: Sequence[_ElfSection]) -> in
 def _make_exec_symtab(
     symbols: Optional[Sequence[object]],
     sections: Sequence[_ElfSection],
-) -> Tuple[bytes, bytes, int]:
+) -> Tuple[bytes, bytes, int, Dict[str, int]]:
     strtab = _StringTable()
     if not symbols:
-        return _SYMBOL.pack(0, 0, 0, SHN_UNDEF, 0, 0), bytes(strtab.data), 1
+        return _SYMBOL.pack(0, 0, 0, SHN_UNDEF, 0, 0), bytes(strtab.data), 1, {}
     ordered = sorted(
         range(len(symbols)),
         key=lambda index: (
@@ -1221,7 +1272,8 @@ def _make_exec_symtab(
         == SymbolBinding.LOCAL
     )
     symtab = bytearray(_SYMBOL.pack(0, 0, 0, SHN_UNDEF, 0, 0))
-    for index in ordered:
+    index_by_name: Dict[str, int] = {}
+    for table_index, index in enumerate(ordered, start=1):
         symbol = symbols[index]
         binding = getattr(symbol, "binding", SymbolBinding.GLOBAL)
         typ = getattr(symbol, "typ", SymbolType.NOTYPE)
@@ -1229,9 +1281,14 @@ def _make_exec_symtab(
         st_shndx = _symbol_section_index(symbol, sections)
         if st_shndx != SHN_ABS:
             st_shndx += 1
+        name = getattr(symbol, "name", "")
+        # Prefer the first (selected/global) definition for a given name so
+        # ``--emit-relocs`` references resolve to the definition, not overrides.
+        if binding != SymbolBinding.LOCAL:
+            index_by_name.setdefault(name, table_index)
         symtab.extend(
             _SYMBOL.pack(
-                strtab.add(getattr(symbol, "name", "")),
+                strtab.add(name),
                 st_info,
                 0,
                 st_shndx,
@@ -1239,13 +1296,227 @@ def _make_exec_symtab(
                 getattr(symbol, "size", 0),
             )
         )
-    return bytes(symtab), bytes(strtab.data), local_count + 1
+    return bytes(symtab), bytes(strtab.data), local_count + 1, index_by_name
+
+
+def _make_build_id_note(build_id: bytes) -> bytes:
+    return (
+        _NOTE_HEADER.pack(len(_GNU_NOTE_NAME), len(build_id), NT_GNU_BUILD_ID)
+        + _pad4(_GNU_NOTE_NAME)
+        + _pad4(bytes(build_id))
+    )
+
+
+def parse_build_id_note(data: bytes) -> Optional[bytes]:
+    """Return the build-id descriptor from a ``.note.gnu.build-id`` payload."""
+
+    offset = 0
+    while offset + _NOTE_HEADER.size <= len(data):
+        namesz, descsz, note_type = _NOTE_HEADER.unpack_from(data, offset)
+        offset += _NOTE_HEADER.size
+        name = data[offset : offset + namesz]
+        offset = _align_up(offset + namesz, 4)
+        desc = data[offset : offset + descsz]
+        offset = _align_up(offset + descsz, 4)
+        if note_type == NT_GNU_BUILD_ID and name.rstrip(b"\0") == b"GNU":
+            return bytes(desc)
+    return None
+
+
+def _elf_hash(name: str) -> int:
+    h = 0
+    for ch in name.encode("utf-8"):
+        h = (h << 4) + ch
+        g = h & 0xF0000000
+        if g:
+            h ^= g >> 24
+        h &= ~g & 0xFFFFFFFF
+    return h & 0xFFFFFFFF
+
+
+def _build_sysv_hash(nbucket: int, name_indices: Sequence[Tuple[str, int]]) -> bytes:
+    """Build a SysV ``.hash`` table for *name_indices* (name, dynsym index)."""
+
+    nchain = (max((index for _name, index in name_indices), default=0)) + 1
+    buckets = [0] * nbucket
+    chains = [0] * nchain
+    for name, index in name_indices:
+        bucket = _elf_hash(name) % nbucket
+        chains[index] = buckets[bucket]
+        buckets[bucket] = index
+    out = bytearray(struct.pack("<II", nbucket, nchain))
+    out.extend(struct.pack("<%dI" % nbucket, *buckets))
+    out.extend(struct.pack("<%dI" % nchain, *chains))
+    return bytes(out)
+
+
+def _build_dynsym(
+    dynamic_symbols: Sequence[str],
+    symbols: Optional[Sequence[object]],
+    sections: Sequence[_ElfSection],
+    dynstr: _StringTable,
+) -> Tuple[bytes, List[Tuple[str, int]]]:
+    """Build ``.dynsym`` for the exported *dynamic_symbols* into *dynstr*."""
+
+    by_name = {}
+    for symbol in symbols or ():
+        name = getattr(symbol, "name", "")
+        by_name.setdefault(name, symbol)
+    dynsym = bytearray(_SYMBOL.pack(0, 0, 0, SHN_UNDEF, 0, 0))
+    name_indices: List[Tuple[str, int]] = []
+    for table_index, name in enumerate(dynamic_symbols, start=1):
+        symbol = by_name.get(name)
+        binding = getattr(symbol, "binding", SymbolBinding.GLOBAL)
+        typ = getattr(symbol, "typ", SymbolType.NOTYPE)
+        st_info = (_elf_symbol_binding(binding) << 4) | _elf_symbol_type(typ)
+        st_shndx = _symbol_section_index(symbol, sections) if symbol else SHN_ABS
+        if st_shndx != SHN_ABS:
+            st_shndx += 1
+        dynsym.extend(
+            _SYMBOL.pack(
+                dynstr.add(name),
+                st_info,
+                0,
+                st_shndx,
+                getattr(symbol, "address", 0),
+                getattr(symbol, "size", 0),
+            )
+        )
+        name_indices.append((name, table_index))
+    return bytes(dynsym), name_indices
+
+
+def _build_dynamic(entries: Sequence[Tuple[int, int]]) -> bytes:
+    out = bytearray()
+    for tag, value in entries:
+        out.extend(_DYN.pack(tag, value))
+    out.extend(_DYN.pack(DT_NULL, 0))
+    return bytes(out)
+
+
+def _build_dynamic_segment(
+    base_va: int,
+    base_index: int,
+    alloc_sections: Sequence[_ElfSection],
+    symbols: Optional[Sequence[object]],
+    dynamic_symbols: Sequence[str],
+    base_relocations: Sequence[int],
+    memory: bytes,
+    needed: Sequence[str],
+    soname: Optional[str],
+    pie: bool,
+) -> Tuple[bytes, List[_ElfSection], List[_ProgramHeader]]:
+    """Lay out ``.dynsym``/``.dynstr``/``.hash``/``.rela.dyn``/``.dynamic`` into
+    a fresh read/write loadable segment starting at *base_va*.
+
+    Returns the raw segment bytes (to splice into the image), the section
+    descriptors with assigned virtual addresses, and the new program headers
+    (``PT_LOAD`` covering the metadata and ``PT_DYNAMIC`` covering
+    ``.dynamic``).  ``base_index`` is the section-header index the first of
+    these sections will occupy so cross-links resolve correctly.
+    """
+
+    dynstr = _StringTable()
+    soname_offset = dynstr.add(soname) if soname else 0
+    needed_offsets = [dynstr.add(name) for name in needed]
+    dynsym_bytes, name_indices = _build_dynsym(
+        dynamic_symbols, symbols, alloc_sections, dynstr
+    )
+    nbucket = max(1, len(name_indices))
+    hash_bytes = _build_sysv_hash(nbucket, name_indices)
+    rela_bytes = b"".join(
+        _RELA.pack(offset, R_STACKVM_RELATIVE, _read_i64(memory, offset))
+        for offset in base_relocations
+    )
+
+    blob = bytearray()
+    sections: List[_ElfSection] = []
+    index = {"dynsym": base_index}
+
+    def place(name: str, typ: int, data: bytes, align: int, entsize: int) -> int:
+        pad = _align_up(len(blob), align) - len(blob)
+        blob.extend(b"\0" * pad)
+        addr = base_va + len(blob)
+        blob.extend(data)
+        sections.append(
+            _ElfSection(
+                name, typ, SHF_ALLOC, addr, bytes(data), len(data), align, entsize
+            )
+        )
+        return addr
+
+    dynsym_addr = place(".dynsym", SHT_DYNSYM, dynsym_bytes, 8, _SYMBOL.size)
+    dynstr_index = base_index + 1
+    dynstr_addr = place(".dynstr", SHT_STRTAB, bytes(dynstr.data), 1, 0)
+    hash_addr = place(".hash", SHT_HASH, hash_bytes, 8, 4)
+    rela_addr = place(".rela.dyn", SHT_RELA, rela_bytes, 8, _RELA.size) if rela_bytes else 0
+
+    entries: List[Tuple[int, int]] = []
+    for offset in needed_offsets:
+        entries.append((DT_NEEDED, offset))
+    if soname:
+        entries.append((DT_SONAME, soname_offset))
+    entries.extend(
+        [
+            (DT_HASH, hash_addr),
+            (DT_STRTAB, dynstr_addr),
+            (DT_SYMTAB, dynsym_addr),
+            (DT_STRSZ, len(dynstr.data)),
+            (DT_SYMENT, _SYMBOL.size),
+        ]
+    )
+    if rela_bytes:
+        entries.extend(
+            [
+                (DT_RELA, rela_addr),
+                (DT_RELASZ, len(rela_bytes)),
+                (DT_RELAENT, _RELA.size),
+            ]
+        )
+    if pie:
+        entries.append((DT_FLAGS_1, DF_1_PIE))
+    dynamic_bytes = _build_dynamic(entries)
+    dynamic_addr = place(".dynamic", SHT_DYNAMIC, dynamic_bytes, 8, _DYN.size)
+
+    # Cross-links: .dynsym -> .dynstr, .hash -> .dynsym, .rela.dyn -> .dynsym,
+    # .dynamic -> .dynstr.  ``info`` for .dynsym is the count of leading locals.
+    by_name = {section.name: section for section in sections}
+    by_name[".dynsym"].link = dynstr_index
+    by_name[".dynsym"].info = 1
+    by_name[".hash"].link = index["dynsym"]
+    if rela_bytes:
+        by_name[".rela.dyn"].link = index["dynsym"]
+    by_name[".dynamic"].link = dynstr_index
+
+    phdrs = [
+        _ProgramHeader(
+            PT_LOAD, PF_R | PF_W, 0, base_va, len(blob), len(blob), 0x1000
+        ),
+        _ProgramHeader(
+            PT_DYNAMIC,
+            PF_R | PF_W,
+            0,
+            dynamic_addr,
+            len(dynamic_bytes),
+            len(dynamic_bytes),
+            8,
+        ),
+    ]
+    return bytes(blob), sections, phdrs
 
 
 def dumps_elf_executable(
     executable: StackVMExecutable,
     section_layouts: Optional[Sequence[object]] = None,
     symbols: Optional[Sequence[object]] = None,
+    *,
+    build_id: bytes = b"",
+    emitted_relocations: Optional[Sequence[object]] = None,
+    shared: bool = False,
+    pie: bool = False,
+    soname: Optional[str] = None,
+    needed: Sequence[str] = (),
+    dynamic_symbols: Sequence[str] = (),
 ) -> bytes:
     memory = bytes(executable.memory)
     file_size = len(memory) if executable.file_size is None else executable.file_size
@@ -1279,7 +1550,29 @@ def dumps_elf_executable(
             )
         )
 
-    if executable.base_relocations:
+    image = bytearray(memory)
+    is_dynamic = shared or pie
+    e_type = ET_DYN if is_dynamic else ET_EXEC
+
+    if is_dynamic:
+        dyn_base = _align_up(len(image), 0x1000)
+        image.extend(b"\0" * (dyn_base - len(image)))
+        dyn_blob, dyn_sections, dyn_phdrs = _build_dynamic_segment(
+            dyn_base,
+            len(sections),
+            alloc_sections,
+            symbols,
+            dynamic_symbols,
+            executable.base_relocations,
+            bytes(image),
+            needed,
+            soname,
+            pie,
+        )
+        image.extend(dyn_blob)
+        sections.extend(dyn_sections)
+        phdrs.extend(dyn_phdrs)
+    elif executable.base_relocations:
         rela = bytearray()
         for offset in executable.base_relocations:
             addend = _read_i64(memory, offset)
@@ -1293,6 +1586,18 @@ def dumps_elf_executable(
                 bytes(rela),
                 align=8,
                 entsize=_RELA.size,
+            )
+        )
+
+    if build_id:
+        sections.append(
+            _ElfSection(
+                _BUILD_ID_NOTE_SECTION,
+                SHT_NOTE,
+                0,
+                0,
+                _make_build_id_note(bytes(build_id)),
+                align=4,
             )
         )
 
@@ -1327,7 +1632,50 @@ def dumps_elf_executable(
         )
     )
 
-    symtab, strtab, sym_info = _make_exec_symtab(symbols, alloc_sections)
+    symtab, strtab, sym_info, sym_index_by_name = _make_exec_symtab(
+        symbols, alloc_sections
+    )
+
+    if emitted_relocations:
+        code_relocs = bytearray()
+        data_relocs = bytearray()
+        for reloc in emitted_relocations:
+            sym_index = sym_index_by_name.get(getattr(reloc, "symbol_name", ""), 0)
+            r_info = (sym_index << 32) | _elf_relocation_type(getattr(reloc, "typ"))
+            packed = _RELA.pack(
+                getattr(reloc, "offset", 0), r_info, getattr(reloc, "addend", 0)
+            )
+            if getattr(reloc, "segment", ObjectSegment.CODE) == ObjectSegment.CODE:
+                code_relocs.extend(packed)
+            else:
+                data_relocs.extend(packed)
+        for rela_name, payload, target_name in (
+            (".rela.text", code_relocs, ".text"),
+            (".rela.data", data_relocs, ".data"),
+        ):
+            if not payload:
+                continue
+            target_index = next(
+                (
+                    index + 1
+                    for index, section in enumerate(alloc_sections)
+                    if section.name == target_name
+                ),
+                0,
+            )
+            sections.append(
+                _ElfSection(
+                    rela_name,
+                    SHT_RELA,
+                    0,
+                    0,
+                    bytes(payload),
+                    align=8,
+                    entsize=_RELA.size,
+                    info=target_index,
+                )
+            )
+
     symtab_index = len(sections)
     sections.append(
         _ElfSection(
@@ -1345,7 +1693,9 @@ def dumps_elf_executable(
     sections.append(_ElfSection(".strtab", SHT_STRTAB, 0, 0, strtab, align=1))
     sections[symtab_index].link = strtab_index
     for section in sections:
-        if section.typ == SHT_RELA:
+        # Dynamic SHT_RELA sections already link to .dynsym; only the static
+        # (.symtab-based) relocation sections still need their link set.
+        if section.typ == SHT_RELA and section.link == 0:
             section.link = symtab_index
 
     shstrtab = _StringTable()
@@ -1360,13 +1710,13 @@ def dumps_elf_executable(
                 break
 
     return _finalize_elf(
-        ET_EXEC,
+        e_type,
         sections,
         phdrs,
         entry,
         shstrtab,
         shstrtab_index,
-        memory,
+        bytes(image),
         executable.code_segment_end,
         executable.data_segment_start,
         file_size,
@@ -1378,8 +1728,27 @@ def write_elf_executable(
     target: Union[str, BinaryIO],
     section_layouts: Optional[Sequence[object]] = None,
     symbols: Optional[Sequence[object]] = None,
+    *,
+    build_id: bytes = b"",
+    emitted_relocations: Optional[Sequence[object]] = None,
+    shared: bool = False,
+    pie: bool = False,
+    soname: Optional[str] = None,
+    needed: Sequence[str] = (),
+    dynamic_symbols: Sequence[str] = (),
 ) -> None:
-    data = dumps_elf_executable(executable, section_layouts, symbols)
+    data = dumps_elf_executable(
+        executable,
+        section_layouts,
+        symbols,
+        build_id=build_id,
+        emitted_relocations=emitted_relocations,
+        shared=shared,
+        pie=pie,
+        soname=soname,
+        needed=needed,
+        dynamic_symbols=dynamic_symbols,
+    )
     if hasattr(target, "write"):
         target.write(data)
         return
@@ -1405,9 +1774,10 @@ def _finalize_elf(
     sections[shstrtab_index].size = len(sections[shstrtab_index].data)
 
     offset = _ELF_HEADER.size + len(phdrs) * _PROGRAM_HEADER.size
-    if e_type == ET_EXEC:
+    if e_type in (ET_EXEC, ET_DYN):
         offset = _align_up(offset, 0x1000)
-        for phdr in phdrs:
+        load_phdrs = [phdr for phdr in phdrs if phdr.typ == PT_LOAD]
+        for phdr in load_phdrs:
             if phdr.vaddr == 0:
                 phdr.offset = offset
                 offset += phdr.filesz
@@ -1416,7 +1786,7 @@ def _finalize_elf(
                 phdr.offset = offset
                 offset += phdr.filesz
         out = bytearray(b"\0" * offset)
-        for phdr in phdrs:
+        for phdr in load_phdrs:
             if phdr.filesz == 0:
                 continue
             src_start = phdr.vaddr
@@ -1426,22 +1796,42 @@ def _finalize_elf(
             if section.flags & SHF_ALLOC:
                 if section.typ == SHT_NOBITS:
                     section.offset = 0
-                elif section.addr < data_segment_start:
-                    section.offset = phdrs[0].offset + section.addr
+                    continue
+                owner = next(
+                    (
+                        phdr
+                        for phdr in load_phdrs
+                        if phdr.vaddr <= section.addr
+                        and section.addr + section.sh_size <= phdr.vaddr + phdr.filesz
+                    ),
+                    None,
+                )
+                if owner is None:
+                    section.offset = 0
                 else:
-                    data_phdr = next(
-                        (phdr for phdr in phdrs if phdr.vaddr == data_segment_start),
-                        None,
-                    )
-                    if data_phdr is None:
-                        section.offset = 0
-                    else:
-                        section.offset = data_phdr.offset + section.addr - data_segment_start
+                    section.offset = owner.offset + section.addr - owner.vaddr
             elif section.typ != SHT_NULL:
                 offset = _align_up(len(out), section.align)
                 out.extend(b"\0" * (offset - len(out)))
                 section.offset = offset
                 out.extend(section.data)
+        # Non-loadable program headers (PT_DYNAMIC) inherit the file offset of
+        # the loadable segment that contains their virtual address.
+        for phdr in phdrs:
+            if phdr.typ == PT_LOAD:
+                continue
+            owner = next(
+                (
+                    load
+                    for load in load_phdrs
+                    if load.vaddr <= phdr.vaddr
+                    and phdr.vaddr + phdr.filesz <= load.vaddr + load.filesz
+                ),
+                None,
+            )
+            phdr.offset = (
+                owner.offset + phdr.vaddr - owner.vaddr if owner is not None else 0
+            )
     else:
         out = bytearray(b"\0" * _ELF_HEADER.size)
         for section in sections:
@@ -1700,6 +2090,20 @@ class ElfProgramHeaderInfo:
 
 
 @dataclass
+class ElfNoteInfo:
+    section_name: str
+    name: str
+    typ: int
+    desc: bytes
+
+
+@dataclass
+class ElfDynamicEntry:
+    tag: int
+    value: int
+
+
+@dataclass
 class ElfImage:
     e_type: int
     e_machine: int
@@ -1708,11 +2112,26 @@ class ElfImage:
     symbols: List[ElfSymbolInfo]
     relocations: List[ElfRelocationInfo]
     program_headers: List[ElfProgramHeaderInfo]
+    notes: List[ElfNoteInfo] = None
+    dynamic: List[ElfDynamicEntry] = None
+
+    def __post_init__(self) -> None:
+        if self.notes is None:
+            self.notes = []
+        if self.dynamic is None:
+            self.dynamic = []
 
     def section_by_name(self, name: str) -> Optional[ElfSectionInfo]:
         for section in self.sections:
             if section.name == name:
                 return section
+        return None
+
+    @property
+    def build_id(self) -> Optional[bytes]:
+        for note in self.notes:
+            if note.typ == NT_GNU_BUILD_ID and note.name == "GNU":
+                return note.desc
         return None
 
 
@@ -1833,6 +2252,39 @@ def read_elf_image(data: bytes) -> ElfImage:
             )
         )
 
+    notes: List[ElfNoteInfo] = []
+    for header in headers:
+        if header["type"] != SHT_NOTE:
+            continue
+        payload = _section_payload(data, header)
+        note_offset = 0
+        while note_offset + _NOTE_HEADER.size <= len(payload):
+            namesz, descsz, note_type = _NOTE_HEADER.unpack_from(payload, note_offset)
+            note_offset += _NOTE_HEADER.size
+            name = payload[note_offset : note_offset + namesz].rstrip(b"\0")
+            note_offset = _align_up(note_offset + namesz, 4)
+            desc = payload[note_offset : note_offset + descsz]
+            note_offset = _align_up(note_offset + descsz, 4)
+            notes.append(
+                ElfNoteInfo(
+                    header["name"],
+                    name.decode("utf-8", "replace"),
+                    note_type,
+                    bytes(desc),
+                )
+            )
+
+    dynamic: List[ElfDynamicEntry] = []
+    for header in headers:
+        if header["type"] != SHT_DYNAMIC:
+            continue
+        payload = _section_payload(data, header)
+        for offset in range(0, len(payload) - _DYN.size + 1, _DYN.size):
+            tag, value = _DYN.unpack_from(payload, offset)
+            dynamic.append(ElfDynamicEntry(tag, value))
+            if tag == DT_NULL:
+                break
+
     return ElfImage(
         e_type,
         e_machine,
@@ -1841,6 +2293,8 @@ def read_elf_image(data: bytes) -> ElfImage:
         symbols,
         relocations,
         program_headers,
+        notes,
+        dynamic,
     )
 
 

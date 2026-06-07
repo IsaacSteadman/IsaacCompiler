@@ -33,19 +33,31 @@ from .archive_file import (
 from .debug_info import DEBUG_SECTION_NAME
 from .disassemble import disassemble
 from .elf_file import (
+    DT_NEEDED,
+    DT_NULL,
+    DT_SONAME,
     ELF_MAGIC,
+    ET_DYN,
     ET_EXEC,
     ET_REL,
+    NT_GNU_BUILD_ID,
     PF_R,
     PF_W,
     PF_X,
+    PT_DYNAMIC,
     PT_LOAD,
+    PT_NOTE,
     R_STACKVM_64,
+    R_STACKVM_GLOB_DAT,
+    R_STACKVM_JUMP_SLOT,
     R_STACKVM_NONE,
     R_STACKVM_PC64,
     R_STACKVM_RELATIVE,
     SHN_ABS,
     SHN_UNDEF,
+    SHT_DYNAMIC,
+    SHT_DYNSYM,
+    SHT_HASH,
     SHT_NOBITS,
     SHT_NOTE,
     SHT_NULL,
@@ -347,15 +359,22 @@ def run_size(argv: Sequence[str]) -> int:
 # readelf / objdump shared name tables
 # ---------------------------------------------------------------------------
 
-_ET_NAMES = {ET_REL: "REL (Relocatable file)", ET_EXEC: "EXEC (Executable file)"}
+_ET_NAMES = {
+    ET_REL: "REL (Relocatable file)",
+    ET_EXEC: "EXEC (Executable file)",
+    ET_DYN: "DYN (Shared object file)",
+}
 _SHT_NAMES = {
     SHT_NULL: "NULL",
     SHT_PROGBITS: "PROGBITS",
     SHT_SYMTAB: "SYMTAB",
     SHT_STRTAB: "STRTAB",
     SHT_RELA: "RELA",
+    SHT_HASH: "HASH",
+    SHT_DYNAMIC: "DYNAMIC",
     SHT_NOTE: "NOTE",
     SHT_NOBITS: "NOBITS",
+    SHT_DYNSYM: "DYNSYM",
 }
 _STT_NAMES = {
     STT_NOTYPE: "NOTYPE",
@@ -370,6 +389,16 @@ _RELOC_NAMES = {
     R_STACKVM_64: "R_STACKVM_64",
     R_STACKVM_PC64: "R_STACKVM_PC64",
     R_STACKVM_RELATIVE: "R_STACKVM_RELATIVE",
+    R_STACKVM_GLOB_DAT: "R_STACKVM_GLOB_DAT",
+    R_STACKVM_JUMP_SLOT: "R_STACKVM_JUMP_SLOT",
+}
+_PT_NAMES = {PT_LOAD: "LOAD", PT_DYNAMIC: "DYNAMIC", PT_NOTE: "NOTE"}
+_DT_NAMES = {
+    0: "NULL", 1: "NEEDED", 2: "PLTRELSZ", 3: "PLTGOT", 4: "HASH", 5: "STRTAB",
+    6: "SYMTAB", 7: "RELA", 8: "RELASZ", 9: "RELAENT", 10: "STRSZ", 11: "SYMENT",
+    12: "INIT", 13: "FINI", 14: "SONAME", 23: "JMPREL", 25: "INIT_ARRAY",
+    26: "FINI_ARRAY", 27: "INIT_ARRAYSZ", 28: "FINI_ARRAYSZ", 30: "FLAGS",
+    0x6FFFFFFB: "FLAGS_1",
 }
 
 
@@ -401,6 +430,8 @@ def format_readelf(
     symbols: bool,
     program_headers: bool,
     relocs: bool,
+    notes: bool = False,
+    dynamic: bool = False,
 ) -> List[str]:
     lines: List[str] = []
     if file_header:
@@ -439,7 +470,7 @@ def format_readelf(
             lines.append(
                 "  %-14s 0x%016x 0x%016x 0x%016x 0x%016x %s 0x%x"
                 % (
-                    "LOAD" if phdr.typ == PT_LOAD else "%#x" % phdr.typ,
+                    _PT_NAMES.get(phdr.typ, "%#x" % phdr.typ),
                     phdr.offset,
                     phdr.vaddr,
                     phdr.filesz,
@@ -487,6 +518,35 @@ def format_readelf(
                         reloc.addend,
                     )
                 )
+    if notes:
+        if not image.notes:
+            lines.append("There are no notes in this file.")
+        for note in image.notes:
+            lines.append("Displaying notes found in: %s" % note.section_name)
+            lines.append("  Owner                Data size    Description")
+            if note.typ == NT_GNU_BUILD_ID and note.name == "GNU":
+                lines.append(
+                    "  %-20s 0x%08x   NT_GNU_BUILD_ID (unique build ID bitstring)"
+                    % (note.name, len(note.desc))
+                )
+                lines.append("    Build ID: %s" % note.desc.hex())
+            else:
+                lines.append(
+                    "  %-20s 0x%08x   %#x" % (note.name, len(note.desc), note.typ)
+                )
+    if dynamic:
+        if not image.dynamic:
+            lines.append("There is no dynamic section in this file.")
+        else:
+            lines.append(
+                "Dynamic section contains %d entries:" % len(image.dynamic)
+            )
+            lines.append("  Tag                Type           Name/Value")
+            for entry in image.dynamic:
+                name = _DT_NAMES.get(entry.tag, "%#x" % entry.tag)
+                lines.append(
+                    "  0x%016x (%-12s) 0x%x" % (entry.tag, name, entry.value)
+                )
     return lines
 
 
@@ -502,13 +562,24 @@ def run_readelf(argv: Sequence[str]) -> int:
     parser.add_argument("-s", "--syms", "--symbols", action="store_true", dest="symbols")
     parser.add_argument("-l", "--program-headers", "--segments", action="store_true", dest="program_headers")
     parser.add_argument("-r", "--relocs", action="store_true")
+    parser.add_argument("-n", "--notes", action="store_true")
+    parser.add_argument("-d", "--dynamic", action="store_true")
     args = parser.parse_args(argv)
 
     any_selected = any(
-        [args.all, args.file_header, args.section_headers, args.symbols, args.program_headers, args.relocs]
+        [
+            args.all,
+            args.file_header,
+            args.section_headers,
+            args.symbols,
+            args.program_headers,
+            args.relocs,
+            args.notes,
+            args.dynamic,
+        ]
     )
     if not any_selected:
-        parser.error("no output requested; use -h/-S/-s/-l/-r or -a")
+        parser.error("no output requested; use -h/-S/-s/-l/-r/-n/-d or -a")
     try:
         for path in args.files:
             image = load_image(path)
@@ -520,6 +591,8 @@ def run_readelf(argv: Sequence[str]) -> int:
                 symbols=args.all or args.symbols,
                 program_headers=args.all or args.program_headers,
                 relocs=args.all or args.relocs,
+                notes=args.all or args.notes,
+                dynamic=args.all or args.dynamic,
             ):
                 print(line)
     except HostToolError as exc:

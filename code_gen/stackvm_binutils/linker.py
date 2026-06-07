@@ -1,4 +1,7 @@
+from collections import defaultdict
 from dataclasses import dataclass, field
+import fnmatch
+import hashlib
 import os
 import re
 from typing import (
@@ -33,6 +36,7 @@ from .debug_info import (
 from .lib_util_asm_impl.names import ISAAC_RUNTIME_LINK_NAMES
 from .object_file import (
     SBO_MAGIC,
+    ObjectRelocation,
     ObjectSegment,
     ObjectSymbol,
     RelocationType,
@@ -136,8 +140,11 @@ def _init_priority_section_key(name: str, base: str) -> int:
 @dataclass(frozen=True)
 class LinkerScript:
     sections: Tuple[str, ...] = DEFAULT_SECTION_ORDER
+    entry: Optional[str] = None
+    keep: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "keep", tuple(self.keep))
         sections = tuple(self.sections)
         if PERCPU_SECTION_NAME not in sections:
             old_orders = (
@@ -190,10 +197,26 @@ class LinkerScript:
 
 
 def parse_linker_script(text: str) -> LinkerScript:
-    """Parse output-section declarations from a constrained GNU-style script."""
+    """Parse output-section declarations from a constrained GNU-style script.
+
+    Beyond the supported output-section ordering this also recognises the
+    ``ENTRY(symbol)`` command (used for ``vmlinux.lds`` and friends) and any
+    ``KEEP(*(pattern))`` directives, whose matched input-section patterns are
+    treated as garbage-collection roots when ``--gc-sections`` is in effect.
+    """
 
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
     text = re.sub(r"//.*?$|#.*?$", "", text, flags=re.MULTILINE)
+    entry_match = re.search(r"\bENTRY\s*\(\s*([A-Za-z_.$][\w.$]*)\s*\)", text)
+    entry = entry_match.group(1) if entry_match else None
+    keep: List[str] = []
+    for keep_body in re.findall(r"\bKEEP\s*\(([^)]*\))", text):
+        for pattern in re.findall(r"\*\s*\(\s*([^)]*?)\s*\)", keep_body):
+            keep.extend(part for part in pattern.replace(",", " ").split() if part)
+        # KEEP(symbol) / KEEP(*name) forms without an inner *(...) group.
+        for token in re.findall(r"[\w.$*]+", re.sub(r"\*\s*\([^)]*\)", "", keep_body)):
+            if token not in {"KEEP"}:
+                keep.append(token)
     supported = "|".join(re.escape(name) for name in DEFAULT_SECTION_ORDER)
     sections = re.findall(r"(?<![\w.])(%s)\s*:" % supported, text)
     if not sections:
@@ -204,12 +227,121 @@ def parse_linker_script(text: str) -> LinkerScript:
         ]
     if not sections:
         raise ValueError("linker script does not define any supported sections")
-    return LinkerScript(tuple(sections))
+    return LinkerScript(tuple(sections), entry, tuple(dict.fromkeys(keep)))
 
 
 def load_linker_script(path: str) -> LinkerScript:
     with open(path, "r") as fl:
         return parse_linker_script(fl.read())
+
+
+@dataclass(frozen=True)
+class VersionNode:
+    """A single node of a GNU symbol-version script."""
+
+    name: str
+    globals: Tuple[str, ...] = ()
+    locals: Tuple[str, ...] = ()
+    parent: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class VersionScript:
+    nodes: Tuple[VersionNode, ...] = ()
+
+    def _matches(self, patterns: Sequence[str], name: str) -> bool:
+        for pattern in patterns:
+            if pattern == name:
+                return True
+            if any(ch in pattern for ch in "*?[") and fnmatch.fnmatchcase(name, pattern):
+                return True
+        return False
+
+    def is_local(self, name: str) -> bool:
+        """Return True when *name* is hidden (matched by ``local:`` only)."""
+
+        for node in self.nodes:
+            if self._matches(node.globals, name):
+                return False
+        for node in self.nodes:
+            if self._matches(node.locals, name):
+                return True
+        return False
+
+    def version_for(self, name: str) -> Optional[str]:
+        for node in self.nodes:
+            if self._matches(node.globals, name):
+                return node.name
+        return None
+
+
+def parse_version_script(text: str) -> VersionScript:
+    """Parse a constrained GNU version script into :class:`VersionScript`.
+
+    Supports named and anonymous nodes, ``global:``/``local:`` blocks with
+    plain names or glob patterns, and ``} PARENT;`` version dependencies.
+    """
+
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = re.sub(r"//.*?$|#.*?$", "", text, flags=re.MULTILINE)
+    nodes: List[VersionNode] = []
+    pos = 0
+    pattern = re.compile(r"([A-Za-z_.$][\w.$]*)?\s*\{", re.DOTALL)
+    while True:
+        match = pattern.search(text, pos)
+        if match is None:
+            break
+        name = match.group(1) or "*ANON*"
+        body_start = match.end()
+        depth = 1
+        index = body_start
+        while index < len(text) and depth:
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+            index += 1
+        if depth:
+            raise ValueError("unterminated version node '%s'" % name)
+        body = text[body_start : index - 1]
+        trailer = text[index:]
+        parent_match = re.match(r"\s*([A-Za-z_.$][\w.$]*)\s*;", trailer)
+        parent = None
+        if parent_match:
+            parent = parent_match.group(1)
+            pos = index + parent_match.end()
+        else:
+            semi = trailer.find(";")
+            pos = index + (semi + 1 if semi >= 0 else 0)
+        globals_: List[str] = []
+        locals_: List[str] = []
+        current = "global"
+        # ``global:`` / ``local:`` are visibility labels that may share a
+        # statement with the names they introduce, so tokenize them separately
+        # from the (semicolon/space separated) symbol names and patterns.
+        for token in re.findall(r"global\s*:|local\s*:|[^\s;]+", body):
+            compact = token.replace(" ", "").lower()
+            if compact == "global:":
+                current = "global"
+                continue
+            if compact == "local:":
+                current = "local"
+                continue
+            entry_name = token.strip().rstrip(";").strip()
+            if not entry_name:
+                continue
+            (globals_ if current == "global" else locals_).append(entry_name)
+        nodes.append(
+            VersionNode(name, tuple(globals_), tuple(locals_), parent)
+        )
+    if not nodes:
+        raise ValueError("version script does not define any version nodes")
+    return VersionScript(tuple(nodes))
+
+
+def load_version_script(path: str) -> VersionScript:
+    with open(path, "r") as fl:
+        return parse_version_script(fl.read())
 
 
 @dataclass
@@ -222,6 +354,16 @@ class LinkOptions:
     symbol_aliases: Mapping[str, str] = field(default_factory=dict)
     script: LinkerScript = field(default_factory=LinkerScript)
     percpu_copies: int = 1
+    gc_sections: bool = False
+    entry_symbol: str = "_start"
+    keep_symbols: Tuple[str, ...] = ()
+    build_id: Optional[str] = None
+    emit_relocs: bool = False
+    version_script: Optional[VersionScript] = None
+    shared: bool = False
+    pie: bool = False
+    soname: Optional[str] = None
+    needed: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.code_base < 0 or self.data_base < 0:
@@ -236,6 +378,18 @@ class LinkOptions:
             self.script = parse_linker_script(self.script)
         if not isinstance(self.script, LinkerScript):
             raise TypeError("script must be a LinkerScript or linker script text")
+        if isinstance(self.version_script, str):
+            self.version_script = parse_version_script(self.version_script)
+        if self.version_script is not None and not isinstance(
+            self.version_script, VersionScript
+        ):
+            raise TypeError(
+                "version_script must be a VersionScript or version script text"
+            )
+        self.keep_symbols = tuple(self.keep_symbols)
+        self.needed = tuple(self.needed)
+        if self.script.entry is not None and self.entry_symbol == "_start":
+            self.entry_symbol = self.script.entry
 
 
 @dataclass
@@ -255,6 +409,7 @@ class ObjectInput:
 class ArchiveInput:
     name: str
     archive: StackVMArchive
+    whole_archive: bool = False
 
 
 @dataclass
@@ -294,6 +449,17 @@ class LinkedSymbol:
 
 
 @dataclass
+class EmittedRelocation:
+    """A symbolic relocation retained in the linked image (``--emit-relocs``)."""
+
+    offset: int
+    symbol_name: str
+    typ: RelocationType
+    addend: int
+    segment: ObjectSegment
+
+
+@dataclass
 class LinkResult:
     memory: bytes
     code_segment_end: int
@@ -306,6 +472,15 @@ class LinkResult:
     section_layouts: List[SectionLayout]
     base_relocations: List[int] = field(default_factory=list)
     debug_info: bytes = b""
+    removed_sections: List[str] = field(default_factory=list)
+    build_id: bytes = b""
+    emitted_relocations: List[EmittedRelocation] = field(default_factory=list)
+    localized_symbols: List[str] = field(default_factory=list)
+    dynamic_symbols: List[str] = field(default_factory=list)
+    is_shared: bool = False
+    is_pie: bool = False
+    soname: Optional[str] = None
+    needed: List[str] = field(default_factory=list)
 
     @property
     def symbol_addresses(self) -> Dict[str, int]:
@@ -338,6 +513,13 @@ class LinkResult:
             self.to_executable(),
             self.section_layouts,
             self.symbols,
+            build_id=self.build_id,
+            emitted_relocations=self.emitted_relocations,
+            shared=self.is_shared,
+            pie=self.is_pie,
+            soname=self.soname,
+            needed=self.needed,
+            dynamic_symbols=self.dynamic_symbols,
         )
 
 
@@ -485,11 +667,34 @@ class _ObjectLinker:
                     unresolved.add(key)
         return unresolved
 
-    def _unresolved_names(self) -> Set[str]:
+    @staticmethod
+    def _section_key(
+        object_index: int,
+        has_sections: bool,
+        section_index: Optional[int],
+        segment: ObjectSegment,
+    ) -> Tuple[int, int]:
+        if has_sections:
+            return object_index, int(section_index)
+        return object_index, (-1 if segment == ObjectSegment.CODE else -2)
+
+    def _unresolved_names(
+        self, live_keys: Optional[Set[Tuple[int, int]]] = None
+    ) -> Set[str]:
         unresolved = set()
-        for obj_input in self.included:
-            for relocation in obj_input.obj.relocations:
-                symbol = obj_input.obj.symbols[relocation.symbol_index]
+        for object_index, obj_input in enumerate(self.included):
+            obj = obj_input.obj
+            for relocation in obj.relocations:
+                if live_keys is not None:
+                    reloc_key = self._section_key(
+                        object_index,
+                        bool(obj.sections),
+                        relocation.section_index,
+                        relocation.segment,
+                    )
+                    if reloc_key not in live_keys:
+                        continue
+                symbol = obj.symbols[relocation.symbol_index]
                 if symbol.binding == SymbolBinding.LOCAL:
                     if symbol.is_undefined:
                         unresolved.add(symbol.name)
@@ -501,45 +706,8 @@ class _ObjectLinker:
                     unresolved.add(symbol.name)
         return unresolved
 
-    def include_archive(self, archive_input: ArchiveInput) -> None:
-        remaining = list(archive_input.archive.members)
-        # Scan to a fixpoint at this input position, matching traditional
-        # left-to-right archive semantics.
-        while True:
-            unresolved = self._unresolved_global_keys()
-            selected_index = None
-            for index, member in enumerate(remaining):
-                defined = {
-                    self.aliases.canonical(symbol.name)
-                    for symbol in member.obj.symbols
-                    if not symbol.is_undefined and symbol.binding != SymbolBinding.LOCAL
-                }
-                if unresolved & defined:
-                    selected_index = index
-                    break
-            if selected_index is None:
-                return
-            member = remaining.pop(selected_index)
-            self.include_object(
-                ObjectInput(member.name, member.obj, archive_input.name)
-            )
-
-    def process(self, inputs: Sequence[Union[ObjectInput, ArchiveInput]]) -> LinkResult:
-        for link_input in inputs:
-            if isinstance(link_input, ObjectInput):
-                self.include_object(link_input)
-            elif isinstance(link_input, ArchiveInput):
-                self.include_archive(link_input)
-            else:
-                raise TypeError("unrecognized linker input: %r" % (link_input,))
-
-        unresolved_names = self._unresolved_names()
-        if unresolved_names and not self.options.allow_undefined:
-            raise UndefinedSymbolError(unresolved_names)
-        return self._layout_and_relocate(sorted(unresolved_names))
-
-    def _layout_and_relocate(self, unresolved_names: List[str]) -> LinkResult:
-        input_sections = []
+    def _build_input_sections(self) -> List[_InputSection]:
+        input_sections: List[_InputSection] = []
         for object_index, obj_input in enumerate(self.included):
             obj = obj_input.obj
             if obj.sections:
@@ -607,6 +775,166 @@ class _ObjectLinker:
                                 data,
                             )
                         )
+        return input_sections
+
+    def _is_keep_section(self, name: str) -> bool:
+        for base in (".init_array", ".fini_array"):
+            if _matches_section(name, base):
+                return True
+        for pattern in self.options.script.keep:
+            if name == pattern:
+                return True
+            if any(ch in pattern for ch in "*?[") and fnmatch.fnmatchcase(
+                name, pattern
+            ):
+                return True
+            if _matches_section(name, pattern):
+                return True
+        return False
+
+    def _reloc_target_section_key(
+        self, object_index: int, relocation: ObjectRelocation
+    ) -> Optional[Tuple[int, int]]:
+        obj = self.included[object_index].obj
+        symbol = obj.symbols[relocation.symbol_index]
+        if symbol.binding == SymbolBinding.LOCAL:
+            if symbol.is_undefined:
+                return None
+            return self._section_key(
+                object_index, bool(obj.sections), symbol.section_index, symbol.segment
+            )
+        definition = self.selected.get(self.aliases.canonical(symbol.name))
+        if definition is None:
+            return None
+        def_obj = self.included[definition.object_index].obj
+        def_symbol = def_obj.symbols[definition.symbol_index]
+        return self._section_key(
+            definition.object_index,
+            bool(def_obj.sections),
+            def_symbol.section_index,
+            def_symbol.segment,
+        )
+
+    def _compute_live_sections(
+        self, input_sections: Sequence[_InputSection]
+    ) -> Tuple[Set[Tuple[int, int]], List[str]]:
+        all_keys = {section.key for section in input_sections}
+        if not self.options.gc_sections:
+            return all_keys, []
+        by_key = {section.key: section for section in input_sections}
+        edges: Dict[Tuple[int, int], Set[Tuple[int, int]]] = defaultdict(set)
+        for object_index, obj_input in enumerate(self.included):
+            obj = obj_input.obj
+            for relocation in obj.relocations:
+                source = self._section_key(
+                    object_index,
+                    bool(obj.sections),
+                    relocation.section_index,
+                    relocation.segment,
+                )
+                target = self._reloc_target_section_key(object_index, relocation)
+                if target is not None and source in by_key and target in by_key:
+                    edges[source].add(target)
+        roots: Set[Tuple[int, int]] = set()
+        for key, section in by_key.items():
+            object_index, _section_key = key
+            if not self.included[object_index].obj.sections:
+                roots.add(key)  # legacy single-segment objects are not collectable
+            elif _is_debug_section(section.name) or self._is_keep_section(section.name):
+                roots.add(key)
+        root_symbols = set(self.options.keep_symbols)
+        root_symbols.add(self.aliases.canonical(self.options.entry_symbol))
+        export_all = self.options.shared or self.options.pie
+        for object_index, obj_input in enumerate(self.included):
+            obj = obj_input.obj
+            for symbol in obj.symbols:
+                if symbol.is_undefined:
+                    continue
+                exported = export_all and symbol.binding != SymbolBinding.LOCAL
+                if not exported and self.aliases.canonical(symbol.name) not in root_symbols:
+                    continue
+                key = self._section_key(
+                    object_index, bool(obj.sections), symbol.section_index, symbol.segment
+                )
+                if key in by_key:
+                    roots.add(key)
+        live: Set[Tuple[int, int]] = set()
+        stack = list(roots)
+        while stack:
+            key = stack.pop()
+            if key in live:
+                continue
+            live.add(key)
+            stack.extend(target for target in edges.get(key, ()) if target not in live)
+        removed = sorted(
+            "%s:%s"
+            % (self.included[key[0]].display_name, by_key[key].name)
+            for key in (all_keys - live)
+        )
+        return live, removed
+
+    def include_archive(self, archive_input: ArchiveInput) -> None:
+        if archive_input.whole_archive:
+            # ``--whole-archive`` pulls in every member unconditionally, as if
+            # the archive's objects had been listed individually.
+            for member in archive_input.archive.members:
+                self.include_object(
+                    ObjectInput(member.name, member.obj, archive_input.name)
+                )
+            return
+        remaining = list(archive_input.archive.members)
+        # Scan to a fixpoint at this input position, matching traditional
+        # left-to-right archive semantics.
+        while True:
+            unresolved = self._unresolved_global_keys()
+            selected_index = None
+            for index, member in enumerate(remaining):
+                defined = {
+                    self.aliases.canonical(symbol.name)
+                    for symbol in member.obj.symbols
+                    if not symbol.is_undefined and symbol.binding != SymbolBinding.LOCAL
+                }
+                if unresolved & defined:
+                    selected_index = index
+                    break
+            if selected_index is None:
+                return
+            member = remaining.pop(selected_index)
+            self.include_object(
+                ObjectInput(member.name, member.obj, archive_input.name)
+            )
+
+    def process(self, inputs: Sequence[Union[ObjectInput, ArchiveInput]]) -> LinkResult:
+        for link_input in inputs:
+            if isinstance(link_input, ObjectInput):
+                self.include_object(link_input)
+            elif isinstance(link_input, ArchiveInput):
+                self.include_archive(link_input)
+            else:
+                raise TypeError("unrecognized linker input: %r" % (link_input,))
+
+        all_input_sections = self._build_input_sections()
+        live_keys, removed_sections = self._compute_live_sections(all_input_sections)
+        unresolved_names = self._unresolved_names(live_keys)
+        if unresolved_names and not self.options.allow_undefined:
+            raise UndefinedSymbolError(unresolved_names)
+        return self._layout_and_relocate(
+            sorted(unresolved_names),
+            all_input_sections,
+            live_keys,
+            removed_sections,
+        )
+
+    def _layout_and_relocate(
+        self,
+        unresolved_names: List[str],
+        all_input_sections: List[_InputSection],
+        live_keys: Set[Tuple[int, int]],
+        removed_sections: List[str],
+    ) -> LinkResult:
+        input_sections = [
+            section for section in all_input_sections if section.key in live_keys
+        ]
 
         section_lookup = {section.key: section for section in input_sections}
         debug_sections = [
@@ -758,6 +1086,15 @@ class _ObjectLinker:
                 - section.object_offset
             )
 
+        def symbol_is_live(object_index: int, symbol: ObjectSymbol) -> bool:
+            obj = self.included[object_index].obj
+            section_key = (
+                symbol.section_index
+                if obj.sections
+                else (-1 if symbol.segment == ObjectSegment.CODE else -2)
+            )
+            return (object_index, section_key) in section_lookup
+
         layouts = []
         for object_index, obj_input in enumerate(self.included):
             object_sections = [
@@ -806,6 +1143,9 @@ class _ObjectLinker:
                 self._symbol_for_definition(definition),
             )
             for key, definition in self.selected.items()
+            if symbol_is_live(
+                definition.object_index, self._symbol_for_definition(definition)
+            )
         }
         linker_symbol_sections = {
             "_start": ".text",
@@ -864,6 +1204,7 @@ class _ObjectLinker:
         )
 
         base_relocations = []
+        emitted_relocations: List[EmittedRelocation] = []
         for object_index, obj_input in enumerate(self.included):
             for relocation in obj_input.obj.relocations:
                 symbol = obj_input.obj.symbols[relocation.symbol_index]
@@ -872,6 +1213,9 @@ class _ObjectLinker:
                     if obj_input.obj.sections
                     else (-1 if relocation.segment == ObjectSegment.CODE else -2)
                 )
+                if (object_index, section_key) not in section_lookup:
+                    # Patch site lives in a garbage-collected section.
+                    continue
                 section = section_lookup[(object_index, section_key)]
                 patch_address = (
                     input_section_addresses[section.key]
@@ -906,6 +1250,16 @@ class _ObjectLinker:
                     continue
                 for current_patch_address in patch_addresses:
                     addend = _read_addend(memory, current_patch_address)
+                    if self.options.emit_relocs:
+                        emitted_relocations.append(
+                            EmittedRelocation(
+                                current_patch_address,
+                                symbol.name,
+                                relocation.typ,
+                                addend,
+                                relocation.segment,
+                            )
+                        )
                     if relocation.typ == RelocationType.ABS8:
                         value = target_address + addend
                         if (
@@ -926,6 +1280,8 @@ class _ObjectLinker:
         for object_index, obj_input in enumerate(self.included):
             for symbol_index, symbol in enumerate(obj_input.obj.symbols):
                 if symbol.is_undefined:
+                    continue
+                if not symbol_is_live(object_index, symbol):
                     continue
                 selected = True
                 if symbol.binding != SymbolBinding.LOCAL:
@@ -1056,6 +1412,39 @@ class _ObjectLinker:
             else b""
         )
 
+        # Symbol-version script: localize (hide) any matched global symbol and
+        # remove it from the exported global table.
+        localized_symbols: List[str] = []
+        version_script = self.options.version_script
+        if version_script is not None:
+            for symbol in linked_symbols:
+                if (
+                    symbol.binding != SymbolBinding.LOCAL
+                    and symbol.object_name != "<linker>"
+                    and version_script.is_local(symbol.name)
+                ):
+                    symbol.binding = SymbolBinding.LOCAL
+                    if symbol.name not in localized_symbols:
+                        localized_symbols.append(symbol.name)
+            for name in localized_symbols:
+                global_symbols.pop(name, None)
+
+        # Exported dynamic symbol table for shared objects / PIE.
+        dynamic_symbols: List[str] = []
+        if self.options.shared or self.options.pie:
+            seen: Set[str] = set()
+            for symbol in linked_symbols:
+                if (
+                    symbol.binding != SymbolBinding.LOCAL
+                    and not symbol.name.startswith("__")
+                    and symbol.name not in seen
+                    and symbol.name in global_symbols
+                ):
+                    seen.add(symbol.name)
+                    dynamic_symbols.append(symbol.name)
+
+        build_id = self._compute_build_id(memory, sorted(base_relocations))
+
         return LinkResult(
             bytes(memory),
             code_segment_end,
@@ -1068,7 +1457,42 @@ class _ObjectLinker:
             section_layouts,
             sorted(base_relocations),
             debug_info,
+            removed_sections,
+            build_id,
+            emitted_relocations,
+            sorted(localized_symbols),
+            dynamic_symbols,
+            self.options.shared,
+            self.options.pie,
+            self.options.soname,
+            list(self.options.needed),
         )
+
+    def _compute_build_id(
+        self, memory: bytearray, base_relocations: Sequence[int]
+    ) -> bytes:
+        style = self.options.build_id
+        if not style or style == "none":
+            return b""
+        # A reproducible build id is derived from the linked image so identical
+        # inputs yield identical ids; ``uuid`` opts into a random id instead.
+        digest_source = bytes(memory) + b"".join(
+            offset.to_bytes(8, "little") for offset in base_relocations
+        )
+        if style in ("sha1", "default", "tree", ""):
+            return hashlib.sha1(digest_source).digest()
+        if style == "md5":
+            return hashlib.md5(digest_source).digest()
+        if style == "uuid":
+            return os.urandom(16)
+        if style.startswith("0x") or style.startswith("0X"):
+            hex_digits = style[2:]
+            if not hex_digits or len(hex_digits) % 2 or any(
+                ch not in "0123456789abcdefABCDEF" for ch in hex_digits
+            ):
+                raise LinkerError("invalid --build-id hex string: %s" % style)
+            return bytes.fromhex(hex_digits)
+        raise LinkerError("unsupported --build-id style: %s" % style)
 
 
 LinkInput = Union[
@@ -1130,6 +1554,16 @@ def link_objects(
     symbol_aliases: Optional[Mapping[str, str]] = None,
     linker_script: Optional[Union[LinkerScript, str]] = None,
     percpu_copies: int = 1,
+    gc_sections: bool = False,
+    entry_symbol: str = "_start",
+    keep_symbols: Sequence[str] = (),
+    build_id: Optional[str] = None,
+    emit_relocs: bool = False,
+    version_script: Optional[Union[VersionScript, str]] = None,
+    shared: bool = False,
+    pie: bool = False,
+    soname: Optional[str] = None,
+    needed: Sequence[str] = (),
 ) -> LinkResult:
     return link(
         list(objects) + list(archives),
@@ -1142,6 +1576,16 @@ def link_objects(
             {} if symbol_aliases is None else symbol_aliases,
             LinkerScript() if linker_script is None else linker_script,
             percpu_copies,
+            gc_sections=gc_sections,
+            entry_symbol=entry_symbol,
+            keep_symbols=tuple(keep_symbols),
+            build_id=build_id,
+            emit_relocs=emit_relocs,
+            version_script=version_script,
+            shared=shared,
+            pie=pie,
+            soname=soname,
+            needed=tuple(needed),
         ),
     )
 
@@ -1177,9 +1621,32 @@ def link_files(
     symbol_aliases: Optional[Mapping[str, str]] = None,
     linker_script: Optional[Union[LinkerScript, str]] = None,
     percpu_copies: int = 1,
+    whole_archive_flags: Optional[Sequence[bool]] = None,
+    gc_sections: bool = False,
+    entry_symbol: str = "_start",
+    keep_symbols: Sequence[str] = (),
+    build_id: Optional[str] = None,
+    emit_relocs: bool = False,
+    version_script: Optional[Union[VersionScript, str]] = None,
+    shared: bool = False,
+    pie: bool = False,
+    soname: Optional[str] = None,
+    needed: Sequence[str] = (),
 ) -> LinkResult:
+    if whole_archive_flags is not None and len(whole_archive_flags) != len(input_paths):
+        raise ValueError("whole_archive_flags must align with input_paths")
+    inputs: List[Union[ObjectInput, ArchiveInput]] = []
+    for index, path in enumerate(input_paths):
+        link_input = load_link_input(path)
+        if (
+            whole_archive_flags is not None
+            and whole_archive_flags[index]
+            and isinstance(link_input, ArchiveInput)
+        ):
+            link_input.whole_archive = True
+        inputs.append(link_input)
     result = link_objects(
-        [load_link_input(path) for path in input_paths],
+        inputs,
         allow_undefined=allow_undefined,
         code_base=code_base,
         data_base=data_base,
@@ -1188,14 +1655,31 @@ def link_files(
         symbol_aliases=symbol_aliases,
         linker_script=linker_script,
         percpu_copies=percpu_copies,
+        gc_sections=gc_sections,
+        entry_symbol=entry_symbol,
+        keep_symbols=keep_symbols,
+        build_id=build_id,
+        emit_relocs=emit_relocs,
+        version_script=version_script,
+        shared=shared,
+        pie=pie,
+        soname=soname,
+        needed=needed,
     )
     if output_path is not None:
-        if _should_write_elf_executable(output_path):
+        if shared or pie or _should_write_elf_executable(output_path):
             write_elf_executable(
                 result.to_executable(),
                 output_path,
                 result.section_layouts,
                 result.symbols,
+                build_id=result.build_id,
+                emitted_relocations=result.emitted_relocations,
+                shared=result.is_shared,
+                pie=result.is_pie,
+                soname=result.soname,
+                needed=result.needed,
+                dynamic_symbols=result.dynamic_symbols,
             )
         else:
             write_sbc(result.to_executable(), output_path)
