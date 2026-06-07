@@ -12,13 +12,18 @@ Supports a practical subset of the C preprocessor:
   #define NAME(params) replacement
   #undef  NAME
   #ifdef  NAME / #ifndef NAME
-  #if     0 | 1 | defined(X) | !defined(X) | expr&&expr | expr||expr | !expr
+  #if     full integer constant expression (arithmetic, bitwise, logical,
+          relational, shifts, ternary ?:, parentheses, character constants,
+          integer suffixes, defined(X), __has_attribute/__has_builtin/
+          __has_feature/__has_include).  Remaining identifiers expand to 0
+          per C11 §6.10.1; truly unparseable expressions are a hard error.
   #elif   <same expressions>
   #else
   #endif
   #error  message    (raises PreprocessorError)
   #warning message   (prints to stderr, continues)
-  #pragma ...        (silently ignored)
+  #pragma ...        (#pragma once honoured; others silently ignored)
+  #line   N ["file"] (remaps __LINE__ / __FILE__ for subsequent lines)
 
   Other
   -----
@@ -28,9 +33,7 @@ Supports a practical subset of the C preprocessor:
   Function-like macros with balanced-parenthesis argument parsing.
   ## token-pasting (left-to-right, identifier/number tokens).
   # stringification (raw argument, per C11 §6.10.3.2).
-
-Not implemented (future work):
-  arithmetic #if expressions, #line.
+  _Pragma("...") operator (destringized; #pragma once honoured).
 """
 
 from __future__ import annotations
@@ -154,6 +157,12 @@ class Preprocessor:
         self._counter: int = 0
         # Absolute paths of files that have seen #pragma once.
         self._pragma_once_files: Set[str] = set()
+        # #line bookkeeping.  ``_line_adjust`` is added to the physical line
+        # number to obtain the logical line number reported by __LINE__;
+        # ``_line_filename`` overrides __FILE__ when not None.  Both reset at
+        # the start of each preprocessed file (saved/restored across includes).
+        self._line_adjust: int = 0
+        self._line_filename: Optional[str] = None
         # Predefined C standard macros (freestanding C11 environment).
         _builtin: Dict[str, str] = {
             "__STDC__": "1",
@@ -222,44 +231,65 @@ class Preprocessor:
         subsequent line numbers in the outer file — a future #line-marker
         scheme can address this if needed).
         """
-        raw_lines = source.split("\n")
-        output_parts: List[str] = []
-        i = 0
-        while i < len(raw_lines):
-            line = raw_lines[i]
-            lineno = i + 1
-            # Join backslash-continuation lines into one logical line,
-            # emitting a blank placeholder for each consumed physical line.
-            while line.endswith("\\") and i + 1 < len(raw_lines):
-                output_parts.append("")
-                i += 1
+        # #line state is per-file: a directive in an #include'd file must not
+        # leak into the including file (nor vice versa).  Save and restore it
+        # around this run so nested includes are independent.
+        saved_line_adjust = self._line_adjust
+        saved_line_filename = self._line_filename
+        self._line_adjust = 0
+        self._line_filename = None
+        try:
+            raw_lines = source.split("\n")
+            output_parts: List[str] = []
+            i = 0
+            while i < len(raw_lines):
+                line = raw_lines[i]
                 lineno = i + 1
-                line = line[:-1] + raw_lines[i]
-            result = self._process_line(line, source_path, lineno)
-            output_parts.append(result)
-            i += 1
-        return "\n".join(output_parts)
+                # Join backslash-continuation lines into one logical line,
+                # emitting a blank placeholder for each consumed physical line.
+                while line.endswith("\\") and i + 1 < len(raw_lines):
+                    output_parts.append("")
+                    i += 1
+                    lineno = i + 1
+                    line = line[:-1] + raw_lines[i]
+                result = self._process_line(line, source_path, lineno)
+                output_parts.append(result)
+                i += 1
+            return "\n".join(output_parts)
+        finally:
+            self._line_adjust = saved_line_adjust
+            self._line_filename = saved_line_filename
 
     # ------------------------------------------------------------------
     # Line-level dispatch
     # ------------------------------------------------------------------
 
     def _process_line(self, line: str, source_path: str, lineno: int) -> str:
+        # Apply any active #line remapping so __LINE__/__FILE__ and diagnostics
+        # report the logical location the source author intended.
+        eff_file, eff_line = self._effective_location(source_path, lineno)
         stripped = line.lstrip()
         if stripped.startswith("#"):
             m = _DIRECTIVE_RE.match(line)
             if m:
                 directive = m.group(1).lower()
                 rest = m.group(2).strip()
-                return self._handle_directive(directive, rest, source_path, lineno)
+                return self._handle_directive(
+                    directive, rest, source_path, lineno, eff_file, eff_line
+                )
             # Bare '#' with no word after it — ignore silently
             return ""
         if not self.including:
             return ""
         # Inject dynamic predefined macros — updated every line.
-        self.defines["__FILE__"] = MacroDef("__FILE__", None, f'"{source_path}"')
-        self.defines["__LINE__"] = MacroDef("__LINE__", None, str(lineno))
+        self.defines["__FILE__"] = MacroDef("__FILE__", None, f'"{eff_file}"')
+        self.defines["__LINE__"] = MacroDef("__LINE__", None, str(eff_line))
         return self._apply_macros(line)
+
+    def _effective_location(self, source_path: str, lineno: int) -> Tuple[str, int]:
+        """Map a physical (file, line) to the logical one honouring #line."""
+        eff_file = self._line_filename if self._line_filename is not None else source_path
+        return eff_file, lineno + self._line_adjust
 
     # ------------------------------------------------------------------
     # Directive dispatch
@@ -271,9 +301,14 @@ class Preprocessor:
         args: str,
         source_path: str,
         lineno: int,
+        eff_file: Optional[str] = None,
+        eff_line: Optional[int] = None,
     ) -> str:
+        if eff_file is None or eff_line is None:
+            eff_file, eff_line = self._effective_location(source_path, lineno)
+
         def _err(msg: str) -> PreprocessorError:
-            return PreprocessorError(msg, source_path, lineno)
+            return PreprocessorError(msg, eff_file, eff_line)
 
         # ----------------------------------------------------------
         # Conditional directives — processed even when NOT including
@@ -295,7 +330,7 @@ class Preprocessor:
 
         if name == "if":
             parent = self.including
-            taken = parent and self._eval_if_expr(args.strip(), source_path, lineno)
+            taken = parent and self._eval_if_expr(args.strip(), eff_file, eff_line)
             self._if_stack.append((taken, parent and not taken))
             return ""
 
@@ -304,7 +339,7 @@ class Preprocessor:
                 raise _err("#elif without #if / #ifdef / #ifndef")
             active, can_switch = self._if_stack[-1]
             if can_switch:
-                if self._eval_if_expr(args.strip(), source_path, lineno):
+                if self._eval_if_expr(args.strip(), eff_file, eff_line):
                     # Take this branch; no further switching allowed.
                     self._if_stack[-1] = (True, False)
                 # else: leave as (False, True) — still looking for a True branch
@@ -350,7 +385,7 @@ class Preprocessor:
         if name == "warning":
             if self.warnings_as_errors:
                 raise _err(f"#warning {args} [-Werror]")
-            print(f"{source_path}:{lineno}: warning: {args}", file=sys.stderr)
+            print(f"{eff_file}:{eff_line}: warning: {args}", file=sys.stderr)
             return ""
 
         if name == "pragma":
@@ -363,9 +398,32 @@ class Preprocessor:
             return ""
 
         if name == "line":
-            return ""  # silently ignored
+            self._handle_line(args, lineno, _err)
+            return ""
 
         raise _err(f"unknown preprocessor directive: #{name}")
+
+    def _handle_line(self, args: str, lineno: int, _err) -> None:
+        """Handle ``#line N ["file"]`` — remap subsequent __LINE__/__FILE__.
+
+        ``N`` becomes the logical line number of the *next* physical line, and
+        the optional string literal overrides __FILE__ from then on.  Operands
+        are macro-expanded first (per C11 §6.10.4).
+        """
+        expanded = self._apply_macros(args).strip()
+        m = re.match(r'^(\d+)\s*(.*)$', expanded)
+        if not m:
+            raise _err(f"invalid #line directive: {args!r}")
+        new_lineno = int(m.group(1))
+        rest = m.group(2).strip()
+        if rest:
+            fm = re.fullmatch(r'"((?:[^"\\]|\\.)*)"', rest)
+            if not fm:
+                raise _err(f"invalid filename in #line directive: {rest!r}")
+            self._line_filename = fm.group(1).replace('\\"', '"').replace("\\\\", "\\")
+        # The directive sets the number of the *following* physical line, so
+        # logical = physical + adjust must equal new_lineno at physical lineno+1.
+        self._line_adjust = new_lineno - (lineno + 1)
 
     # ------------------------------------------------------------------
     # #include
@@ -533,6 +591,7 @@ class Preprocessor:
         signed integer constant expression.
 
         Supported operators (full C preprocessor precedence):
+          Conditional:  ?:
           Unary:        !  ~  -  +
           Multiplicative: *  /  %
           Additive:     +  -
@@ -542,9 +601,16 @@ class Preprocessor:
           Bitwise:      &  ^  |
           Logical:      &&  ||
           Parentheses:  ( )
+          Operands:     integer literals (with U/L suffixes), character
+                        constants ('a', '\\n', '\\x41', ...)
           defined(X) / defined X
           __has_attribute(X) / __has_builtin(X) / __has_feature(X)
           __has_include("f") / __has_include(<f>)
+
+        Per C11 §6.10.1, identifiers that survive macro expansion are
+        replaced with 0.  An expression that still cannot be evaluated is a
+        hard error so unsupported constructs surface instead of silently
+        becoming false.
         """
         expr = expr.strip()
         if not expr:
@@ -585,17 +651,72 @@ class Preprocessor:
         if not expr:
             return False
 
-        # Evaluate the expanded integer constant expression.
-        try:
-            val = self._eval_int_expr(expr)
-            return bool(val)
-        except Exception:
-            print(
-                f"{source_path}:{lineno}: warning: "
-                f"unsupported #if expression {expr!r}, treating as 0",
-                file=sys.stderr,
-            )
+        # Any identifier still present is undefined; per C11 §6.10.1 it is
+        # replaced with the pp-number 0 (string/char literals are preserved).
+        evaluable = self._replace_remaining_identifiers(expr)
+        evaluable = evaluable.strip()
+        if not evaluable:
             return False
+
+        # Evaluate the expanded integer constant expression.  Unlike the old
+        # behaviour, a failure here is a hard error so that genuinely
+        # unsupported #if constructs are surfaced rather than treated as 0.
+        try:
+            val = self._eval_int_expr(evaluable)
+        except PreprocessorError:
+            raise
+        except Exception as exc:
+            raise PreprocessorError(
+                f"invalid #if expression {expr!r}: {exc}",
+                source_path,
+                lineno,
+            ) from exc
+        return bool(val)
+
+    def _replace_remaining_identifiers(self, expr: str) -> str:
+        """Replace every identifier token in *expr* with ``0``.
+
+        String and character literals are copied verbatim so an identifier
+        character inside ``'a'`` or ``"text"`` is never substituted.  Numeric
+        tokens (pp-numbers such as ``100L`` or ``0xFF``) are consumed whole so
+        that a letter suffix is never mistaken for a separate identifier.
+        """
+        result: List[str] = []
+        i = 0
+        n = len(expr)
+        while i < n:
+            ch = expr[i]
+            if ch == '"' or ch == "'":
+                quote = ch
+                j = i + 1
+                while j < n:
+                    c2 = expr[j]
+                    j += 1
+                    if c2 == "\\":
+                        j += 1
+                        continue
+                    if c2 == quote:
+                        break
+                result.append(expr[i:j])
+                i = j
+            elif ch.isdigit():
+                # pp-number: a digit followed by digits/letters/underscores
+                # (covers hex, binary and integer suffixes) — copy verbatim.
+                j = i + 1
+                while j < n and (expr[j].isalnum() or expr[j] == "_"):
+                    j += 1
+                result.append(expr[i:j])
+                i = j
+            elif ch.isalpha() or ch == "_":
+                j = i + 1
+                while j < n and (expr[j].isalnum() or expr[j] == "_"):
+                    j += 1
+                result.append("0")
+                i = j
+            else:
+                result.append(ch)
+                i += 1
+        return "".join(result)
 
     def _has_include_value(self, arg: str, source_path: str) -> int:
         """Return 1 when a __has_include operand resolves to a file, else 0."""
@@ -639,16 +760,32 @@ class Preprocessor:
         # Try a plain integer literal (decimal, hex, octal, binary).
         # Strip common C suffixes: U, L, UL, LL, ULL (case-insensitive).
         lit = re.sub(r"[uUlL]+$", "", expr)
+        # C-style octal (a leading 0 followed by octal digits, e.g. 0644) must
+        # be parsed base-8; Python's base-0 parser only accepts the 0o prefix.
+        if re.fullmatch(r"0[0-7]+", lit):
+            return int(lit, 8)
         try:
             return int(lit, 0)
         except ValueError:
             pass
+
+        # Character constant: 'a', '\n', L'x', '\x41', '\012', 'ab', ...
+        cval = self._eval_char_constant(expr)
+        if cval is not None:
+            return cval
+
+        # Positions inside string/char literals — operator and parenthesis
+        # scanning below must ignore these so a quoted operator such as the
+        # '<' in '\x3c' is never mistaken for a real operator.
+        mask = self._literal_mask(expr)
 
         # Outer parentheses stripping — only if the ENTIRE expr is wrapped.
         if expr.startswith("(") and expr.endswith(")"):
             depth = 0
             all_wrapped = True
             for idx, ch in enumerate(expr):
+                if mask[idx]:
+                    continue
                 if ch == "(":
                     depth += 1
                 elif ch == ")":
@@ -659,6 +796,14 @@ class Preprocessor:
             if all_wrapped:
                 return self._eval_int_expr(expr[1:-1])
 
+        # Ternary conditional ?: — lowest precedence, right-associative.
+        ternary = self._split_ternary(expr, mask)
+        if ternary is not None:
+            cond_str, then_str, else_str = ternary
+            if self._eval_int_expr(cond_str):
+                return self._eval_int_expr(then_str)
+            return self._eval_int_expr(else_str)
+
         # Binary operator search: scan right-to-left through each precedence
         # level (lowest first).  Finding the rightmost operator at depth 0
         # gives left-associativity via recursion on the left sub-expression.
@@ -666,6 +811,9 @@ class Preprocessor:
             i = len(expr) - 1
             depth = 0
             while i >= 0:
+                if mask[i]:
+                    i -= 1
+                    continue
                 ch = expr[i]
                 if ch in ")]}":
                     depth += 1
@@ -749,6 +897,157 @@ class Preprocessor:
             return self._eval_int_expr(expr[1:])
 
         raise ValueError(f"cannot evaluate constant expression: {expr!r}")
+
+    @staticmethod
+    def _literal_mask(expr: str) -> List[bool]:
+        """Return a per-character mask; True where the char is in a literal.
+
+        Quote characters and everything between them (including escape
+        sequences) are marked, so that operator/parenthesis scanning can skip
+        over string and character literals.
+        """
+        mask = [False] * len(expr)
+        i = 0
+        n = len(expr)
+        while i < n:
+            ch = expr[i]
+            if ch == '"' or ch == "'":
+                quote = ch
+                mask[i] = True
+                i += 1
+                while i < n:
+                    mask[i] = True
+                    if expr[i] == "\\" and i + 1 < n:
+                        mask[i + 1] = True
+                        i += 2
+                        continue
+                    if expr[i] == quote:
+                        i += 1
+                        break
+                    i += 1
+            else:
+                i += 1
+        return mask
+
+    @staticmethod
+    def _split_ternary(
+        expr: str, mask: List[bool]
+    ) -> Optional[Tuple[str, str, str]]:
+        """Split *expr* on a top-level ``?:`` operator.
+
+        Returns ``(condition, then_expr, else_expr)`` or None when there is no
+        depth-0 ``?``.  Nested ternaries inside the *then* branch are matched
+        by counting intervening ``?``/``:`` pairs.  Raises ValueError when a
+        ``?`` has no matching ``:``.
+        """
+        depth = 0
+        q_pos = -1
+        for i, ch in enumerate(expr):
+            if mask[i]:
+                continue
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+            elif depth == 0 and ch == "?":
+                q_pos = i
+                break
+        if q_pos == -1:
+            return None
+
+        depth = 0
+        nest = 0
+        colon_pos = -1
+        for j in range(q_pos + 1, len(expr)):
+            if mask[j]:
+                continue
+            ch = expr[j]
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+            elif depth == 0:
+                if ch == "?":
+                    nest += 1
+                elif ch == ":":
+                    if nest == 0:
+                        colon_pos = j
+                        break
+                    nest -= 1
+        if colon_pos == -1:
+            raise ValueError(f"malformed ?: expression: {expr!r}")
+        return (
+            expr[:q_pos],
+            expr[q_pos + 1 : colon_pos],
+            expr[colon_pos + 1 :],
+        )
+
+    @staticmethod
+    def _eval_char_constant(expr: str) -> Optional[int]:
+        """Evaluate a single character constant, or return None if *expr* is
+        not exactly one character-constant token.
+
+        Narrow single-character constants carry the value of a (signed) char,
+        so a set high bit yields a negative value, matching GCC's default.
+        Multi-character constants accumulate big-endian.  An ``L``/``u``/``U``
+        prefix is accepted (and treated as a wide, non-sign-extended value).
+        """
+        m = re.fullmatch(r"(?:L|u8|u|U)?'((?:[^'\\]|\\.)*)'", expr, re.DOTALL)
+        if m is None:
+            return None
+        wide = expr[0] in "LuU"
+        vals = Preprocessor._decode_char_bytes(m.group(1))
+        if not vals:
+            raise ValueError(f"empty character constant: {expr!r}")
+        val = 0
+        for byte in vals:
+            val = (val << 8) | (byte & 0xFF)
+        if not wide and len(vals) == 1 and 0x80 <= val <= 0xFF:
+            val -= 0x100
+        return val
+
+    @staticmethod
+    def _decode_char_bytes(body: str) -> List[int]:
+        """Decode the inside of a character constant into a list of byte values."""
+        simple = {
+            "n": 10, "t": 9, "r": 13, "\\": 92, "'": 39, '"': 34,
+            "a": 7, "b": 8, "f": 12, "v": 11, "?": 63, "e": 27,
+        }
+        vals: List[int] = []
+        i = 0
+        n = len(body)
+        while i < n:
+            ch = body[i]
+            if ch == "\\" and i + 1 < n:
+                nxt = body[i + 1]
+                if nxt == "x":
+                    j = i + 2
+                    hexd = ""
+                    while j < n and body[j] in "0123456789abcdefABCDEF":
+                        hexd += body[j]
+                        j += 1
+                    if not hexd:
+                        raise ValueError("invalid \\x escape in character constant")
+                    vals.append(int(hexd, 16) & 0xFF)
+                    i = j
+                elif nxt in "01234567":
+                    j = i + 1
+                    octd = ""
+                    while j < n and len(octd) < 3 and body[j] in "01234567":
+                        octd += body[j]
+                        j += 1
+                    vals.append(int(octd, 8) & 0xFF)
+                    i = j
+                elif nxt in simple:
+                    vals.append(simple[nxt])
+                    i += 2
+                else:
+                    vals.append(ord(nxt) & 0xFF)
+                    i += 2
+            else:
+                vals.append(ord(ch) & 0xFF)
+                i += 1
+        return vals
 
     # ------------------------------------------------------------------
     # Macro substitution
@@ -897,6 +1196,19 @@ class Preprocessor:
                             i = end_args
                             continue
 
+                # _Pragma("...") operator — destringize and act on the pragma,
+                # then emit nothing (it never contributes tokens to the output).
+                if ident == "_Pragma" and ident not in _expanding:
+                    k = j
+                    while k < n and text[k] in " \t":
+                        k += 1
+                    if k < n and text[k] == "(":
+                        inner, end_pragma = self._parse_paren_group(text, k)
+                        if inner is not None:
+                            self._handle_pragma_operator(self._destringize(inner))
+                            i = end_pragma
+                            continue
+
                 macro = self.defines.get(ident)
                 if macro is not None and ident not in _expanding:
                     if macro.params is None:
@@ -971,6 +1283,71 @@ class Preprocessor:
                 current.append(ch)
             i += 1
         return None, start  # unmatched parenthesis
+
+    @staticmethod
+    def _parse_paren_group(text: str, start: int) -> Tuple[Optional[str], int]:
+        """Return the text inside a balanced ``(...)`` group beginning at *start*.
+
+        Parentheses inside string/char literals are ignored.  Returns
+        ``(inner_text, position_after_closing_paren)`` or ``(None, start)`` on
+        an unmatched parenthesis.  Used by the ``_Pragma`` operator whose single
+        string argument may itself contain commas or parentheses.
+        """
+        assert text[start] == "("
+        depth = 0
+        i = start
+        n = len(text)
+        while i < n:
+            ch = text[i]
+            if ch == '"' or ch == "'":
+                quote = ch
+                i += 1
+                while i < n:
+                    c2 = text[i]
+                    i += 1
+                    if c2 == "\\":
+                        i += 1
+                        continue
+                    if c2 == quote:
+                        break
+                continue
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return text[start + 1 : i], i + 1
+            i += 1
+        return None, start
+
+    @staticmethod
+    def _destringize(s: str) -> str:
+        """Undo string-literal quoting for the ``_Pragma`` / ``#line`` operands.
+
+        Strips an optional encoding prefix and the enclosing quotes, then turns
+        ``\\"`` into ``"`` and ``\\\\`` into ``\\`` (C11 §6.10.9).
+        """
+        s = s.strip()
+        m = re.fullmatch(r'(?:L|u8|u|U)?"((?:[^"\\]|\\.)*)"', s, re.DOTALL)
+        if m is None:
+            return s.strip('"')
+        return m.group(1).replace('\\"', '"').replace("\\\\", "\\")
+
+    def _handle_pragma_operator(self, content: str) -> None:
+        """Act on a ``_Pragma`` whose destringized content is *content*.
+
+        Mirrors ``#pragma`` handling: ``once`` marks the current file (taken
+        from the live ``__FILE__`` macro) so later includes are skipped; every
+        other pragma is ignored.
+        """
+        content = content.strip()
+        if content == "once":
+            file_macro = self.defines.get("__FILE__")
+            if file_macro is not None:
+                path = file_macro.replacement.strip().strip('"')
+                if path:
+                    self._pragma_once_files.add(os.path.abspath(path))
+        # All other pragmas are silently ignored.
 
     def _expand_func_macro(
         self,
