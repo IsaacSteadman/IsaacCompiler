@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 import struct
-from typing import BinaryIO, Iterable, Optional, Tuple, Union
+from typing import BinaryIO, Iterable, Optional, Sequence, Tuple, Union
 
 
 SBC_MAGIC = b"\xf7SVE\0\0\0\0"
@@ -229,3 +229,36 @@ def load_sbc(source: Union[str, BinaryIO]) -> StackVMExecutable:
         return loads_sbc(source.read())
     with open(source, "rb") as fl:
         return loads_sbc(fl.read())
+
+
+def dumps_elf(
+    executable: StackVMExecutable,
+    section_layouts: Optional[Sequence[object]] = None,
+    symbols: Optional[Sequence[object]] = None,
+) -> bytes:
+    from .elf_file import dumps_elf_executable
+
+    return dumps_elf_executable(executable, section_layouts, symbols)
+
+
+def write_elf(
+    executable: StackVMExecutable,
+    target: Union[str, BinaryIO],
+    section_layouts: Optional[Sequence[object]] = None,
+    symbols: Optional[Sequence[object]] = None,
+) -> None:
+    from .elf_file import write_elf_executable
+
+    write_elf_executable(executable, target, section_layouts, symbols)
+
+
+def loads_elf(data: bytes) -> StackVMExecutable:
+    from .elf_file import loads_elf_executable
+
+    return loads_elf_executable(data)
+
+
+def load_elf(source: Union[str, BinaryIO]) -> StackVMExecutable:
+    from .elf_file import load_elf_executable
+
+    return load_elf_executable(source)

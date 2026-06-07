@@ -549,3 +549,27 @@ def load_sbo(source: Union[str, BinaryIO]) -> StackVMObject:
         return loads_sbo(source.read())
     with open(source, "rb") as fl:
         return loads_sbo(fl.read())
+
+
+def dumps_elf(obj: StackVMObject) -> bytes:
+    from .elf_file import dumps_elf_object
+
+    return dumps_elf_object(obj)
+
+
+def write_elf(obj: StackVMObject, target: Union[str, BinaryIO]) -> None:
+    from .elf_file import write_elf_object
+
+    write_elf_object(obj, target)
+
+
+def loads_elf(data: bytes) -> StackVMObject:
+    from .elf_file import loads_elf_object
+
+    return loads_elf_object(data)
+
+
+def load_elf(source: Union[str, BinaryIO]) -> StackVMObject:
+    from .elf_file import load_elf_object
+
+    return load_elf_object(source)

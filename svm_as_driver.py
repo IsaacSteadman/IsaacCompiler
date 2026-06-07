@@ -22,6 +22,7 @@ import sys
 from typing import List
 
 from .Preprocessing import MacroDef, PreprocessorError, preprocess
+from .code_gen.stackvm_binutils.elf_file import write_elf_object
 from .code_gen.stackvm_binutils.object_file import write_sbo
 from .code_gen.stackvm_binutils.svm_as import AssemblerError, ObjectAssembler
 from .gcc_driver import (
@@ -108,7 +109,10 @@ def run_svm_as(argv: List[str]) -> int:
 
         obj = assembler.to_object()
         _check_output_parent(namespace.output)
-        write_sbo(obj, namespace.output)
+        if os.path.splitext(namespace.output)[1].lower() == ".o":
+            write_elf_object(obj, namespace.output)
+        else:
+            write_sbo(obj, namespace.output)
         return 0
     except (GccDriverError, AssemblerError, PreprocessorError) as exc:
         print("error: %s" % exc, file=sys.stderr)

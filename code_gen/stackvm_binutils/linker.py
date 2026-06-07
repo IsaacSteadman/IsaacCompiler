@@ -21,6 +21,7 @@ from .archive_file import (
     load_sba,
 )
 from .executable_file import StackVMExecutable, dumps_sbc, write_sbc
+from .elf_file import ELF_MAGIC, load_elf_object, write_elf_executable
 from .debug_info import (
     DEBUG_SECTION_NAME,
     DebugFunctionRecord,
@@ -329,6 +330,15 @@ class LinkResult:
 
     def to_sbc(self) -> bytes:
         return dumps_sbc(self.to_executable())
+
+    def to_elf(self) -> bytes:
+        from .elf_file import dumps_elf_executable
+
+        return dumps_elf_executable(
+            self.to_executable(),
+            self.section_layouts,
+            self.symbols,
+        )
 
 
 @dataclass
@@ -1140,11 +1150,18 @@ def load_link_input(path: str) -> Union[ObjectInput, ArchiveInput]:
     path = os.fspath(path)
     with open(path, "rb") as fl:
         magic = fl.read(8)
+    if magic[:4] == ELF_MAGIC:
+        return ObjectInput(path, load_elf_object(path))
     if magic == SBO_MAGIC:
         return ObjectInput(path, load_sbo(path))
     if magic == SBA_MAGIC:
         return ArchiveInput(path, load_sba(path))
     raise LinkerError("unrecognized linker input format: %s" % path)
+
+
+def _should_write_elf_executable(path: str) -> bool:
+    base = os.path.basename(os.fspath(path))
+    return base == "vmlinux" or os.path.splitext(base)[1].lower() == ".elf"
 
 
 def link_files(
@@ -1173,7 +1190,15 @@ def link_files(
         percpu_copies=percpu_copies,
     )
     if output_path is not None:
-        write_sbc(result.to_executable(), output_path)
+        if _should_write_elf_executable(output_path):
+            write_elf_executable(
+                result.to_executable(),
+                output_path,
+                result.section_layouts,
+                result.symbols,
+            )
+        else:
+            write_sbc(result.to_executable(), output_path)
     if map_path is not None:
         write_map_file(result, map_path)
     return result

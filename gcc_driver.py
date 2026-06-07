@@ -34,6 +34,7 @@ from .code_gen.stackvm_binutils.linker import (
     link_files,
     load_linker_script,
 )
+from .code_gen.stackvm_binutils.elf_file import write_elf_object
 from .code_gen.stackvm_binutils.object_file import write_sbo
 
 # NOTE: ``compile_api`` (and through it the bundled runtime support) is imported
@@ -366,6 +367,13 @@ def _object_output_name(source_path: str, ext: str = ".sbo") -> str:
     return os.path.join(".", base + ext)
 
 
+def _write_object(obj, output: str) -> None:
+    if os.path.splitext(output)[1].lower() == ".o":
+        write_elf_object(obj, output)
+    else:
+        write_sbo(obj, output)
+
+
 def _compile_source_to_object(
     source: str,
     output: str,
@@ -393,7 +401,7 @@ def _compile_source_to_object(
         warnings_as_errors=warn.warnings_as_errors,
         use_runtime_deps=use_runtime_deps,
     )
-    write_sbo(
+    _write_object(
         result.cmpl_obj.to_stackvm_object(result.link_opts.extern_deps, None),
         output,
     )
@@ -433,7 +441,7 @@ def _assemble_source_to_object(
         obj = assemble_object(text)
     except AssemblerError as exc:
         raise GccDriverError("%s: %s" % (source, exc)) from exc
-    write_sbo(obj, output)
+    _write_object(obj, output)
 
 
 def _run_preprocess_only(

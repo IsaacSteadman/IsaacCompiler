@@ -10,15 +10,15 @@ from .debug_info import (
     resolve_line,
 )
 from .executable_file import SBC_DEBUG_MAGIC, load_sbc
-from .object_file import SBO_MAGIC, ObjectSegment, load_sbo
+from .elf_file import ELF_MAGIC, load_elf_executable, load_elf_object
+from .object_file import SBO_MAGIC, ObjectSegment, StackVMObject, load_sbo
 
 
 class Addr2LineError(Exception):
     pass
 
 
-def _debug_from_object(path: str) -> bytes:
-    obj = load_sbo(path)
+def _debug_from_stackvm_object(obj: StackVMObject, path: str) -> bytes:
     chunks = []
     for section in obj.sections:
         if section.name == DEBUG_SECTION_NAME or section.name.startswith(
@@ -42,11 +42,23 @@ def _debug_from_object(path: str) -> bytes:
     return chunks[0]
 
 
+def _debug_from_object(path: str) -> bytes:
+    return _debug_from_stackvm_object(load_sbo(path), path)
+
+
 def load_debug_info(path: str) -> StackVMDebugInfo:
     with open(path, "rb") as fl:
         magic = fl.read(8)
     if magic == SBO_MAGIC:
         debug_payload = _debug_from_object(path)
+    elif magic[:4] == ELF_MAGIC:
+        try:
+            debug_payload = _debug_from_stackvm_object(load_elf_object(path), path)
+        except ValueError:
+            try:
+                debug_payload = load_elf_executable(path).debug_info
+            except ValueError as exc:
+                raise Addr2LineError("unrecognized input format: %s" % path) from exc
     elif magic == SBC_DEBUG_MAGIC:
         debug_payload = load_sbc(path).debug_info
     else:

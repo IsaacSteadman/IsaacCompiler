@@ -16,6 +16,7 @@ from .code_gen.stackvm_binutils.linker import (
     link_files,
     load_linker_script,
 )
+from .code_gen.stackvm_binutils.elf_file import write_elf_object
 from .code_gen.stackvm_binutils.object_file import write_sbo
 from .parser.type.CompileContext import CompileContext
 from .parser.type.QualType import QualType
@@ -86,6 +87,13 @@ def _parse_positive_int_arg(value: str) -> int:
     if number < 1:
         raise argparse.ArgumentTypeError("value must be positive")
     return number
+
+
+def _write_object_output(obj, output_path: str) -> None:
+    if os.path.splitext(output_path)[1].lower() == ".o":
+        write_elf_object(obj, output_path)
+    else:
+        write_sbo(obj, output_path)
 
 
 def _token_line_col(tokens, index):
@@ -544,7 +552,7 @@ if args.subcommand == "compile":
                 )
         if args.output_binary is not None:
             if args.compile_only:
-                write_sbo(
+                _write_object_output(
                     cmpl_obj.to_stackvm_object(
                         link_opts.extern_deps,
                         args.default_alignment,
