@@ -310,7 +310,7 @@ link_parser.add_argument(
     default=None,
     dest="linker_script",
     help="use a linker script defining .text, .init.text, .init_array, "
-    ".fini_array, .data, .data..percpu, .rodata, and .bss",
+    ".fini_array, .data, .data..percpu, .tdata, .rodata, and .bss",
 )
 link_parser.add_argument(
     "--allow-undefined",

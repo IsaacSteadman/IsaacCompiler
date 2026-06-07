@@ -15,9 +15,12 @@ from ..type.get_user_str_from_type import get_user_str_from_type
 from ...lexer.lexer import Token
 from ..type.PrimitiveType import (
     bool_t,
+    complex_types,
+    get_complex_component_type,
+    is_complex_primitive_type,
     int_types,
     prim_types,
-    signed_num_types,
+    signed_num_or_complex_types,
 )
 
 
@@ -32,6 +35,8 @@ class UnaryExprSubType(Enum):
     REFERENCE = 7
     MINUS = 8
     PLUS = 9
+    REAL = 10
+    IMAG = 11
 
 
 DCT_PREFIX_OP_NAME = {
@@ -43,6 +48,10 @@ DCT_PREFIX_OP_NAME = {
     "&": UnaryExprSubType.REFERENCE,
     "-": UnaryExprSubType.MINUS,
     "+": UnaryExprSubType.PLUS,
+    "__real__": UnaryExprSubType.REAL,
+    "__imag__": UnaryExprSubType.IMAG,
+    "__real": UnaryExprSubType.REAL,
+    "__imag": UnaryExprSubType.IMAG,
 }
 
 DCT_POSTFIX_OP_NAME = {
@@ -62,8 +71,14 @@ class UnaryOpExpr(BaseExpr):
         UnaryExprSubType.BIT_NOT: list(map(get_uni_op_fn_type_v__v, int_types)),
         UnaryExprSubType.STAR: None,
         UnaryExprSubType.REFERENCE: None,
-        UnaryExprSubType.MINUS: list(map(get_uni_op_fn_type_v__v, signed_num_types)),
-        UnaryExprSubType.PLUS: list(map(get_uni_op_fn_type_v__v, prim_types)),
+        UnaryExprSubType.MINUS: list(
+            map(get_uni_op_fn_type_v__v, signed_num_or_complex_types)
+        ),
+        UnaryExprSubType.PLUS: list(
+            map(get_uni_op_fn_type_v__v, prim_types + complex_types)
+        ),
+        UnaryExprSubType.REAL: None,
+        UnaryExprSubType.IMAG: None,
     }
 
     def __init__(self, type_id: UnaryExprSubType, a: BaseExpr):
@@ -140,6 +155,24 @@ class UnaryOpExpr(BaseExpr):
             if is_src_ref:
                 a = CastOpExpr(src_vt, a, CastType.IMPLICIT)
             self.t_anot = QualType(QualType.QUAL_REF, src_vt.tgt_type)
+        elif type_id in {UnaryExprSubType.REAL, UnaryExprSubType.IMAG}:
+            src_pt, src_vt, is_src_ref = get_tgt_ref_type(a.t_anot)
+            if not is_complex_primitive_type(src_vt):
+                raise TypeError(
+                    "%s requires a _Complex operand, got %s"
+                    % (
+                        "__real__"
+                        if type_id == UnaryExprSubType.REAL
+                        else "__imag__",
+                        get_user_str_from_type(a.t_anot),
+                    )
+                )
+            component_type = get_complex_component_type(src_vt)
+            self.t_anot = (
+                QualType(QualType.QUAL_REF, component_type)
+                if is_src_ref
+                else component_type
+            )
         else:
             raise NotImplementedError("type_id = %s, is not implemented" % type_id.name)
         self.a = a

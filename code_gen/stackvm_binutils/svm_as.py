@@ -642,6 +642,7 @@ _SECTION_PRIORITY = (
     ".fini_array",
     ".data",
     ".data..percpu",
+    ".tdata",
     ".rodata",
     ".bss",
 )

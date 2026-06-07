@@ -21,6 +21,9 @@ class PrimitiveTypeId(Enum):
     TYP_BOOL = 12
     TYP_VOID = 13
     TYP_AUTO = 14
+    CPLX_F = 15
+    CPLX_D = 16
+    CPLX_LD = 17
 
 
 LST_TYPE_CODES = [
@@ -39,6 +42,9 @@ LST_TYPE_CODES = [
     "TYP_BOOL",
     "TYP_VOID",
     "TYP_AUTO",
+    "CPLX_F",
+    "CPLX_D",
+    "CPLX_LD",
 ]
 INT_TYPE_CODES = [
     PrimitiveTypeId.INT_I,
@@ -53,6 +59,22 @@ INT_TYPE_CODES = [
     PrimitiveTypeId.TYP_BOOL,
 ]
 FLT_TYPE_CODES = [PrimitiveTypeId.FLT_F, PrimitiveTypeId.FLT_D, PrimitiveTypeId.FLT_LD]
+COMPLEX_TYPE_CODES = [
+    PrimitiveTypeId.CPLX_F,
+    PrimitiveTypeId.CPLX_D,
+    PrimitiveTypeId.CPLX_LD,
+]
+COMPLEX_COMPONENT_TYPE_CODES = {
+    PrimitiveTypeId.CPLX_F: PrimitiveTypeId.FLT_F,
+    PrimitiveTypeId.CPLX_D: PrimitiveTypeId.FLT_D,
+    PrimitiveTypeId.CPLX_LD: PrimitiveTypeId.FLT_LD,
+}
+FLOAT_TO_COMPLEX_TYPE_CODES = {
+    PrimitiveTypeId.FLT_F: PrimitiveTypeId.CPLX_F,
+    PrimitiveTypeId.FLT_D: PrimitiveTypeId.CPLX_D,
+    PrimitiveTypeId.FLT_LD: PrimitiveTypeId.CPLX_LD,
+}
+COMPLEX_TYPE_SPECIFIERS = {"_Complex", "__complex__", "__complex"}
 # TODO: TYP_FN = ?
 SIZE_SIGN_MAP = {
     # k: (Size, Sign)
@@ -71,6 +93,9 @@ SIZE_SIGN_MAP = {
     PrimitiveTypeId.TYP_BOOL: (1, False),
     PrimitiveTypeId.TYP_VOID: (0, False),
     PrimitiveTypeId.TYP_AUTO: (0, False),
+    PrimitiveTypeId.CPLX_F: (8, True),
+    PrimitiveTypeId.CPLX_D: (16, True),
+    PrimitiveTypeId.CPLX_LD: (32, True),
 }
 
 
@@ -142,6 +167,9 @@ class PrimitiveType(BaseType):
         PrimitiveTypeId.TYP_BOOL: ["_Bool"],
         PrimitiveTypeId.TYP_VOID: ["void"],
         PrimitiveTypeId.TYP_AUTO: ["auto"],
+        PrimitiveTypeId.CPLX_F: ["_Complex", "float"],
+        PrimitiveTypeId.CPLX_D: ["_Complex", "double"],
+        PrimitiveTypeId.CPLX_LD: ["_Complex", "long", "double"],
     }
     mangle_captures = {
         "v": (PrimitiveTypeId.TYP_VOID, 0),
@@ -164,6 +192,9 @@ class PrimitiveType(BaseType):
         "f": (PrimitiveTypeId.FLT_F, 0),
         "d": (PrimitiveTypeId.FLT_D, 0),
         "g": (PrimitiveTypeId.FLT_LD, 0),  # __float128
+        "Cf": (PrimitiveTypeId.CPLX_F, 0),
+        "Cd": (PrimitiveTypeId.CPLX_D, 0),
+        "Cg": (PrimitiveTypeId.CPLX_LD, 0),
         "D": None,
         "Ds": (PrimitiveTypeId.INT_C16, -1),
         "Dt": (PrimitiveTypeId.INT_C16, 1),
@@ -192,6 +223,9 @@ class PrimitiveType(BaseType):
         (PrimitiveTypeId.FLT_F, True): "f",
         (PrimitiveTypeId.FLT_D, True): "d",
         (PrimitiveTypeId.FLT_LD, True): "g",
+        (PrimitiveTypeId.CPLX_F, True): "Cf",
+        (PrimitiveTypeId.CPLX_D, True): "Cd",
+        (PrimitiveTypeId.CPLX_LD, True): "Cg",
         (PrimitiveTypeId.TYP_BOOL, False): "b",
         (PrimitiveTypeId.TYP_VOID, False): "v",
     }
@@ -215,8 +249,13 @@ class PrimitiveType(BaseType):
         signed = 0
         lst_int_mods = []
         typ = None
+        is_complex = False
         for s in str_name:
-            if s in BASE_TYPE_MODS:
+            if s in COMPLEX_TYPE_SPECIFIERS:
+                if is_complex:
+                    raise SyntaxError("Cannot specify _Complex more than once")
+                is_complex = True
+            elif s in BASE_TYPE_MODS:
                 if signed == 0:
                     signed = -1 if s == "signed" else 1
                 else:
@@ -232,7 +271,7 @@ class PrimitiveType(BaseType):
             else:
                 raise SyntaxError("Unexpected Token '%s'" % s)
         if typ is None:
-            typ = PrimitiveTypeId.INT_I
+            typ = PrimitiveTypeId.FLT_D if is_complex else PrimitiveTypeId.INT_I
         if signed != 0 and (
             typ == PrimitiveTypeId.TYP_BOOL or typ not in INT_TYPE_CODES
         ):
@@ -260,6 +299,14 @@ class PrimitiveType(BaseType):
                         "Unexpected int modifier '%s' for %s"
                         % (IntMod, LST_TYPE_CODES[typ])
                     )
+        if is_complex:
+            if signed != 0:
+                raise SyntaxError("Unexpected signed specifier for _Complex type")
+            if typ not in FLOAT_TO_COMPLEX_TYPE_CODES:
+                raise SyntaxError(
+                    "_Complex requires float, double, or long double base type"
+                )
+            typ = FLOAT_TO_COMPLEX_TYPE_CODES[typ]
         return cls.from_type_code(typ, signed)
 
     @classmethod
@@ -269,7 +316,7 @@ class PrimitiveType(BaseType):
         """
         size, sign = SIZE_SIGN_MAP[typ]
         if signed != 0:
-            if typ in FLT_TYPE_CODES or typ in [
+            if typ in FLT_TYPE_CODES or typ in COMPLEX_TYPE_CODES or typ in [
                 PrimitiveTypeId.TYP_VOID,
                 PrimitiveTypeId.TYP_BOOL,
             ]:
@@ -354,28 +401,79 @@ class PrimitiveType(BaseType):
                     cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls])
                 else:
                     expr = init_args[0]
-                    typ = expr.t_anot
-                    src_pt = get_base_prim_type(typ)
-                    src_vt = get_value_type(src_pt)
-                    assert compare_no_cvr(self, src_vt), "self = %s, SrvVT = %s" % (
-                        get_user_str_from_type(self),
-                        get_user_str_from_type(src_vt),
-                    )
-                    sz = compile_expr(
-                        cmpl_obj, expr, context, cmpl_data, src_pt, temp_links
-                    )
-                    if src_pt is src_vt:
-                        assert sz == sz_var
+                    if is_complex_primitive_type(self):
+                        if ctx_var is not None and temp_links is None:
+                            from ...code_gen.setup_temp_links import setup_temp_links
+                            from ...code_gen.tear_down_temp_links import (
+                                tear_down_temp_links,
+                            )
+
+                            old_bp_off = cmpl_data.bp_off
+                            local_link = cmpl_data.put_local(
+                                ctx_var, name, sz_var, None, True
+                            )
+                            stack_add = cmpl_data.bp_off - old_bp_off
+                            if stack_add:
+                                sz_cls = emit_load_i_const(
+                                    cmpl_obj.memory, stack_add, False
+                                )
+                                cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls])
+                            init_temp_links = setup_temp_links(
+                                cmpl_obj, expr, context, cmpl_data
+                            )
+                            sz = _compile_complex_initializer_value(
+                                cmpl_obj,
+                                self,
+                                expr,
+                                context,
+                                cmpl_data,
+                                init_temp_links,
+                            )
+                            assert sz == sz_var
+                            local_link.emit_stor(
+                                cmpl_obj.memory,
+                                sz_var,
+                                cmpl_obj,
+                                byte_copy_cmpl_intrinsic,
+                                volatile_access=is_volatile_storage_type(self),
+                                atomic_access=is_atomic_storage_type(self),
+                            )
+                            tear_down_temp_links(
+                                cmpl_obj,
+                                init_temp_links,
+                                expr,
+                                context,
+                                cmpl_data,
+                            )
+                            return sz_var
+                        else:
+                            sz = _compile_complex_initializer_value(
+                                cmpl_obj, self, expr, context, cmpl_data, temp_links
+                            )
+                            assert sz == sz_var
                     else:
-                        assert sz == 8
-                        emit_tracked_abs_s8_load(
-                            cmpl_obj,
-                            sz_var,
-                            is_volatile_storage_type(expr.t_anot, through_ref=True),
-                            atomic_access=is_atomic_storage_type(
-                                expr.t_anot, through_ref=True
-                            ),
+                        typ = expr.t_anot
+                        src_pt = get_base_prim_type(typ)
+                        src_vt = get_value_type(src_pt)
+                        assert compare_no_cvr(self, src_vt), "self = %s, SrvVT = %s" % (
+                            get_user_str_from_type(self),
+                            get_user_str_from_type(src_vt),
                         )
+                        sz = compile_expr(
+                            cmpl_obj, expr, context, cmpl_data, src_pt, temp_links
+                        )
+                        if src_pt is src_vt:
+                            assert sz == sz_var
+                        else:
+                            assert sz == 8
+                            emit_tracked_abs_s8_load(
+                                cmpl_obj,
+                                sz_var,
+                                is_volatile_storage_type(expr.t_anot, through_ref=True),
+                                atomic_access=is_atomic_storage_type(
+                                    expr.t_anot, through_ref=True
+                                ),
+                            )
                 if ctx_var is not None:
                     cmpl_data.put_local(ctx_var, name, sz_var, None, True)
             else:
@@ -388,12 +486,22 @@ class PrimitiveType(BaseType):
             if len(init_args) == 0:
                 return sz_var
             link = ref.lnk
-            sz = compile_expr(
-                cmpl_obj,
-                CastOpExpr(self, init_args[0], CastType.IMPLICIT),
-                context,
-                cmpl_data,
-            )
+            if is_complex_primitive_type(self):
+                sz = _compile_complex_initializer_value(
+                    cmpl_obj,
+                    self,
+                    init_args[0],
+                    context,
+                    cmpl_data,
+                    temp_links,
+                )
+            else:
+                sz = compile_expr(
+                    cmpl_obj,
+                    CastOpExpr(self, init_args[0], CastType.IMPLICIT),
+                    context,
+                    cmpl_data,
+                )
             assert sz == sz_var
             link.emit_stor(
                 cmpl_obj.memory,
@@ -419,6 +527,10 @@ class PrimitiveType(BaseType):
         temp_links: Optional[List[Tuple["BaseType", "BaseLink"]]] = None,
     ):
         from_type = get_value_type(expr.t_anot)
+        if is_complex_primitive_type(self) or is_complex_primitive_type(from_type):
+            return _compile_complex_conversion(
+                self, from_type, cmpl_obj, expr, context, cmpl_data, temp_links
+            )
         err_msg = "error with expression type and size"
         err_msg += "\n  sz = %u\n  size_of(from_type) = %u\n  expr = %s\n  from_type = %s\n  self = %s"
         sz = compile_expr(cmpl_obj, expr, context, cmpl_data, from_type, temp_links)
@@ -485,6 +597,205 @@ def get_primitive_conv_bits(typ: "PrimitiveType") -> int:
     raise TypeError("Cannot cast to Type %s" % repr(typ))
 
 
+def _size_class(size: int) -> int:
+    sz_cls = size.bit_length() - 1
+    if 1 << sz_cls != size:
+        raise TypeError("Expected power-of-two size, got %u" % size)
+    return sz_cls
+
+
+def _swap_equal_size(memory: bytearray, size: int) -> None:
+    sz_cls = _size_class(size)
+    memory.extend([BC_SWAP, (sz_cls << 3) | sz_cls])
+
+
+def _drop_top(memory: bytearray, size: int) -> None:
+    sz_cls = emit_load_i_const(memory, size, False)
+    memory.extend([BC_RST_SP1 + sz_cls])
+
+
+def _emit_zero_as(memory: bytearray, typ: "PrimitiveType") -> None:
+    out_bits = get_primitive_conv_bits(typ)
+    emit_load_i_const(memory, 0, False, 0)
+    memory.extend([BC_CONV, out_bits << 4])
+
+
+def _emit_scalar_bool_test(memory: bytearray, typ: "PrimitiveType") -> None:
+    inp_bits = get_primitive_conv_bits(typ)
+    _emit_zero_as(memory, typ)
+    if inp_bits in {0x0C, 0x0D}:
+        memory.extend(
+            [BC_INT128, BC128_CMP128S if inp_bits == 0x0D else BC128_CMP128U]
+        )
+    else:
+        code = (BC_FCMP_2 if inp_bits & 0x08 else BC_CMP1) + (inp_bits & 0x7)
+        memory.append(code)
+    memory.append(BC_NE0)
+
+
+def _compile_complex_initializer_value(
+    cmpl_obj: "BaseCmplObj",
+    typ: "PrimitiveType",
+    expr: "BaseExpr",
+    context: "CompileContext",
+    cmpl_data: Optional["LocalCompileData"] = None,
+    temp_links: Optional[List[Tuple[BaseType, "BaseLink"]]] = None,
+) -> int:
+    component_type = get_complex_component_type(typ)
+    component_size = size_of(component_type)
+    if isinstance(expr, CurlyExpr):
+        elems = [] if expr.lst_expr is None else list(expr.lst_expr)
+        if len(elems) > 2:
+            raise TypeError("_Complex initializer accepts at most two elements")
+        if len(elems) >= 2:
+            compile_expr(
+                cmpl_obj,
+                elems[1],
+                context,
+                cmpl_data,
+                component_type,
+                temp_links,
+            )
+        else:
+            _emit_zero_as(cmpl_obj.memory, component_type)
+        if len(elems) >= 1:
+            compile_expr(
+                cmpl_obj,
+                elems[0],
+                context,
+                cmpl_data,
+                component_type,
+                temp_links,
+            )
+        else:
+            _emit_zero_as(cmpl_obj.memory, component_type)
+        return component_size * 2
+    if expr.t_anot is not None and compare_no_cvr(get_value_type(expr.t_anot), typ):
+        return compile_expr(
+            cmpl_obj,
+            expr,
+            context,
+            cmpl_data,
+            typ,
+            temp_links,
+        )
+    return compile_expr(
+        cmpl_obj,
+        CastOpExpr(typ, expr, CastType.IMPLICIT),
+        context,
+        cmpl_data,
+        typ,
+        temp_links,
+    )
+
+
+def _compile_complex_conversion(
+    to_type: "PrimitiveType",
+    from_type: "BaseType",
+    cmpl_obj: "BaseCmplObj",
+    expr: "BaseExpr",
+    context: "CompileContext",
+    cmpl_data: Optional["LocalCompileData"] = None,
+    temp_links: Optional[List[Tuple["BaseType", "BaseLink"]]] = None,
+) -> int:
+    from_is_complex = is_complex_primitive_type(from_type)
+    to_is_complex = is_complex_primitive_type(to_type)
+
+    if to_is_complex:
+        to_component = get_complex_component_type(to_type)
+        to_component_size = size_of(to_component)
+        if from_is_complex:
+            from_component = get_complex_component_type(from_type)
+            from_component_size = size_of(from_component)
+            sz = compile_expr(
+                cmpl_obj, expr, context, cmpl_data, from_type, temp_links
+            )
+            assert sz == size_of(from_type)
+            if compare_no_cvr(from_component, to_component):
+                return size_of(to_type)
+            # [src.real][src.imag] -> [dst.real][dst.imag]
+            cmpl_obj.memory.extend(
+                [
+                    BC_CONV,
+                    get_primitive_conv_bits(from_component)
+                    | (get_primitive_conv_bits(to_component) << 4),
+                ]
+            )
+            cmpl_obj.memory.extend(
+                [
+                    BC_SWAP,
+                    (_size_class(to_component_size) << 3)
+                    | _size_class(from_component_size),
+                ]
+            )
+            cmpl_obj.memory.extend(
+                [
+                    BC_CONV,
+                    get_primitive_conv_bits(from_component)
+                    | (get_primitive_conv_bits(to_component) << 4),
+                ]
+            )
+            _swap_equal_size(cmpl_obj.memory, to_component_size)
+            return size_of(to_type)
+        if not isinstance(from_type, PrimitiveType):
+            raise TypeError("Cannot cast from Type %r to %r" % (from_type, to_type))
+        sz = to_component.compile_conv(
+            cmpl_obj, expr, context, cmpl_data, temp_links
+        )
+        assert sz == to_component_size
+        _emit_zero_as(cmpl_obj.memory, to_component)
+        _swap_equal_size(cmpl_obj.memory, to_component_size)
+        return size_of(to_type)
+
+    if from_is_complex:
+        from_component = get_complex_component_type(from_type)
+        from_component_size = size_of(from_component)
+        sz = compile_expr(cmpl_obj, expr, context, cmpl_data, from_type, temp_links)
+        assert sz == size_of(from_type)
+        if to_type.typ == PrimitiveTypeId.TYP_BOOL:
+            _emit_scalar_bool_test(cmpl_obj.memory, from_component)
+            cmpl_obj.memory.extend(
+                [
+                    BC_SWAP,
+                    (_size_class(from_component_size) << 3) | _size_class(1),
+                ]
+            )
+            _emit_scalar_bool_test(cmpl_obj.memory, from_component)
+            cmpl_obj.memory.append(BC_OR1)
+            return 1
+        _swap_equal_size(cmpl_obj.memory, from_component_size)
+        _drop_top(cmpl_obj.memory, from_component_size)
+        if compare_no_cvr(to_type, from_component):
+            return from_component_size
+        cmpl_obj.memory.extend(
+            [
+                BC_CONV,
+                get_primitive_conv_bits(from_component)
+                | (get_primitive_conv_bits(to_type) << 4),
+            ]
+        )
+        return size_of(to_type)
+
+    raise TypeError("Cannot cast from Type %r to %r" % (from_type, to_type))
+
+
+def is_complex_primitive_type(typ: "BaseType") -> bool:
+    return isinstance(typ, PrimitiveType) and typ.typ in COMPLEX_TYPE_CODES
+
+
+def get_complex_component_type(typ: "PrimitiveType") -> "PrimitiveType":
+    if not is_complex_primitive_type(typ):
+        raise TypeError("Expected _Complex primitive type, got %r" % (typ,))
+    return PrimitiveType.from_type_code(COMPLEX_COMPONENT_TYPE_CODES[typ.typ])
+
+
+def make_complex_type(component_type: "PrimitiveType") -> "PrimitiveType":
+    component_type = PrimitiveType.from_type_code(component_type.typ)
+    if component_type.typ not in FLOAT_TO_COMPLEX_TYPE_CODES:
+        raise TypeError("_Complex component must be float, double, or long double")
+    return PrimitiveType.from_type_code(FLOAT_TO_COMPLEX_TYPE_CODES[component_type.typ])
+
+
 void_t = PrimitiveType.from_type_code(PrimitiveTypeId.TYP_VOID)
 int_types = [
     PrimitiveType.from_str_name(x)
@@ -531,6 +842,17 @@ bool_t = int_types[-1]
 prim_types = int_types + [
     PrimitiveType.from_str_name(x) for x in [["float"], ["double"], ["long", "double"]]
 ]
+complex_types = [
+    PrimitiveType.from_type_code(x)
+    for x in [
+        PrimitiveTypeId.CPLX_F,
+        PrimitiveTypeId.CPLX_D,
+        PrimitiveTypeId.CPLX_LD,
+    ]
+]
+native_op_types = prim_types + complex_types
+arithmetic_types = native_op_types
+signed_num_or_complex_types = signed_num_types + complex_types
 size_l_t = PrimitiveType.get_size_l_type()
 snz_l_t = PrimitiveType.get_size_l_type(True)
 
@@ -565,6 +887,9 @@ from ...StackVM.PyStackVM import (
     BC_INT128,
     BC_NE0,
     BC_NOP,
+    BC_OR1,
+    BC_RST_SP1,
+    BC_SWAP,
 )
 from ...code_gen.BaseCmplObj import BaseCmplObj
 from ...code_gen.BaseLink import BaseLink
@@ -582,6 +907,7 @@ from .qual_atomic_type_util import (
 )
 from .CompileContext import CompileContext
 from ..stmnt.CurlyStmnt import CurlyStmnt
+from ..expr.CurlyExpr import CurlyExpr
 from .get_user_str_from_type import get_user_str_from_type
 from ..expr.CastOpExpr import CastOpExpr, CastType
 from .compile_static_storage_decl import compile_static_storage_decl

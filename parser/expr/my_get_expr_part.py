@@ -205,6 +205,9 @@ def my_get_expr_part(
     elif s == "__builtin_prefetch" and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_prefetch_expr(tokens, c + 2, end, context)
         return ExprOpPart(expr), c
+    elif s == "__builtin_complex" and c + 1 < end and tokens[c + 1].str == "(":
+        expr, c = _build_builtin_complex_expr(tokens, c + 2, end, context)
+        return ExprOpPart(expr), c
     elif s in {"__builtin_trap", "__builtin_unreachable"} and c + 1 < end and tokens[c + 1].str == "(":
         expr, c = _build_builtin_terminator_expr(s, tokens, c + 2, end, context)
         return ExprOpPart(expr), c
@@ -285,14 +288,19 @@ from .expr_part.SParenthOpPart import SParenthOpPart
 from .expr_part.SimpleOpPart import SimpleOpPart
 from ...lexer.lexer import BreakSymClass, OperatorClass, Token, TokenType
 from ..type.PrimitiveType import (
+    FLT_TYPE_CODES,
     INT_TYPE_CODES,
     PrimitiveType,
     PrimitiveTypeId,
     bool_t,
+    get_complex_component_type,
+    is_complex_primitive_type,
+    make_complex_type,
     size_l_t,
     void_t,
 )
 from ..type.QualType import QualType
+from ..type.qual_atomic_type_util import get_value_type
 from ..type.eval_const_expr import eval_const_expr
 
 _builtin_result_int_t = PrimitiveType.from_str_name(["signed", "int"])
@@ -575,6 +583,52 @@ def _build_builtin_unary_expr(name, tokens, c, end, context):
                 context,
             ),
             spec.result_type,
+        ),
+        paren_end + 1,
+    )
+
+
+def _complex_component_for_expr(expr):
+    value_type = get_value_type(expr.t_anot)
+    if is_complex_primitive_type(value_type):
+        return get_complex_component_type(value_type)
+    if isinstance(value_type, PrimitiveType):
+        if value_type.typ in FLT_TYPE_CODES:
+            return value_type
+        if value_type.typ in INT_TYPE_CODES:
+            return PrimitiveType.from_type_code(PrimitiveTypeId.FLT_D)
+    raise TypeError(
+        "__builtin_complex arguments must be arithmetic scalar expressions"
+    )
+
+
+def _build_builtin_complex_expr(tokens, c, end, context):
+    paren_end = _find_call_paren_end(tokens, c, end)
+    real_expr, c = get_expr(tokens, c, ",", paren_end, context)
+    if real_expr is None or c >= paren_end or tokens[c].str != ",":
+        raise ParsingError(tokens, c, "__builtin_complex expects two arguments")
+    imag_expr, c = get_expr(tokens, c + 1, ",", paren_end, context)
+    if imag_expr is None or c != paren_end:
+        raise ParsingError(tokens, c, "__builtin_complex expects two arguments")
+    component_options = [
+        _complex_component_for_expr(real_expr),
+        _complex_component_for_expr(imag_expr),
+    ]
+    component_rank = {
+        PrimitiveTypeId.FLT_F: 0,
+        PrimitiveTypeId.FLT_D: 1,
+        PrimitiveTypeId.FLT_LD: 2,
+    }
+    component_type = max(
+        component_options, key=lambda typ: component_rank[typ.typ]
+    )
+    result_type = make_complex_type(component_type)
+    return (
+        BuiltinSpecialExpr(
+            "__builtin_complex",
+            BuiltinSpecialExpr.KIND_COMPLEX,
+            [real_expr, imag_expr],
+            result_type,
         ),
         paren_end + 1,
     )

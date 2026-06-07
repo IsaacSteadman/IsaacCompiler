@@ -12,6 +12,7 @@ class BuiltinSpecialExpr(BaseExpr):
     KIND_RETURN_ADDRESS = 3
     KIND_FRAME_ADDRESS = 4
     KIND_PREFETCH = 5
+    KIND_COMPLEX = 6
 
     def __init__(
         self,

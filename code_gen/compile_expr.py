@@ -66,6 +66,40 @@ def _emit_raw_equality_compare(cmpl_obj: "BaseCmplObj", size: int) -> None:
         cmpl_obj.memory.append(BC_CMP1 + 2 * sz_cls)
 
 
+def _size_class(size: int) -> int:
+    sz_cls = size.bit_length() - 1
+    if 1 << sz_cls != size:
+        raise TypeError("Expected power-of-two size, got %u" % size)
+    return sz_cls
+
+
+def _swap_equal_size(memory: bytearray, size: int) -> None:
+    sz_cls = _size_class(size)
+    memory.extend([BC_SWAP, (sz_cls << 3) | sz_cls])
+
+
+def _drop_top(memory: bytearray, size: int) -> None:
+    sz_cls = emit_load_i_const(memory, size, False)
+    memory.extend([BC_RST_SP1 + sz_cls])
+
+
+def _emit_zero_as_type(memory: bytearray, typ: "BaseType") -> None:
+    out_bits = get_bc_conv_bits(typ)
+    emit_load_i_const(memory, 0, False, 0)
+    memory.extend([BC_CONV, out_bits << 4])
+
+
+def _emit_negate_scalar_top(memory: bytearray, typ: "BaseType") -> None:
+    size = size_of(typ)
+    _emit_zero_as_type(memory, typ)
+    _swap_equal_size(memory, size)
+    bits = get_bc_conv_bits(typ)
+    if bits & 0x08:
+        memory.append((BC_FSUB_2 - 1) + _size_class(size))
+    else:
+        memory.append(BC_SUB1 + _size_class(size))
+
+
 def _compile_atomic_intrinsic_expr(
     cmpl_obj: "BaseCmplObj",
     expr: "AtomicIntrinsicExpr",
@@ -224,6 +258,26 @@ def _compile_builtin_special_expr(
         if expr.args:
             compile_expr(cmpl_obj, expr.args[0], context, cmpl_data, void_t, temp_links)
         return 0, void_t
+
+    if expr.kind == BuiltinSpecialExpr.KIND_COMPLEX:
+        component_type = get_complex_component_type(get_value_type(expr.t_anot))
+        compile_expr(
+            cmpl_obj,
+            expr.args[1],
+            context,
+            cmpl_data,
+            component_type,
+            temp_links,
+        )
+        compile_expr(
+            cmpl_obj,
+            expr.args[0],
+            context,
+            cmpl_data,
+            component_type,
+            temp_links,
+        )
+        return size_of(expr.t_anot), expr.t_anot
 
     if expr.kind == BuiltinSpecialExpr.KIND_FRAME_ADDRESS:
         _emit_frame_pointer_at_level(cmpl_obj, int(expr.int_value or 0))
@@ -742,7 +796,19 @@ def compile_expr(
         elif expr.type_id == UnaryExprSubType.MINUS:
             prim_type = get_base_prim_type(expr.a.t_anot)
             assert isinstance(prim_type, PrimitiveType)
-            if prim_type.typ in INT_TYPE_CODES and prim_type.size == 16:
+            if is_complex_primitive_type(prim_type):
+                component_type = get_complex_component_type(prim_type)
+                component_size = size_of(component_type)
+                res_type = expr.a.t_anot
+                sz = compile_expr(
+                    cmpl_obj, expr.a, context, cmpl_data, None, temp_links
+                )
+                assert sz == size_of(prim_type)
+                _emit_negate_scalar_top(cmpl_obj.memory, component_type)
+                _swap_equal_size(cmpl_obj.memory, component_size)
+                _emit_negate_scalar_top(cmpl_obj.memory, component_type)
+                _swap_equal_size(cmpl_obj.memory, component_size)
+            elif prim_type.typ in INT_TYPE_CODES and prim_type.size == 16:
                 emit_load_i_const(cmpl_obj.memory, 0, False, 4)
                 sub_code = BC128_SUB128S if prim_type.sign else BC128_SUB128U
             else:
@@ -769,6 +835,31 @@ def compile_expr(
         elif expr.type_id == UnaryExprSubType.PLUS:
             res_type = expr.a.t_anot
             sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
+        elif expr.type_id in {UnaryExprSubType.REAL, UnaryExprSubType.IMAG}:
+            prim_type, val_type, is_ref = get_tgt_ref_type(expr.a.t_anot)
+            assert is_complex_primitive_type(val_type)
+            component_type = get_complex_component_type(val_type)
+            component_size = size_of(component_type)
+            res_type = expr.t_anot
+            if is_ref:
+                sz = compile_expr(
+                    cmpl_obj, expr.a, context, cmpl_data, None, temp_links
+                )
+                assert sz == 8
+                if expr.type_id == UnaryExprSubType.IMAG:
+                    emit_load_i_const(cmpl_obj.memory, component_size, False, 3)
+                    cmpl_obj.memory.append(BC_ADD8)
+            else:
+                sz = compile_expr(
+                    cmpl_obj, expr.a, context, cmpl_data, None, temp_links
+                )
+                assert sz == size_of(val_type)
+                if expr.type_id == UnaryExprSubType.REAL:
+                    _swap_equal_size(cmpl_obj.memory, component_size)
+                    _drop_top(cmpl_obj.memory, component_size)
+                else:
+                    _drop_top(cmpl_obj.memory, component_size)
+                sz = component_size
         elif expr.type_id in [
             UnaryExprSubType.PRE_DEC,
             UnaryExprSubType.PRE_INC,
@@ -1191,6 +1282,8 @@ from ..parser.type.PrimitiveType import (
     PrimitiveType,
     INT_TYPE_CODES,
     bool_t,
+    get_complex_component_type,
+    is_complex_primitive_type,
     size_l_t,
     void_t,
     prim_types,

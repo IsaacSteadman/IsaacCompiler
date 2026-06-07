@@ -34,6 +34,7 @@ from .percpu import (
 )
 from .tls import (
     TLS_ALIGN_SYMBOL,
+    TLS_SECTION_NAME,
     TLS_SIZE_SYMBOL,
     TLS_TEMPLATE_END_SYMBOL,
     TLS_TEMPLATE_START_SYMBOL,
@@ -792,9 +793,10 @@ class Compilation(BaseCmplObj):
             FINI_ARRAY_SECTION: 3,
             ".data": 4,
             PERCPU_SECTION_NAME: 5,
-            ".rodata": 6,
-            ".bss": 7,
-            DEBUG_SECTION_NAME: 8,
+            TLS_SECTION_NAME: 6,
+            ".rodata": 7,
+            ".bss": 8,
+            DEBUG_SECTION_NAME: 9,
         }
 
         def section_sort_key(builder):

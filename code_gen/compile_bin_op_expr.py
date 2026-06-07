@@ -27,6 +27,226 @@ def _get_int128_subop(expr_type, is_sign):
     return None
 
 
+def _size_class(size: int) -> int:
+    sz_cls = size.bit_length() - 1
+    if 1 << sz_cls != size:
+        raise TypeError("Expected power-of-two size, got %u" % size)
+    return sz_cls
+
+
+def _float_op_code(base, component_size):
+    if component_size not in {4, 8}:
+        raise NotImplementedError(
+            "_Complex long double arithmetic is not supported by the VM yet"
+        )
+    return base - 1 + _size_class(component_size)
+
+
+def _emit_complex_component_load(cmpl_obj, link, component_size, index):
+    link.get_offset_link(index * component_size).emit_load(
+        cmpl_obj.memory, component_size, cmpl_obj, byte_copy_cmpl_intrinsic
+    )
+
+
+def _emit_complex_component_pair_op(
+    cmpl_obj, left_link, right_link, component_size, left_index, right_index, op_code
+):
+    _emit_complex_component_load(cmpl_obj, left_link, component_size, left_index)
+    _emit_complex_component_load(cmpl_obj, right_link, component_size, right_index)
+    cmpl_obj.memory.append(op_code)
+
+
+def _emit_complex_value_from_temps(
+    cmpl_obj,
+    expr_type,
+    typ,
+    left_link,
+    right_link,
+):
+    component_type = get_complex_component_type(typ)
+    component_size = size_of(component_type)
+    add_code = _float_op_code(BC_FADD_2, component_size)
+    sub_code = _float_op_code(BC_FSUB_2, component_size)
+    mul_code = _float_op_code(BC_FMUL_2, component_size)
+    div_code = _float_op_code(BC_FDIV_2, component_size)
+
+    if expr_type in {BinaryExprSubType.PLUS, BinaryExprSubType.ASSGN_PLUS}:
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 1, 1, add_code
+        )
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 0, 0, add_code
+        )
+        return size_of(typ)
+    if expr_type in {BinaryExprSubType.MINUS, BinaryExprSubType.ASSGN_MINUS}:
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 1, 1, sub_code
+        )
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 0, 0, sub_code
+        )
+        return size_of(typ)
+    if expr_type in {BinaryExprSubType.MUL, BinaryExprSubType.ASSGN_MUL}:
+        # imag = ar*bi + ai*br
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 0, 1, mul_code
+        )
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 1, 0, mul_code
+        )
+        cmpl_obj.memory.append(add_code)
+        # real = ar*br - ai*bi
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 0, 0, mul_code
+        )
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 1, 1, mul_code
+        )
+        cmpl_obj.memory.append(sub_code)
+        return size_of(typ)
+    if expr_type in {BinaryExprSubType.DIV, BinaryExprSubType.ASSGN_DIV}:
+        # imag = (ai*br - ar*bi) / (br*br + bi*bi)
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 1, 0, mul_code
+        )
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 0, 1, mul_code
+        )
+        cmpl_obj.memory.append(sub_code)
+        _emit_complex_component_pair_op(
+            cmpl_obj, right_link, right_link, component_size, 0, 0, mul_code
+        )
+        _emit_complex_component_pair_op(
+            cmpl_obj, right_link, right_link, component_size, 1, 1, mul_code
+        )
+        cmpl_obj.memory.append(add_code)
+        cmpl_obj.memory.append(div_code)
+        # real = (ar*br + ai*bi) / (br*br + bi*bi)
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 0, 0, mul_code
+        )
+        _emit_complex_component_pair_op(
+            cmpl_obj, left_link, right_link, component_size, 1, 1, mul_code
+        )
+        cmpl_obj.memory.append(add_code)
+        _emit_complex_component_pair_op(
+            cmpl_obj, right_link, right_link, component_size, 0, 0, mul_code
+        )
+        _emit_complex_component_pair_op(
+            cmpl_obj, right_link, right_link, component_size, 1, 1, mul_code
+        )
+        cmpl_obj.memory.append(add_code)
+        cmpl_obj.memory.append(div_code)
+        return size_of(typ)
+    raise ValueError("Unsupported _Complex operator %s" % expr_type.name)
+
+
+def _emit_complex_compare_from_temps(
+    cmpl_obj,
+    expr_type,
+    typ,
+    left_link,
+    right_link,
+):
+    component_type = get_complex_component_type(typ)
+    component_size = size_of(component_type)
+    cmp_code = _float_op_code(BC_FCMP_2, component_size)
+    final_code = BC_EQ0 if expr_type == BinaryExprSubType.EQ else BC_NE0
+    combine_code = BC_AND1 if expr_type == BinaryExprSubType.EQ else BC_OR1
+    _emit_complex_component_pair_op(
+        cmpl_obj, left_link, right_link, component_size, 0, 0, cmp_code
+    )
+    cmpl_obj.memory.append(final_code)
+    _emit_complex_component_pair_op(
+        cmpl_obj, left_link, right_link, component_size, 1, 1, cmp_code
+    )
+    cmpl_obj.memory.append(final_code)
+    cmpl_obj.memory.append(combine_code)
+    return 1, bool_t
+
+
+def _compile_complex_bin_op_expr(
+    cmpl_obj,
+    expr,
+    context,
+    cmpl_data,
+    type_coerce,
+    temp_links,
+    typ,
+):
+    if expr.type_id in {BinaryExprSubType.EQ, BinaryExprSubType.NE}:
+        left_link = temp_links[expr.temps_off][1]
+        right_link = temp_links[expr.temps_off + 1][1]
+        sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, typ, temp_links)
+        assert sz == size_of(typ)
+        left_link.emit_stor(
+            cmpl_obj.memory, size_of(typ), cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, typ, temp_links)
+        assert sz == size_of(typ)
+        right_link.emit_stor(
+            cmpl_obj.memory, size_of(typ), cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        return _emit_complex_compare_from_temps(
+            cmpl_obj, expr.type_id, typ, left_link, right_link
+        )
+
+    if expr.type_id in ASSIGNMENT_OPS:
+        if expr.type_id == BinaryExprSubType.ASSGN:
+            return None
+        left_link = temp_links[expr.temps_off][1]
+        right_link = temp_links[expr.temps_off + 1][1]
+        ptr_link = temp_links[expr.temps_off + 2][1]
+        sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, None, temp_links)
+        assert sz == 8
+        ptr_link.emit_stor(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        ptr_link.emit_load(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        emit_tracked_abs_s8_load(
+            cmpl_obj,
+            size_of(typ),
+            is_volatile_storage_type(expr.a.t_anot, through_ref=True),
+            atomic_access=is_atomic_storage_type(expr.a.t_anot, through_ref=True),
+        )
+        left_link.emit_stor(
+            cmpl_obj.memory, size_of(typ), cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, typ, temp_links)
+        assert sz == size_of(typ)
+        right_link.emit_stor(
+            cmpl_obj.memory, size_of(typ), cmpl_obj, byte_copy_cmpl_intrinsic
+        )
+        _emit_complex_value_from_temps(
+            cmpl_obj, expr.type_id, typ, left_link, right_link
+        )
+        ptr_link.emit_load(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        emit_tracked_abs_s8_stor(
+            cmpl_obj,
+            size_of(typ),
+            is_volatile_storage_type(expr.a.t_anot, through_ref=True),
+            atomic_access=is_atomic_storage_type(expr.a.t_anot, through_ref=True),
+        )
+        if type_coerce is void_t:
+            return 0, void_t
+        ptr_link.emit_load(cmpl_obj.memory, 8, cmpl_obj, byte_copy_cmpl_intrinsic)
+        return 8, expr.t_anot
+
+    left_link = temp_links[expr.temps_off][1]
+    right_link = temp_links[expr.temps_off + 1][1]
+    sz = compile_expr(cmpl_obj, expr.a, context, cmpl_data, typ, temp_links)
+    assert sz == size_of(typ)
+    left_link.emit_stor(
+        cmpl_obj.memory, size_of(typ), cmpl_obj, byte_copy_cmpl_intrinsic
+    )
+    sz = compile_expr(cmpl_obj, expr.b, context, cmpl_data, typ, temp_links)
+    assert sz == size_of(typ)
+    right_link.emit_stor(
+        cmpl_obj.memory, size_of(typ), cmpl_obj, byte_copy_cmpl_intrinsic
+    )
+    return _emit_complex_value_from_temps(
+        cmpl_obj, expr.type_id, typ, left_link, right_link
+    ), typ
+
+
 def _compile_bit_field_assign(cmpl_obj, expr, context, cmpl_data, temp_links, bfi, typ):
     """Emit a read-modify-write sequence for a simple bit-field assignment.
 
@@ -100,7 +320,7 @@ def compile_bin_op_expr(
             is_sign = True
     elif expr.op_fn_type == OperatorType.NATIVE:
         # src_pt = get_base_prim_type(expr.a.t_anot)
-        typ = prim_types[expr.op_fn_data]
+        typ = native_op_types[expr.op_fn_data]
         is_flt = typ.typ in FLT_TYPE_CODES
         is_sign = typ.sign
         sz_type = typ.size
@@ -108,6 +328,12 @@ def compile_bin_op_expr(
     if typ is None:
         raise NotImplementedError("Not Implemented: op_fn_type = %u" % expr.op_fn_type)
     assert (1 << sz_cls) == sz_type
+    if is_complex_primitive_type(typ) and expr.type_id != BinaryExprSubType.ASSGN:
+        complex_res = _compile_complex_bin_op_expr(
+            cmpl_obj, expr, context, cmpl_data, type_coerce, temp_links, typ
+        )
+        if complex_res is not None:
+            return complex_res
     sz1 = 0
     if (
         expr.type_id == BinaryExprSubType.ASSGN
@@ -431,8 +657,11 @@ from ..parser.type.PrimitiveType import (
     PrimitiveType,
     PrimitiveTypeId,
     FLT_TYPE_CODES,
+    bool_t,
+    get_complex_component_type,
+    is_complex_primitive_type,
+    native_op_types,
     void_t,
-    prim_types,
 )
 from ..parser.type.QualType import QualType
 from ..parser.type.qual_atomic_type_util import (

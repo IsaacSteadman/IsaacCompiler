@@ -19,6 +19,7 @@ if REPO_PARENT not in sys.path:
 
 from IsaacCompiler.Preprocessing import preprocess
 from IsaacCompiler.StackVM.PyStackVM import (
+    BCR_EA_R_IP,
     BCR_SYSREG,
     BCR_SZ_8,
     BC_CALL,
@@ -34,6 +35,19 @@ from IsaacCompiler.code_gen.Compilation import Compilation, INIT_GLOBALS_LINK_NA
 from IsaacCompiler.code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
 from IsaacCompiler.code_gen.compile_stmnt import compile_stmnt
 from IsaacCompiler.code_gen.stackvm_binutils.emit_load_i_const import emit_load_i_const
+from IsaacCompiler.code_gen.stackvm_binutils.linker import link_objects
+from IsaacCompiler.code_gen.stackvm_binutils.object_file import (
+    ObjectRelocation,
+    ObjectSection,
+    ObjectSegment,
+    ObjectSymbol,
+    RelocationType,
+    SectionFlags,
+    StackVMObject,
+    SymbolBinding,
+    SymbolFlags,
+    SymbolType,
+)
 from IsaacCompiler.code_gen.tls import (
     TLS_ALIGN_SYMBOL,
     TLS_SECTION_NAME,
@@ -76,6 +90,66 @@ def _compile(source):
     cmpl_obj.merge_all(link_opts, link_opts.extern_deps, None)
     assert cmpl_obj.link_all()
     return global_ctx, cmpl_obj
+
+
+def _compile_object(source):
+    """Compile a translation unit to a sectioned object for separate linking."""
+    source = preprocess(source, [os.path.join(REPO_ROOT, "StackVM", "include")])
+    tokens = get_list_tokens(source)
+    global_ctx = CompileContext("", None, None)
+    cmpl_obj = Compilation(False)
+
+    cursor = 0
+    while cursor < len(tokens):
+        stmnt, cursor = get_stmnt(tokens, cursor, len(tokens), global_ctx)
+        compile_stmnt(cmpl_obj, stmnt, global_ctx, None)
+
+    return global_ctx, cmpl_obj.to_stackvm_object()
+
+
+def _undefined_fn(name):
+    return ObjectSymbol(
+        name,
+        0,
+        0,
+        ObjectSegment.CODE,
+        SymbolBinding.GLOBAL,
+        SymbolType.FUNCTION,
+        SymbolFlags.UNDEFINED,
+    )
+
+
+def _startup_object():
+    code = bytearray()
+    emit_load_i_const(code, 1, True, 2)
+    code.extend([BC_LOAD, BCR_EA_R_IP | BCR_SZ_8])
+    relocation_offset = len(code)
+    code.extend(b"\0" * 8)
+    code.extend([BC_CALL, BC_HLT])
+    return StackVMObject(
+        bytes(code),
+        b"",
+        [_undefined_fn("main")],
+        [
+            ObjectRelocation(
+                relocation_offset,
+                0,
+                ObjectSegment.CODE,
+                RelocationType.PCREL8,
+                section_index=0,
+            )
+        ],
+        sections=[
+            ObjectSection(
+                ".text",
+                0,
+                len(code),
+                1,
+                ObjectSegment.CODE,
+                SectionFlags.EXECUTABLE,
+            )
+        ],
+    )
 
 
 def _sym(cmpl_obj, name):
@@ -194,6 +268,45 @@ class ThreadLocalLayoutTests(unittest.TestCase):
             bytes([BC_LOAD, BCR_SYSREG | BCR_SZ_8, SVSR_TLS_BASE]),
             bytes(cmpl_obj.memory),
         )
+
+    def test_separate_linker_places_tdata_and_defines_tls_symbols(self):
+        global_ctx, obj = _compile_object(
+            "_Thread_local int tls_counter = 7;\n"
+            "int observed = 0;\n"
+            "int main(void) {\n"
+            "    tls_counter = tls_counter + 5;\n"
+            "    observed = tls_counter;\n"
+            "    return 0;\n"
+            "}\n"
+        )
+        tls_symbol = next(symbol for symbol in obj.symbols if symbol.name == "tls_counter")
+        self.assertEqual(obj.sections[tls_symbol.section_index].name, TLS_SECTION_NAME)
+
+        result = link_objects([("start.sbo", _startup_object()), ("unit.sbo", obj)])
+        sections = {section.name: section for section in result.section_layouts}
+        self.assertEqual(
+            result.global_symbols[TLS_TEMPLATE_START_SYMBOL],
+            sections[TLS_SECTION_NAME].address,
+        )
+        self.assertEqual(result.global_symbols[TLS_SIZE_SYMBOL], 4)
+        self.assertGreaterEqual(result.global_symbols[TLS_ALIGN_SYMBOL], 1)
+        self.assertEqual(
+            result.global_symbols[TLS_TEMPLATE_END_SYMBOL]
+            - result.global_symbols[TLS_TEMPLATE_START_SYMBOL],
+            result.global_symbols[TLS_SIZE_SYMBOL],
+        )
+
+        vm = VM(65536)
+        vm.load_program(result.memory, 0)
+        vm.sys_regs[SVSR_TLS_BASE] = result.global_symbols[TLS_TEMPLATE_START_SYMBOL]
+        vm.push(4, 0)
+        add_cmd_argv_vm(vm, len(result.memory), ["prog"])
+        vm.execute()
+
+        observed_addr = result.global_symbols["observed"]
+        tls_addr = result.global_symbols["tls_counter"]
+        self.assertEqual(_rd(vm, observed_addr, 4), 12)
+        self.assertEqual(_rd(vm, tls_addr, 4), 12)
 
 
 class ThreadLocalRuntimeTests(unittest.TestCase):

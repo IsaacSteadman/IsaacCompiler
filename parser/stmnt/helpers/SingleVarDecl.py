@@ -25,7 +25,14 @@ class SingleVarDecl(PrettyRepr):
         self.op_fn_type = OperatorType.FUNCTION
         self.op_fn_data = None
         # TODO: add support for curly initialization (arrays and structs)
-        if type_name.type_class_id in [TypeClass.QUAL, TypeClass.PRIM]:
+        defer_native_ctor_resolution = (
+            is_complex_primitive_type(type_name)
+            and any(isinstance(expr, BaseExpr) and expr.t_anot is None for expr in init_args)
+        )
+        if (
+            not defer_native_ctor_resolution
+            and type_name.type_class_id in [TypeClass.QUAL, TypeClass.PRIM]
+        ):
             fn_types = type_name.get_ctor_fn_types()
             if len(fn_types):
                 index_fn_t, lst_conv = abstract_overload_resolver(init_args, fn_types)
@@ -68,3 +75,4 @@ from ...type.BaseType import BaseType, TypeClass
 from ...expr.abstract_overload_resolver import abstract_overload_resolver
 from ...type.get_user_str_from_type import get_user_str_from_type
 from ...type.Attribute import Attribute
+from ...type.PrimitiveType import is_complex_primitive_type

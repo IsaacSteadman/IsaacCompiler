@@ -1,4 +1,5 @@
-SINGLE_TYPES = {"float", "double", "_Bool", "bool", "void", "auto"}
+COMPLEX_TYPES = {"_Complex", "__complex__", "__complex"}
+SINGLE_TYPES = {"float", "double", "_Bool", "bool", "void", "auto"} | COMPLEX_TYPES
 INT_TYPES = {
     "int",
     "long",
@@ -55,6 +56,13 @@ KEYWORDS = (
         "_Static_assert",
         "_Thread_local",
         "__thread",
+        "_Complex",
+        "__complex__",
+        "__complex",
+        "__real__",
+        "__imag__",
+        "__real",
+        "__imag",
     }
     | MODIFIERS
     | BASE_TYPE_MODS
@@ -68,6 +76,10 @@ DCT_FIXES = {
     "--": (3, None, 1),
     "++": (3, None, 1),
     "~": (3, None, None),
+    "__real__": (3, None, None),
+    "__imag__": (3, None, None),
+    "__real": (3, None, None),
+    "__imag": (3, None, None),
     "::": (None, 0, None),
     ".": (None, 1, None),
     "->": (None, 1, None),

@@ -49,6 +49,14 @@ from ..percpu import (
     PERCPU_SIZE_SYMBOLS,
     PERCPU_START_SYMBOLS,
 )
+from ..tls import (
+    TLS_ALIGN_SYMBOL,
+    TLS_LINKER_DEFINED_SYMBOLS,
+    TLS_SECTION_NAME,
+    TLS_SIZE_SYMBOL,
+    TLS_TEMPLATE_END_SYMBOL,
+    TLS_TEMPLATE_START_SYMBOL,
+)
 
 DEFAULT_CODE_BASE = 0
 DEFAULT_DATA_BASE = 0x1000
@@ -60,6 +68,7 @@ DEFAULT_SECTION_ORDER = (
     ".fini_array",
     ".data",
     PERCPU_SECTION_NAME,
+    TLS_SECTION_NAME,
     ".rodata",
     ".bss",
 )
@@ -69,6 +78,7 @@ DATA_SECTIONS = {
     ".fini_array",
     ".data",
     PERCPU_SECTION_NAME,
+    TLS_SECTION_NAME,
     ".rodata",
     ".bss",
 }
@@ -85,7 +95,9 @@ LINKER_DEFINED_SYMBOLS = {
     "_start",
     "_end",
 }
-ALL_LINKER_DEFINED_SYMBOLS = LINKER_DEFINED_SYMBOLS | PERCPU_LINKER_DEFINED_SYMBOLS
+ALL_LINKER_DEFINED_SYMBOLS = (
+    LINKER_DEFINED_SYMBOLS | PERCPU_LINKER_DEFINED_SYMBOLS | TLS_LINKER_DEFINED_SYMBOLS
+)
 
 
 class LinkerError(Exception):
@@ -126,16 +138,31 @@ class LinkerScript:
 
     def __post_init__(self) -> None:
         sections = tuple(self.sections)
-        old_section_order = tuple(
-            name for name in DEFAULT_SECTION_ORDER if name != PERCPU_SECTION_NAME
-        )
-        if PERCPU_SECTION_NAME not in sections and set(sections) == set(
-            old_section_order
-        ):
-            insert_at = sections.index(".data") + 1
-            sections = (
-                sections[:insert_at] + (PERCPU_SECTION_NAME,) + sections[insert_at:]
+        if PERCPU_SECTION_NAME not in sections:
+            old_orders = (
+                {name for name in DEFAULT_SECTION_ORDER if name != PERCPU_SECTION_NAME},
+                {
+                    name
+                    for name in DEFAULT_SECTION_ORDER
+                    if name not in {PERCPU_SECTION_NAME, TLS_SECTION_NAME}
+                },
             )
+            if set(sections) in old_orders:
+                insert_at = sections.index(".data") + 1
+                sections = (
+                    sections[:insert_at]
+                    + (PERCPU_SECTION_NAME,)
+                    + sections[insert_at:]
+                )
+        if TLS_SECTION_NAME not in sections:
+            order_without_tls = tuple(
+                name for name in DEFAULT_SECTION_ORDER if name != TLS_SECTION_NAME
+            )
+            if set(sections) == set(order_without_tls):
+                insert_at = sections.index(PERCPU_SECTION_NAME) + 1
+                sections = (
+                    sections[:insert_at] + (TLS_SECTION_NAME,) + sections[insert_at:]
+                )
         object.__setattr__(self, "sections", sections)
         if len(sections) != len(DEFAULT_SECTION_ORDER) or set(sections) != set(
             DEFAULT_SECTION_ORDER
@@ -636,6 +663,7 @@ class _ObjectLinker:
         input_section_addresses = {}
         section_layouts = []
         output_section_unit_sizes = {}
+        output_section_alignments = {}
 
         def place_output_section(name: str) -> SectionLayout:
             members = members_by_output[name]
@@ -644,6 +672,7 @@ class _ObjectLinker:
                 start = align_up(len(memory), alignment)
                 memory.extend([0] * (start - len(memory)))
             else:
+                alignment = 1
                 start = len(memory)
             file_size = 0
             input_names = []
@@ -672,6 +701,7 @@ class _ObjectLinker:
                     memory.extend(unit)
                 file_size = unit_file_size * self.options.percpu_copies
             output_section_unit_sizes[name] = unit_size
+            output_section_alignments[name] = alignment
             return SectionLayout(
                 name,
                 start,
@@ -781,8 +811,18 @@ class _ObjectLinker:
         }
         for name in PERCPU_START_SYMBOLS + PERCPU_END_SYMBOLS + PERCPU_SIZE_SYMBOLS:
             linker_symbol_sections[name] = PERCPU_SECTION_NAME
+        for name in (
+            TLS_TEMPLATE_START_SYMBOL,
+            TLS_TEMPLATE_END_SYMBOL,
+            TLS_SIZE_SYMBOL,
+            TLS_ALIGN_SYMBOL,
+        ):
+            linker_symbol_sections[name] = TLS_SECTION_NAME
         percpu_layout = layout_by_name[PERCPU_SECTION_NAME]
         percpu_unit_size = output_section_unit_sizes.get(PERCPU_SECTION_NAME, 0)
+        tls_layout = layout_by_name[TLS_SECTION_NAME]
+        tls_size = output_section_unit_sizes.get(TLS_SECTION_NAME, 0)
+        tls_align = output_section_alignments.get(TLS_SECTION_NAME, 1)
         linker_addresses = {
             "_start": layout_by_name[".text"].address,
             "__init_begin": layout_by_name[".init.text"].address,
@@ -801,6 +841,10 @@ class _ObjectLinker:
             linker_addresses[name] = percpu_layout.address + percpu_unit_size
         for name in PERCPU_SIZE_SYMBOLS:
             linker_addresses[name] = percpu_unit_size
+        linker_addresses[TLS_TEMPLATE_START_SYMBOL] = tls_layout.address
+        linker_addresses[TLS_TEMPLATE_END_SYMBOL] = tls_layout.address + tls_size
+        linker_addresses[TLS_SIZE_SYMBOL] = tls_size
+        linker_addresses[TLS_ALIGN_SYMBOL] = tls_align
         selected_addresses = dict(object_selected_addresses)
         selected_addresses.update(
             {

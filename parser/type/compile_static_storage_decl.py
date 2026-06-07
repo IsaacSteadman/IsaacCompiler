@@ -50,6 +50,20 @@ def _write_numeric_static_value(
     if not isinstance(value_type, PrimitiveType):
         return False
     size = size_of(value_type)
+    if is_complex_primitive_type(value_type):
+        component_type = get_complex_component_type(value_type)
+        component_size = size_of(component_type)
+        if isinstance(value, (tuple, list)):
+            real_value = value[0] if len(value) >= 1 else 0
+            imag_value = value[1] if len(value) >= 2 else 0
+        else:
+            real_value = value
+            imag_value = 0
+        return _write_numeric_static_value(
+            storage_obj, offset, component_type, real_value
+        ) and _write_numeric_static_value(
+            storage_obj, offset + component_size, component_type, imag_value
+        )
     if value_type.typ in FLT_TYPE_CODES:
         if size == 4:
             storage_obj.memory[offset : offset + 4] = struct.pack("<f", float(value))
@@ -89,6 +103,19 @@ def try_encode_static_initializer(
     if isinstance(value_type, EnumType):
         value_type = value_type.the_base_type
     if isinstance(value_type, PrimitiveType):
+        if is_complex_primitive_type(value_type) and isinstance(expr, CurlyExpr):
+            elems = [] if expr.lst_expr is None else list(expr.lst_expr)
+            if len(elems) > 2:
+                return False
+            values = []
+            for elem in elems:
+                value = eval_const_expr(elem)
+                if value is None or isinstance(value, StaticAddress):
+                    return False
+                values.append(value)
+            return _write_numeric_static_value(
+                storage_obj, base_offset, value_type, values
+            )
         value = eval_const_expr(expr)
         if value is None or isinstance(value, StaticAddress):
             return False
@@ -404,7 +431,13 @@ from ..expr.CurlyExpr import CurlyExpr
 from ..expr.DesigInitExpr import DesigInitExpr
 from ..expr.LiteralExpr import LiteralExpr
 from .StaticAddress import StaticAddress
-from .PrimitiveType import PrimitiveType, PrimitiveTypeId, FLT_TYPE_CODES
+from .PrimitiveType import (
+    PrimitiveType,
+    PrimitiveTypeId,
+    FLT_TYPE_CODES,
+    get_complex_component_type,
+    is_complex_primitive_type,
+)
 from .EnumType import EnumType
 from ...code_gen.Linkage import Linkage
 from .qual_atomic_type_util import (
