@@ -58,6 +58,7 @@ class TranslationUnitSymbol:
     size: int = 0
     alignment: int = 1
     section_name: Optional[str] = None
+    used: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ class Compilation(BaseCmplObj):
         self._global_initializer_finalized = False
         self.lifecycle_functions: List[LifecycleFunction] = []
         self._registered_lifecycle_functions = set()
+        self.symbol_aliases: Dict[str, str] = {}
         self._standalone_startup_emitted = False
         self.code_segment_end = None
         self.data_segment_start = None
@@ -103,6 +105,7 @@ class Compilation(BaseCmplObj):
         size: int = 0,
         alignment: int = 1,
         section_name: Optional[str] = None,
+        used: bool = False,
     ) -> TranslationUnitSymbol:
         binding = SymbolBinding(binding)
         segment = ObjectSegment(segment)
@@ -121,6 +124,7 @@ class Compilation(BaseCmplObj):
                 size,
                 alignment,
                 section_name,
+                used,
             )
             self.symbol_registry[link_name] = cur
             return cur
@@ -144,7 +148,69 @@ class Compilation(BaseCmplObj):
             cur.section_name = section_name
         if cur.typ is None:
             cur.typ = typ
+        cur.used = cur.used or used
         return cur
+
+    def register_symbol_alias(self, alias_name: str, target_name: str) -> None:
+        if alias_name == target_name:
+            raise ValueError("symbol alias cannot target itself: '%s'" % alias_name)
+        previous = self.symbol_aliases.get(alias_name)
+        if previous is not None and previous != target_name:
+            raise TypeError("conflicting aliases for symbol '%s'" % alias_name)
+        self.symbol_aliases[alias_name] = target_name
+
+    def _canonical_alias_target(self, name: str) -> str:
+        seen = set()
+        current = name
+        while current in self.symbol_aliases:
+            if current in seen:
+                raise ValueError("symbol alias cycle involving '%s'" % name)
+            seen.add(current)
+            current = self.symbol_aliases[current]
+        return current
+
+    def _retained_dependency_closure(
+        self,
+        extern: Optional[Dict[str, "CompileObject"]] = None,
+    ) -> Set[str]:
+        roots = {
+            symbol.link_name
+            for symbol in self.symbol_registry.values()
+            if symbol.used and symbol.defined
+        }
+        if not roots:
+            return set()
+        dep_dct = {name: set(obj.linkages) for name, obj in self.objects.items()}
+        if extern is not None:
+            dep_dct.update({name: set(obj.linkages) for name, obj in extern.items()})
+        for alias_name, target_name in self.symbol_aliases.items():
+            dep_dct[alias_name] = {target_name}
+        retained = set()
+        pending = set(roots)
+        while pending:
+            current = pending
+            retained |= current
+            pending = set()
+            for name in current:
+                pending.update(dep_dct.get(name, ()))
+            pending -= retained
+        return retained
+
+    def alias_dependency_entries(self) -> List[tuple]:
+        return [
+            (alias_name, [target_name])
+            for alias_name, target_name in sorted(self.symbol_aliases.items())
+        ]
+
+    def resolve_symbol_aliases(self) -> None:
+        for alias_name, target_name in sorted(self.symbol_aliases.items()):
+            target_link = self.get_link(self._canonical_alias_target(target_name))
+            alias_link = self.get_link(alias_name)
+            if target_link.src is None:
+                continue
+            if alias_link.src is not None and alias_link.src != target_link.src:
+                raise NameError("conflicting definition for alias '%s'" % alias_name)
+            alias_link.src = target_link.src
 
     def spawn_compile_object(
         self, typ: CompileObjectType, name: str
@@ -351,6 +417,8 @@ class Compilation(BaseCmplObj):
                         "Unexpected Compile Object name = %r Type = %u"
                         % (cur.name, cur.typ)
                     )
+        if excl is not None:
+            excl = set(excl) - self._retained_dependency_closure(extern)
         percpu_globs = [
             obj for obj in globs if matches_percpu_section(obj.section_name or "")
         ]
@@ -432,6 +500,7 @@ class Compilation(BaseCmplObj):
             mem_off = len(self.memory)
             self.memory.extend(k)
             cur.src = mem_off
+        self.resolve_symbol_aliases()
 
     @staticmethod
     def _object_symbol_defaults(
@@ -744,6 +813,34 @@ class Compilation(BaseCmplObj):
                 )
             )
 
+        alias_symbol_names = set()
+        for alias_name, target_name in sorted(self.symbol_aliases.items()):
+            target_key = self._canonical_alias_target(target_name)
+            if target_key not in object_positions:
+                raise NameError(
+                    "alias '%s' targets undefined symbol '%s'"
+                    % (alias_name, target_name)
+                )
+            registry_symbol = self.symbol_registry.get(alias_name)
+            if registry_symbol is None:
+                continue
+            section_name, value, target_size = object_positions[target_key]
+            section_index = section_indices[section_name]
+            segment = ordered_builders[section_index]["segment"]
+            symbol_indices[alias_name] = len(symbols)
+            alias_symbol_names.add(alias_name)
+            symbols.append(
+                ObjectSymbol(
+                    alias_name,
+                    value,
+                    registry_symbol.size or target_size,
+                    segment,
+                    registry_symbol.binding,
+                    registry_symbol.symbol_type,
+                    section_index=section_index,
+                )
+            )
+
         string_symbol_indices = {}
         for value in string_values:
             name, offset, size = string_positions[value]
@@ -766,7 +863,8 @@ class Compilation(BaseCmplObj):
             for name, linkage in obj.linkages.items()
             if linkage.lst_tgt
         }
-        for name in sorted(referenced_names - set(object_positions)):
+        defined_names = set(object_positions) | alias_symbol_names
+        for name in sorted(referenced_names - defined_names):
             binding, segment, symbol_type = self._undefined_symbol_defaults(
                 name, extern
             )

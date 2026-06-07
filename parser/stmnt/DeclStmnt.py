@@ -142,14 +142,27 @@ class DeclStmnt(BaseStmnt):
             bf_width = None
             ctx_var = None
 
+            def _copy_named_decl_attrs(inst: "ContextVariable") -> "ContextVariable":
+                inst.align_override = named_qual_type.align_override
+                inst.section_name = named_qual_type.section_name
+                inst.alias_name = named_qual_type.alias_name
+                inst.cleanup_name = named_qual_type.cleanup_name
+                inst.noreturn = named_qual_type.noreturn
+                inst.used = named_qual_type.used
+                inst.unused = named_qual_type.unused
+                inst.always_inline = named_qual_type.always_inline
+                inst.noinline = named_qual_type.noinline
+                inst.deprecated = named_qual_type.deprecated
+                inst.error_message = named_qual_type.error_message
+                inst.warning_message = named_qual_type.warning_message
+                inst.attributes = list(named_qual_type.attributes)
+                return inst
+
             def _new_decl_ctx_var() -> "ContextVariable":
                 inst = ContextVariable(
                     named_qual_type.name, named_qual_type.typ, None, ext_spec
                 )
-                inst.align_override = named_qual_type.align_override
-                inst.section_name = named_qual_type.section_name
-                inst.attributes = list(named_qual_type.attributes)
-                return inst
+                return _copy_named_decl_attrs(inst)
 
             if named_qual_type.name is None:
                 if (
@@ -182,9 +195,7 @@ class DeclStmnt(BaseStmnt):
                             None,
                             ext_spec,
                         )
-                        inst.align_override = named_qual_type.align_override
-                        inst.section_name = named_qual_type.section_name
-                        inst.attributes = list(named_qual_type.attributes)
+                        _copy_named_decl_attrs(inst)
                         context.add_anonymous_member(inst)
                     c += 1
                     break
@@ -323,9 +334,7 @@ class DeclStmnt(BaseStmnt):
                     inst = ContextVariable(
                         cur_decl.var_name, cur_decl.type_name, None, ext_spec
                     )
-                    inst.align_override = named_qual_type.align_override
-                    inst.section_name = named_qual_type.section_name
-                    inst.attributes = list(named_qual_type.attributes)
+                    _copy_named_decl_attrs(inst)
                     if bf_width is not None:
                         inst.bit_field_width = bf_width
                     ctx_var = context.new_var(cur_decl.var_name, inst)

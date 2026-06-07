@@ -65,6 +65,77 @@ class LocalCompileData(object):
             sz_cls = emit_load_i_const(cmpl_obj.memory, stack_sz, False)
             cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls])
 
+    def _compile_cleanup_call(
+        self,
+        cmpl_obj: "BaseCmplObj",
+        context: "CompileContext",
+        ctx_var: "ContextVariable",
+        link: "BaseLink",
+    ) -> None:
+        if ctx_var.cleanup_name is None:
+            return
+
+        from ..parser.type.IdentifiedQualType import IdentifiedQualType
+        from ..parser.type.PrimitiveType import void_t
+        from ..parser.type.QualType import QualType
+        from ..parser.type.align_size_of import size_of
+        from ..parser.type.is_fn_type import is_fn_type
+        from ..parser.type.qual_atomic_type_util import compare_no_cvr, get_value_type
+        from .branch_emit import emit_rel_call
+        from ..StackVM.PyStackVM import BC_ADD_SP1
+
+        try:
+            cleanup_var = context.scoped_get(ctx_var.cleanup_name)
+        except KeyError:
+            cleanup_var = None
+        if not isinstance(cleanup_var, ContextVariable) or not is_fn_type(
+            cleanup_var.typ
+        ):
+            raise TypeError(
+                "cleanup function '%s' was not declared" % ctx_var.cleanup_name
+            )
+        fn_type = get_value_type(cleanup_var.typ)
+        if not isinstance(fn_type, QualType) or fn_type.qual_id != QualType.QUAL_FN:
+            raise TypeError("cleanup target '%s' is not a function" % cleanup_var.name)
+        if not compare_no_cvr(get_value_type(fn_type.tgt_type), void_t):
+            raise TypeError("cleanup function '%s' must return void" % cleanup_var.name)
+        if (
+            not isinstance(fn_type.ext_inf, list)
+            or len(fn_type.ext_inf) != 1
+            or fn_type.ext_inf[0] is None
+        ):
+            raise TypeError(
+                "cleanup function '%s' must accept one pointer argument"
+                % cleanup_var.name
+            )
+        param_type = fn_type.ext_inf[0]
+        if isinstance(param_type, IdentifiedQualType):
+            param_type = param_type.typ
+        expected_type = QualType(QualType.QUAL_PTR, ctx_var.typ)
+        param_value_type = get_value_type(param_type)
+        accepts_void_ptr = (
+            isinstance(param_value_type, QualType)
+            and param_value_type.qual_id == QualType.QUAL_PTR
+            and compare_no_cvr(get_value_type(param_value_type.tgt_type), void_t)
+        )
+        if not accepts_void_ptr and not compare_no_cvr(param_type, expected_type):
+            raise TypeError(
+                "cleanup function '%s' parameter must be compatible with a pointer "
+                "to '%s'" % (cleanup_var.name, ctx_var.name)
+            )
+
+        sz_ret = size_of(fn_type.tgt_type)
+        sz_cls_ret = emit_load_i_const(cmpl_obj.memory, sz_ret, False)
+        cmpl_obj.memory.extend([BC_ADD_SP1 + sz_cls_ret])
+        self.bp_off += sz_ret
+        link.emit_lea(cmpl_obj.memory)
+        self.bp_off += 8
+        emit_rel_call(cmpl_obj.memory, cmpl_obj.get_link(cleanup_var.get_link_name()))
+        sz_cls_args = emit_load_i_const(cmpl_obj.memory, 8, False)
+        cmpl_obj.memory.extend([BC_RST_SP1 + sz_cls_args])
+        self.bp_off -= 8
+        self.bp_off -= sz_ret
+
     def _compile_leave_scope_lifo(
         self, cmpl_obj: "BaseCmplObj", context: "CompileContext"
     ):
@@ -77,6 +148,7 @@ class LocalCompileData(object):
             assert isinstance(c, int)
             ctx_var, _lnk = self.vars[c]
             stack_sz = self.local_stack_sizes[c]
+            self._compile_cleanup_call(cmpl_obj, context, ctx_var, _lnk)
             if contains_variable_length_array_type(ctx_var.typ):
                 self._emit_rst_sp(cmpl_obj, fixed_to_pop)
                 fixed_to_pop = 0
@@ -97,7 +169,7 @@ class LocalCompileData(object):
         from ..parser.type.vla import contains_variable_length_array_type
 
         stack_sz = self.bp_off - self.scope_bp_off_start
-        if not stack_sz:
+        if not stack_sz and not any(ctx_var.cleanup_name for ctx_var, _ in self.vars):
             return
         if any(contains_variable_length_array_type(ctx_var.typ) for ctx_var, _ in self.vars):
             self._compile_leave_scope_lifo(cmpl_obj, context)
@@ -115,6 +187,7 @@ class LocalCompileData(object):
             #     NOTE: this may require new instruction for load (REG_SP to get current stack pointer)
             # step 2:
             #   do deallocation (if necessary)
+            self._compile_cleanup_call(cmpl_obj, context, ctx_var, lnk)
             res = ctx_var.typ.compile_var_de_init(
                 cmpl_obj, context, VarRefTosNamed(ctx_var), self
             )

@@ -142,6 +142,8 @@ def compile_stmnt(
         for cur_decl in stmnt.decl_lst:
             assert isinstance(cur_decl, SingleVarDecl)
             ctx_var = context.scoped_get_strict(cur_decl.var_name)
+            if ctx_var.alias_name is not None and ctx_var.uses_stack_storage():
+                raise TypeError("alias attribute requires static storage")
             sz_off += cur_decl.type_name.compile_var_init(
                 cmpl_obj,
                 cur_decl.init_args,

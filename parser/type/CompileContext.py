@@ -171,6 +171,35 @@ class CompileContext(ContextMember, PrettyRepr):
             ):
                 raise TypeError("Conflicting section for '%s'" % previous.name)
             previous.section_name = current.section_name
+        if current.alias_name is not None:
+            if (
+                previous.alias_name is not None
+                and previous.alias_name != current.alias_name
+            ):
+                raise TypeError("Conflicting alias for '%s'" % previous.name)
+            previous.alias_name = current.alias_name
+        if current.cleanup_name is not None:
+            if (
+                previous.cleanup_name is not None
+                and previous.cleanup_name != current.cleanup_name
+            ):
+                raise TypeError("Conflicting cleanup for '%s'" % previous.name)
+            previous.cleanup_name = current.cleanup_name
+        previous.noreturn = previous.noreturn or current.noreturn
+        previous.used = previous.used or current.used
+        previous.unused = previous.unused or current.unused
+        previous.always_inline = previous.always_inline or current.always_inline
+        previous.noinline = previous.noinline or current.noinline
+        if previous.always_inline and previous.noinline:
+            raise TypeError(
+                "always_inline and noinline attributes conflict for '%s'"
+                % previous.name
+            )
+        previous.deprecated = previous.deprecated or current.deprecated
+        if current.error_message is not None:
+            previous.error_message = current.error_message
+        if current.warning_message is not None:
+            previous.warning_message = current.warning_message
         previous.attributes.extend(current.attributes)
         return previous
 

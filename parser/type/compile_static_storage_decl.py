@@ -340,6 +340,10 @@ def compile_static_storage_decl(
         size,
         ctx_var.effective_alignment(),
     )
+    if ctx_var.alias_name is not None:
+        if init_args:
+            raise TypeError("alias declarations cannot have initializers")
+        return 0
     if ctx_var.mods == VarDeclMods.EXTERN and not init_args:
         return 0
     link_name = ctx_var.get_link_name()

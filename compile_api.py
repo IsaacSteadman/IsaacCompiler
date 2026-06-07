@@ -201,6 +201,7 @@ def build_compilation(
         for k in cmpl_obj.objects:
             cur = cmpl_obj.objects[k]
             dep_tree.append((k, sorted(cur.linkages)))
+        dep_tree.extend(cmpl_obj.alias_dependency_entries())
         if link_opts.extern_deps is not None:
             for k in link_opts.extern_deps:
                 cur = link_opts.extern_deps[k]

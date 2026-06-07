@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import warnings
 
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
@@ -8,6 +9,8 @@ if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
 from IsaacCompiler.Preprocessing import preprocess
+from IsaacCompiler.StackVM.PyStackVM import VM
+from IsaacCompiler.StackVM.runner import add_cmd_argv_vm
 from IsaacCompiler.code_gen.Compilation import Compilation
 from IsaacCompiler.code_gen.CompilerOptions import CompilerOptions
 from IsaacCompiler.code_gen.LinkerOptions import LNK_RUN_STANDALONE, LinkerOptions
@@ -15,8 +18,10 @@ from IsaacCompiler.code_gen.compile_stmnt import compile_stmnt
 from IsaacCompiler.code_gen.stackvm_binutils.lib_util_asm_impl.lib_utils import (
     lib_utils_abi,
 )
+from IsaacCompiler.code_gen.stackvm_binutils.object_file import SymbolType
 from IsaacCompiler.lexer.lexer import get_list_tokens
 from IsaacCompiler.parser.stmnt.get_stmnt import get_stmnt
+from IsaacCompiler.parser.type.align_size_of import size_of
 from IsaacCompiler.parser.type.CompileContext import CompileContext
 
 
@@ -44,7 +49,9 @@ def _flatify_dep_desc(dep_dct, start_key):
     return result
 
 
-def _compile_source(source, remove_unused_deps=True, default_alignment=None):
+def _compile_source(
+    source, remove_unused_deps=True, default_alignment=None, standalone=False
+):
     source = preprocess(source, [os.path.join(REPO_ROOT, "StackVM", "include")])
     tokens = get_list_tokens(source)
     global_ctx = CompileContext("", None, default_alignment)
@@ -64,9 +71,13 @@ def _compile_source(source, remove_unused_deps=True, default_alignment=None):
         stmnt, cursor = get_stmnt(tokens, cursor, len(tokens), global_ctx)
         compile_stmnt(cmpl_obj, stmnt, global_ctx, None)
 
+    if standalone:
+        cmpl_obj.emit_standalone_startup(global_ctx.vars["main"].get_link_name())
+
     dep_tree = [("", sorted(cmpl_obj.linkages))]
     for key, obj in cmpl_obj.objects.items():
         dep_tree.append((key, sorted(obj.linkages)))
+    dep_tree.extend(cmpl_obj.alias_dependency_entries())
     if link_opts.extern_deps is not None:
         for key, obj in link_opts.extern_deps.items():
             dep_tree.append((key, sorted(obj.linkages)))
@@ -79,6 +90,40 @@ def _compile_source(source, remove_unused_deps=True, default_alignment=None):
     cmpl_obj.merge_all(link_opts, link_opts.extern_deps, excl)
     assert cmpl_obj.link_all()
     return global_ctx, cmpl_obj
+
+
+def _compile_object_source(source, default_alignment=None):
+    source = preprocess(source, [os.path.join(REPO_ROOT, "StackVM", "include")])
+    tokens = get_list_tokens(source)
+    global_ctx = CompileContext("", None, default_alignment)
+
+    link_opts = LinkerOptions(
+        True,
+        4096,
+        lib_utils_abi.objects,
+        0,
+        default_alignment,
+    )
+    cmpl_obj = Compilation(False, default_alignment=default_alignment)
+
+    cursor = 0
+    while cursor < len(tokens):
+        stmnt, cursor = get_stmnt(tokens, cursor, len(tokens), global_ctx)
+        compile_stmnt(cmpl_obj, stmnt, global_ctx, None)
+
+    cmpl_obj.finalize_global_initializer()
+    return global_ctx, cmpl_obj.to_stackvm_object(
+        link_opts.extern_deps, default_alignment
+    )
+
+
+def _run_program(cmpl_obj):
+    vm = VM(65536)
+    vm.load_program(cmpl_obj.memory, 0)
+    vm.push(4, 0)
+    add_cmd_argv_vm(vm, len(cmpl_obj.memory), ["prog"])
+    vm.execute()
+    return vm
 
 
 def _get_global_addr(global_ctx, cmpl_obj, name):
@@ -162,6 +207,100 @@ class AttributeParserTests(unittest.TestCase):
         )
         self.assertEqual(
             _get_attr(stmnts[0].decl_lst[0], "section").args, ['".init.text"']
+        )
+
+    def test_alias_attribute_emits_object_symbol_at_target(self):
+        _global_ctx, obj = _compile_object_source(
+            "int target(void) { return 41; } "
+            'extern int alias_fn(void) __attribute__((alias("target"))); '
+            "int call_alias(void) { return alias_fn(); }\n"
+        )
+
+        symbols = {symbol.name: symbol for symbol in obj.symbols}
+        self.assertIn("target", symbols)
+        self.assertIn("alias_fn", symbols)
+        self.assertEqual(symbols["alias_fn"].typ, SymbolType.FUNCTION)
+        self.assertEqual(symbols["alias_fn"].value, symbols["target"].value)
+        self.assertEqual(
+            symbols["alias_fn"].section_index,
+            symbols["target"].section_index,
+        )
+
+    def test_cleanup_attribute_runs_on_scope_exit_break_and_return(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "int trace = 0; "
+            "void cleanup_int(int *value) { trace = trace * 10 + *value; } "
+            "int main(int argc, char **argv) { "
+            "    { int a __attribute__((cleanup(cleanup_int))) = 1; trace = 2; } "
+            "    while (trace < 30) { "
+            "        int b __attribute__((cleanup(cleanup_int))) = 3; "
+            "        break; "
+            "    } "
+            "    { int c __attribute__((cleanup(cleanup_int))) = 4; return 0; } "
+            "}\n",
+            standalone=True,
+        )
+
+        vm = _run_program(cmpl_obj)
+        trace_addr = _get_global_addr(global_ctx, cmpl_obj, "trace")
+        self.assertEqual(
+            int.from_bytes(vm.memory[trace_addr : trace_addr + 4], "little", signed=True),
+            2134,
+        )
+
+    def test_used_attribute_retains_unreferenced_symbol(self):
+        global_ctx, cmpl_obj = _compile_source(
+            "static int retained __attribute__((used)) = 123; "
+            "static int dropped = 456; "
+            "int main(int argc, char **argv) { return 0; }\n",
+            standalone=True,
+        )
+
+        retained_name = global_ctx.vars["retained"].get_link_name()
+        dropped_name = global_ctx.vars["dropped"].get_link_name()
+        self.assertIsNotNone(cmpl_obj.linkages[retained_name].src)
+        self.assertNotIn(dropped_name, cmpl_obj.linkages)
+
+    def test_error_and_warning_attributes_fire_on_call(self):
+        with self.assertRaisesRegex(TypeError, "bad call"):
+            _compile_source(
+                'extern void bad(void) __attribute__((error("bad call"))); '
+                "int main(int argc, char **argv) { bad(); return 0; }\n"
+            )
+
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            _compile_source(
+                'extern void careful(void) __attribute__((warning("careful call"))); '
+                "void careful(void) {} "
+                "int main(int argc, char **argv) { careful(); return 0; }\n",
+                remove_unused_deps=False,
+            )
+        self.assertTrue(any("careful call" in str(item.message) for item in seen))
+
+    def test_mode_attribute_changes_integer_type_size(self):
+        global_ctx, _stmnts = _parse_source(
+            "typedef unsigned int u8 __attribute__((mode(QI))); "
+            "typedef signed int s16 __attribute__((__mode__(__HI__))); "
+            "u8 a; s16 b;"
+        )
+
+        self.assertEqual(size_of(global_ctx.types["u8"].get_underlying_type()), 1)
+        self.assertEqual(size_of(global_ctx.types["s16"].get_underlying_type()), 2)
+        self.assertEqual(size_of(global_ctx.vars["a"].typ), 1)
+        self.assertEqual(size_of(global_ctx.vars["b"].typ), 2)
+
+    def test_fallthrough_attribute_statement_is_noop(self):
+        _compile_source(
+            "int main(int argc, char **argv) { "
+            "    int value = 0; "
+            "    switch (value) { "
+            "    case 0: value = 1; __attribute__((fallthrough)); "
+            "    case 1: return value + 1; "
+            "    default: return 0; "
+            "    } "
+            "}\n",
+            standalone=True,
         )
 
 

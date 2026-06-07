@@ -322,6 +322,8 @@ class QualType(BaseType):
                     self,
                     decl_ctx_var.attributes,
                 )
+                if decl_ctx_var.alias_name is not None and init_args:
+                    raise TypeError("alias declarations cannot define a function body")
                 if len(init_args) == 0:
                     return 0
                 err0 = "Redefinition of function %s is not allowed"

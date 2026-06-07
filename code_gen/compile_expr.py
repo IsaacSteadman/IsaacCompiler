@@ -1,4 +1,5 @@
 import sys
+import warnings
 from typing import Optional, List, Tuple
 from ..parser.util import try_catch_wrapper_co_expr
 
@@ -39,6 +40,13 @@ def _compile_direct_helper_call(
     cmpl_data.bp_off -= sz_args
     cmpl_data.bp_off -= sz_ret
     return sz_ret
+
+
+def _check_function_call_diagnostics(fn_var: "ContextVariable") -> None:
+    if fn_var.error_message is not None:
+        raise TypeError(fn_var.error_message)
+    if fn_var.warning_message is not None:
+        warnings.warn(fn_var.warning_message, UserWarning, stacklevel=3)
 
 
 def _get_atomic_size_class(size: int) -> int:
@@ -399,6 +407,7 @@ def compile_expr(
         if expr.fn.expr_id != ExprType.NAME:
             raise SyntaxError("Only Named functions can be called")
         assert isinstance(expr.fn, NameRefExpr)
+        _check_function_call_diagnostics(expr.fn.ctx_var)
         variadic = False
         sz0 = 0
         lst_arg_types = []

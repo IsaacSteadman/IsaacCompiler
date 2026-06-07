@@ -10,6 +10,7 @@ def get_stmnt(
     position = tokens[c].line, tokens[c].col
     _DECL_SPECIFIERS = {"extern", "static", "inline", "_Noreturn"}
     decl_c = c
+    leading_attr_specs = []
     while (
         decl_c < end
         and tokens[decl_c].type_id == TokenType.NAME
@@ -17,14 +18,16 @@ def get_stmnt(
     ):
         if decl_c + 1 >= end or tokens[decl_c + 1].str != "(":
             break
-        lvl = 1
-        decl_c += 2
-        while decl_c < end and lvl > 0:
-            if tokens[decl_c].str == "(":
-                lvl += 1
-            elif tokens[decl_c].str == ")":
-                lvl -= 1
-            decl_c += 1
+        decl_c, specs = parse_single_gnu_attr_specs(tokens, decl_c, end)
+        leading_attr_specs.extend(specs)
+    if (
+        decl_c < end
+        and tokens[decl_c].str == ";"
+        and any(spec.attribute.name == "fallthrough" for spec in leading_attr_specs)
+    ):
+        rtn = SemiColonStmnt()
+        rtn.position = position
+        return rtn, decl_c + 1
     if tokens[decl_c].type_id == TokenType.NAME and (
         is_type_name_part(tokens[decl_c].str, context)
         or tokens[decl_c].str in _DECL_SPECIFIERS
@@ -122,5 +125,6 @@ from .DeclStmnt import DeclStmnt
 from .TypeDefStmnt import TypeDefStmnt
 from .WhileLoop import WhileLoop
 from ..type.is_type_name_part import is_type_name_part
+from ..type.gnu_attrs import parse_single_gnu_attr_specs
 from ..type.CompileContext import CompileContext
 from ...lexer.lexer import Token, TokenType

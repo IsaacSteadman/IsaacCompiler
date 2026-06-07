@@ -9,6 +9,16 @@ class IdentifiedQualType(PrettyRepr):
         self.is_op_fn = False
         self.align_override: Optional[int] = None
         self.section_name: Optional[str] = None
+        self.alias_name: Optional[str] = None
+        self.cleanup_name: Optional[str] = None
+        self.noreturn: bool = False
+        self.used: bool = False
+        self.unused: bool = False
+        self.always_inline: bool = False
+        self.noinline: bool = False
+        self.deprecated: bool = False
+        self.error_message: Optional[str] = None
+        self.warning_message: Optional[str] = None
         self.attributes: List[Attribute] = []
 
     def add_qual_type(self, qual_id, ext_inf=None):
