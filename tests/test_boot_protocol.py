@@ -13,14 +13,45 @@ Covers:
     and writes results back into memory.
 """
 
+import importlib
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_PARENT = os.path.dirname(REPO_ROOT)
 if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
+
+_CPP_TMPDIRS = []
+
+
+def _compile_cpp_backend_or_skip():
+    compiler = shutil.which("clang++") or shutil.which("g++")
+    if compiler is None:
+        raise unittest.SkipTest("C++ compiler not available")
+    tmp = tempfile.TemporaryDirectory()
+    _CPP_TMPDIRS.append(tmp)
+    suffix = ".dylib" if sys.platform == "darwin" else ".so"
+    out = os.path.join(tmp.name, "stack_vm_test" + suffix)
+    subprocess.check_call(
+        [
+            compiler,
+            "-std=c++17",
+            "-shared",
+            "-fPIC",
+            os.path.join(REPO_ROOT, "StackVM", "cpp", "stack_vm.cpp"),
+            "-o",
+            out,
+        ]
+    )
+    os.environ["STACKVM_CPP_LIB"] = out
+    sys.modules.pop("IsaacCompiler.StackVM.CppStackVM", None)
+    importlib.invalidate_caches()
+    return out
 
 from IsaacCompiler.StackVM.boot import (
     BOOT_PAGE_SIZE,
@@ -256,9 +287,22 @@ class TestLaunchState(unittest.TestCase):
         self.assertEqual(vm.sys_regs[SVSR_KERNEL_BP], image.vm_size)
         self.assertEqual(vm.sys_regs[SVSR_CORE_ID], image.boot_core_id)
 
-    def test_cpp_backend_not_supported(self):
-        with self.assertRaises(NotImplementedError):
-            boot_kernel(bytes([BC_HLT]), backend="cpp")
+    def test_cpp_backend_launch_state_matches_python(self):
+        _compile_cpp_backend_or_skip()
+        vm, image = boot_kernel(
+            bytes([BC_HLT]),
+            vm_size=1 << 20,
+            kernel_base=0x1000,
+            cmdline="boot",
+            backend="cpp",
+        )
+
+        self.assertEqual(vm.priv_lvl, 0)
+        self.assertEqual(vm.virt_mem_mode, VM_DISABLED)
+        self.assertEqual(vm.ip, image.kernel_base)
+        self.assertEqual(vm.sys_regs[SVSR_SDP], image.startup_data_addr)
+        self.assertEqual(vm.sys_regs[SVSR_CORE_ID], image.boot_core_id)
+        self.assertTrue(read_startup_data(vm.memory, vm.sys_regs[SVSR_SDP]).is_valid)
 
 
 # ---------------------------------------------------------------------------
