@@ -22,9 +22,13 @@ from IsaacCompiler.StackVM.PyStackVM import (
     AdvProgIntCtl,
     BC_HLT,
     BC_INVTLB,
+    INT_TLB_SHOOTDOWN,
     INT_TLB_SHOOTDOWN_DONE,
+    INVTLB_ACK,
+    INVTLB_ALL_LOCAL,
     INVTLB_F_ALSO_LOCAL,
     INVTLB_F_ASYNC,
+    INVTLB_F_REMOTE_INT,
     INVTLB_LOCAL,
     INVTLB_MULTI,
     INVTLB_SINGLE,
@@ -307,6 +311,174 @@ class TestInvtlbBytecode(unittest.TestCase):
         self.assertNotIn((Tb, 0), c0.tlb)
         self.assertNotIn((Ta, 0), c1.tlb)
         self.assertNotIn((Tb, 0), c1.tlb)
+
+
+def _make_n_cores(n):
+    ctrl = MultiCoreController()
+    cores = []
+    for i in range(n):
+        c = VirtualMachine(0x4000, 0)
+        c.set_core_id(i)
+        c.apic = AdvProgIntCtl()
+        ctrl.add_core(c)
+        cores.append(c)
+    return ctrl, cores
+
+
+class TestTlbShootdownRemoteInt(unittest.TestCase):
+    """The REMOTE_INT fallback: instead of a silent hardware broadcast, matching
+    cores are interrupted with INT_TLB_SHOOTDOWN and acknowledge via INVTLB_ACK,
+    which the bus routes back to the issuer to complete the (async) shootdown."""
+
+    def test_remote_int_async_pends_until_ack(self):
+        ctrl, (c0, c1) = _make_n_cores(2)
+        T = 0x100000
+        c0.sys_regs[SVSR_USER_TLPTR] = T
+        c1.sys_regs[SVSR_USER_TLPTR] = T  # c1 has T active -> matches
+
+        c0.tlb_shootdown(
+            [(T, 0x2000, 1)], INVTLB_F_ASYNC | INVTLB_F_REMOTE_INT, done_core=0
+        )
+
+        # The sibling received the request interrupt carrying the descriptor and
+        # the shootdown handle (arg3); the issuer is NOT done until it is acked.
+        self.assertTrue(c1.apic.int_ready)
+        self.assertEqual(c1.apic.which_int, INT_TLB_SHOOTDOWN)
+        self.assertEqual(c1.apic.arg0, T)
+        self.assertEqual(c1.apic.arg1, 0x2000)
+        self.assertEqual(c1.apic.arg2, 1)
+        handle = c1.apic.arg3
+        self.assertFalse(c0.apic.int_ready)  # completion gated on the ack
+
+        # The sibling acknowledges -> the issuer gets INT_TLB_SHOOTDOWN_DONE.
+        ctrl.tlb_ack(handle)
+        self.assertTrue(c0.apic.int_ready)
+        self.assertEqual(c0.apic.which_int, INT_TLB_SHOOTDOWN_DONE)
+        self.assertEqual(c0.apic.arg0, T)
+        self.assertEqual(c0.apic.arg1, 0x2000)
+
+    def test_remote_int_async_completes_immediately_when_no_match(self):
+        ctrl, (c0, c1) = _make_n_cores(2)
+        T = 0x100000
+        OTHER = 0x999000
+        c0.sys_regs[SVSR_USER_TLPTR] = T
+        c1.sys_regs[SVSR_USER_TLPTR] = OTHER  # c1 does NOT have T active
+
+        c0.tlb_shootdown(
+            [(T, 0, 1)], INVTLB_F_ASYNC | INVTLB_F_REMOTE_INT, done_core=0
+        )
+
+        # No core owed an ack, so completion is immediate and the non-matching
+        # sibling was never interrupted.
+        self.assertFalse(c1.apic.int_ready)
+        self.assertTrue(c0.apic.int_ready)
+        self.assertEqual(c0.apic.which_int, INT_TLB_SHOOTDOWN_DONE)
+
+    def test_remote_int_async_waits_for_all_matching_acks(self):
+        ctrl, (c0, c1, c2) = _make_n_cores(3)
+        T = 0x100000
+        for c in (c0, c1, c2):
+            c.sys_regs[SVSR_USER_TLPTR] = T  # all three share T
+
+        c0.tlb_shootdown(
+            [(T, 0, 1)], INVTLB_F_ASYNC | INVTLB_F_REMOTE_INT, done_core=0
+        )
+
+        h1 = c1.apic.arg3
+        h2 = c2.apic.arg3
+        self.assertEqual(h1, h2)  # one handle for the whole shootdown
+        self.assertFalse(c0.apic.int_ready)
+
+        ctrl.tlb_ack(h1)
+        self.assertFalse(c0.apic.int_ready)  # still one ack outstanding
+        ctrl.tlb_ack(h2)
+        self.assertTrue(c0.apic.int_ready)  # last ack completes it
+        self.assertEqual(c0.apic.which_int, INT_TLB_SHOOTDOWN_DONE)
+
+    def test_remote_int_sync_invalidates_and_posts_observability(self):
+        ctrl, (c0, c1) = _make_n_cores(2)
+        T = 0x100000
+        c0.sys_regs[SVSR_USER_TLPTR] = T
+        c1.sys_regs[SVSR_USER_TLPTR] = T
+        c1.tlb[(T, 0)] = [0x9000, TLBP_R]
+
+        # SYNC + REMOTE_INT: the sibling TLB is invalidated directly (broadcast)
+        # AND a request interrupt is posted for observability, with no ack gating.
+        c0.tlb_shootdown([(T, 0, 1)], INVTLB_F_REMOTE_INT, done_core=None)
+
+        self.assertNotIn((T, 0), c1.tlb)  # invalidated directly
+        self.assertTrue(c1.apic.int_ready)
+        self.assertEqual(c1.apic.which_int, INT_TLB_SHOOTDOWN)
+
+
+class TestInvtlbBytecodeShootdownPaths(unittest.TestCase):
+    """Bytecode-level coverage of the INVTLB sub-ops the original suite skipped:
+    ALL_LOCAL, the ASYNC (done_core-popping) form of SINGLE, and ACK routing."""
+
+    def _run(self, vm, prog):
+        vm.load_program(bytearray(prog), 0)
+        vm.priv_lvl = 0  # INVTLB is kernel-only
+        vm.ip = 0
+        vm.execute()
+
+    def test_invtlb_all_local_bytecode(self):
+        vm = VirtualMachine(0x4000, 0)
+        T = 0x100000
+        vm.tlb[(T, 0)] = [0x9000, TLBP_R]
+        vm.tlb[(T, 0x1000)] = [0xA000, TLBP_R]
+        vm.tlb[(0x222000, 0)] = [0xB000, TLBP_R]
+        prog = bytearray([BC_INVTLB, INVTLB_ALL_LOCAL, BC_HLT])
+        self._run(vm, prog)
+        self.assertEqual(len(vm.tlb), 0)
+
+    def test_invtlb_single_async_bytecode_broadcast_completes(self):
+        ctrl, (c0, c1) = _make_n_cores(2)
+        T = 0x100000
+        c0.sys_regs[SVSR_USER_TLPTR] = T
+        c1.sys_regs[SVSR_USER_TLPTR] = T
+        c1.tlb[(T, 0)] = [0x9000, TLBP_R]
+
+        # SINGLE + ASYNC + ALSO_LOCAL via bytecode.  pop order is
+        # done_core, count, base, tlptr -> push tlptr, base, count, done_core.
+        prog = bytearray()
+        emit_load_i_const(prog, T, sz_cls=3)  # tlptr (bottom)
+        emit_load_i_const(prog, 0, sz_cls=3)  # base
+        emit_load_i_const(prog, 1, sz_cls=3)  # count
+        emit_load_i_const(prog, 0, sz_cls=3)  # done_core (top)
+        prog += bytes(
+            [BC_INVTLB, INVTLB_SINGLE, INVTLB_F_ASYNC | INVTLB_F_ALSO_LOCAL]
+        )
+        prog += bytes([BC_HLT])
+        self._run(c0, prog)
+
+        # Broadcast invalidated the sibling, and the broadcast path completes
+        # synchronously in the emulator.  execute() runs with apic disarmed
+        # (self.apic = None), so the async completion lands in the ipi_log
+        # fallback rather than an interrupt mailbox -- carrying the descriptor.
+        self.assertNotIn((T, 0), c1.tlb)
+        self.assertIn(("tlb_done", 0, T, 0, 1, 0), c0.ipi_log)
+
+    def test_invtlb_ack_bytecode_routes_completion(self):
+        ctrl, (c0, c1) = _make_n_cores(2)
+        T = 0x100000
+        c0.sys_regs[SVSR_USER_TLPTR] = T
+        c1.sys_regs[SVSR_USER_TLPTR] = T
+
+        # Issue a remote-int async shootdown; c1 receives the handle, c0 waits.
+        c0.tlb_shootdown(
+            [(T, 0, 1)], INVTLB_F_ASYNC | INVTLB_F_REMOTE_INT, done_core=0
+        )
+        handle = c1.apic.arg3
+        self.assertFalse(c0.apic.int_ready)
+
+        # c1 acknowledges by *executing* INVTLB_ACK on the handle.
+        prog = bytearray()
+        emit_load_i_const(prog, handle, sz_cls=3)
+        prog += bytes([BC_INVTLB, INVTLB_ACK, BC_HLT])
+        self._run(c1, prog)
+
+        self.assertTrue(c0.apic.int_ready)
+        self.assertEqual(c0.apic.which_int, INT_TLB_SHOOTDOWN_DONE)
 
 
 if __name__ == "__main__":
