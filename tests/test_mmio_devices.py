@@ -19,6 +19,15 @@ from IsaacCompiler.StackVM.PyStackVM import (
     VirtualMachine,
 )
 from IsaacCompiler.StackVM.mmio import (
+    FB_REG_DIRTY_SEQ,
+    FB_REG_FLUSH,
+    FB_REG_FORMAT,
+    FB_REG_HEIGHT,
+    FB_REG_PIXEL_BASE,
+    FB_REG_PIXEL_SIZE,
+    FB_REG_STRIDE,
+    FB_REG_WIDTH,
+    FramebufferDevice,
     IC_REG_CLAIM,
     IC_REG_ENABLE,
     IC_REG_EOI,
@@ -33,6 +42,8 @@ from IsaacCompiler.StackVM.mmio import (
     SVM_IRQ_UART0,
     SVM_IRQ_VIRTIO_BLK0,
     SVM_IRQ_VIRTIO_NET0,
+    SVM_FB_FORMAT_XRGB8888,
+    SVM_MMIO_FRAMEBUFFER0_BASE,
     SVM_MMIO_UART0_BASE,
     UART_IRQ_RX,
     UART_REG_DATA,
@@ -64,6 +75,7 @@ from IsaacCompiler.StackVM.mmio import (
     VirtioBlockDevice,
     VirtioNetDevice,
     HostBlockImage,
+    build_default_mmio_machine,
 )
 
 UART_BASE = 0x2000
@@ -191,6 +203,42 @@ class MmioDispatchAndInterruptTests(unittest.TestCase):
         vm.attach_mmio_bus(bus)
 
         self.assertEqual(vm.get(8, RTC_BASE + RTC_REG_NOW_NS), 1234567890123)
+
+    def test_framebuffer_registers_pixel_aperture_and_flush(self):
+        fb = FramebufferDevice(3, 2, pixel_base=0x9000)
+        bus = MmioBus()
+        bus.add_region(0x7000, 0x1000, fb, "fb")
+        bus.add_region(fb.pixel_base, fb.pixel_size, fb.pixel_device, "fb-pixels")
+        vm = _vm()
+        vm.attach_mmio_bus(bus)
+
+        self.assertEqual(vm.get(8, 0x7000 + FB_REG_WIDTH), 3)
+        self.assertEqual(vm.get(8, 0x7000 + FB_REG_HEIGHT), 2)
+        self.assertEqual(vm.get(8, 0x7000 + FB_REG_STRIDE), 12)
+        self.assertEqual(vm.get(8, 0x7000 + FB_REG_FORMAT), SVM_FB_FORMAT_XRGB8888)
+        self.assertEqual(vm.get(8, 0x7000 + FB_REG_PIXEL_BASE), 0x9000)
+        self.assertEqual(vm.get(8, 0x7000 + FB_REG_PIXEL_SIZE), 24)
+
+        vm.set(4, 0x9000 + 4, 0x11223344)
+        self.assertEqual(fb.snapshot()[4:8], b"\x44\x33\x22\x11")
+        self.assertEqual(vm.get(4, 0x9000 + 4), 0x11223344)
+        self.assertEqual(vm.get(8, 0x7000 + FB_REG_DIRTY_SEQ), 1)
+        self.assertEqual(fb.dirty_ranges, [(4, 8)])
+
+        vm.set(8, 0x7000 + FB_REG_FLUSH, 1)
+        self.assertEqual(fb.flush_count, 1)
+        self.assertEqual(fb.dirty_ranges, [])
+
+    def test_default_machine_can_attach_framebuffer(self):
+        machine = build_default_mmio_machine(framebuffer=True, framebuffer_width=4, framebuffer_height=3)
+        vm = _vm()
+        machine.attach_to_vm(vm)
+
+        self.assertIsNotNone(machine.framebuffer)
+        self.assertEqual(vm.get(8, SVM_MMIO_FRAMEBUFFER0_BASE + FB_REG_WIDTH), 4)
+        pixel_base = vm.get(8, SVM_MMIO_FRAMEBUFFER0_BASE + FB_REG_PIXEL_BASE)
+        vm.set(4, pixel_base, 0xAABBCCDD)
+        self.assertEqual(machine.framebuffer.snapshot()[:4], b"\xdd\xcc\xbb\xaa")
 
 
 class VirtioBlockTests(unittest.TestCase):

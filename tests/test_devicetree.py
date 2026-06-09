@@ -48,6 +48,7 @@ from IsaacCompiler.StackVM.devicetree import (
 from IsaacCompiler.StackVM.dt_bindings import (
     COMPAT_CPU,
     COMPAT_INTC,
+    COMPAT_FRAMEBUFFER,
     COMPAT_MACHINE,
     COMPAT_UART,
     COMPAT_VIRTIO_MMIO,
@@ -69,6 +70,8 @@ from IsaacCompiler.StackVM.mmio import (
     SVM_IRQ_UART0,
     SVM_IRQ_VIRTIO_BLK0,
     SVM_IRQ_VIRTIO_NET0,
+    SVM_MMIO_FRAMEBUFFER0_BASE,
+    SVM_MMIO_FRAMEBUFFER0_PIXELS_BASE,
     SVM_MMIO_IC_BASE,
     SVM_MMIO_RTC_BASE,
     SVM_MMIO_UART0_BASE,
@@ -411,9 +414,28 @@ class TestBindings(unittest.TestCase):
             self.assertEqual(node.get_cells("interrupts"), [irq])
             self.assertEqual(node.get_u32("interrupt-parent"), PHANDLE_INTC)
 
+    def test_soc_framebuffer_node(self):
+        fb = _build_bindings_fdt().get_node(
+            "/soc/framebuffer@%x" % SVM_MMIO_FRAMEBUFFER0_PIXELS_BASE
+        )
+        self.assertIsNotNone(fb)
+        self.assertEqual(fb.get_string("compatible"), COMPAT_FRAMEBUFFER)
+        self.assertEqual(fb.get_u32("width"), 640)
+        self.assertEqual(fb.get_u32("height"), 480)
+        self.assertEqual(fb.get_u32("stride"), 640 * 4)
+        self.assertEqual(fb.get_string("format"), "a8r8g8b8")
+        self.assertEqual(
+            decode_cells(fb.get_prop("reg")),
+            [0x1, 0x000F0000, 0, 640 * 480 * 4],
+        )
+        self.assertEqual(
+            decode_cells(fb.get_prop("stackvm,mmio-control")),
+            [0, SVM_MMIO_FRAMEBUFFER0_BASE, 0, 0x1000],
+        )
+
     def test_default_soc_devices_count(self):
-        # intc + serial + rtc + virtio-blk + virtio-net
-        self.assertEqual(len(default_soc_devices()), 5)
+        # intc + serial + rtc + virtio-blk + virtio-net + simple-framebuffer
+        self.assertEqual(len(default_soc_devices()), 6)
 
     def test_bindings_dtb_roundtrips(self):
         blob = _build_bindings_fdt().to_dtb()
