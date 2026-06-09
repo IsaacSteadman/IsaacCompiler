@@ -80,6 +80,22 @@ from .elf_file import (
     dumps_elf_object,
     read_elf_image,
 )
+from .pe_file import (
+    DOS_MAGIC,
+    IMAGE_FILE_DLL,
+    IMAGE_REL_BASED_DIR64,
+    IMAGE_SCN_CNT_CODE,
+    IMAGE_SCN_CNT_INITIALIZED_DATA,
+    IMAGE_SCN_CNT_UNINITIALIZED_DATA,
+    IMAGE_SCN_MEM_DISCARDABLE,
+    IMAGE_SCN_MEM_EXECUTE,
+    IMAGE_SCN_MEM_READ,
+    IMAGE_SCN_MEM_WRITE,
+    SUBSYSTEM_NAMES,
+    PeImage,
+    is_pe_bytes,
+    read_pe_image,
+)
 from .object_file import (
     ObjectRelocation,
     ObjectSection,
@@ -599,7 +615,18 @@ def run_readelf(argv: Sequence[str]) -> int:
         parser.error("no output requested; use -h/-S/-s/-l/-r/-n/-d/--dyn-syms or -a")
     try:
         for path in args.files:
-            image = load_image(path)
+            data = _read_bytes(path)
+            if is_pe_bytes(data):
+                for line in format_pe_readelf(
+                    path,
+                    read_pe_image(data),
+                    file_header=args.all or args.file_header,
+                    section_headers=args.all or args.section_headers,
+                    relocs=args.all or args.relocs,
+                ):
+                    print(line)
+                continue
+            image = image_from_bytes(data)
             for line in format_readelf(
                 path,
                 image,
@@ -613,7 +640,7 @@ def run_readelf(argv: Sequence[str]) -> int:
                 dyn_syms=args.dyn_syms,
             ):
                 print(line)
-    except HostToolError as exc:
+    except (HostToolError, ValueError) as exc:
         print("stackvm-readelf: %s" % exc, file=sys.stderr)
         return 1
     return 0
@@ -719,7 +746,18 @@ def run_objdump(argv: Sequence[str]) -> int:
         parser.error("no output requested; use -d/-h/-t/-r/-x")
     try:
         for path in args.files:
-            image = load_image(path)
+            data = _read_bytes(path)
+            if is_pe_bytes(data):
+                for line in format_pe_objdump(
+                    path,
+                    read_pe_image(data),
+                    disassemble_code=args.disassemble,
+                    section_headers=args.section_headers or args.all_headers,
+                    relocs=args.relocs or args.all_headers,
+                ):
+                    print(line)
+                continue
+            image = image_from_bytes(data)
             for line in format_objdump(
                 path,
                 image,
@@ -729,10 +767,168 @@ def run_objdump(argv: Sequence[str]) -> int:
                 relocs=args.relocs or args.all_headers,
             ):
                 print(line)
-    except HostToolError as exc:
+    except (HostToolError, ValueError) as exc:
         print("stackvm-objdump: %s" % exc, file=sys.stderr)
         return 1
     return 0
+
+
+# ---------------------------------------------------------------------------
+# PE/COFF inspection (UEFI ``.efi`` images, workstream D1b.1)
+#
+# PE images have their own structure (DOS+PE headers, RVA-based sections, a
+# base-relocation directory) rather than the ELF section/symbol model, so the
+# readelf/objdump runners detect ``MZ`` and route here instead of through the
+# ELF image path.
+# ---------------------------------------------------------------------------
+
+
+def load_pe(path: str) -> PeImage:
+    return read_pe_image(_read_bytes(path))
+
+
+def _pe_section_flag_chars(section) -> str:
+    chars = []
+    if section.characteristics & IMAGE_SCN_CNT_CODE:
+        chars.append("CODE")
+    if section.characteristics & IMAGE_SCN_CNT_INITIALIZED_DATA:
+        chars.append("IDATA")
+    if section.characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA:
+        chars.append("UDATA")
+    perm = ""
+    perm += "r" if section.characteristics & IMAGE_SCN_MEM_READ else "-"
+    perm += "w" if section.characteristics & IMAGE_SCN_MEM_WRITE else "-"
+    perm += "x" if section.characteristics & IMAGE_SCN_MEM_EXECUTE else "-"
+    chars.append(perm)
+    if section.characteristics & IMAGE_SCN_MEM_DISCARDABLE:
+        chars.append("DISCARD")
+    return ",".join(chars)
+
+
+_PE_DIRECTORY_NAMES = {
+    5: "BASE RELOCATION",
+    6: "DEBUG",
+}
+
+
+def format_pe_readelf(
+    path: str,
+    pe: PeImage,
+    *,
+    file_header: bool,
+    section_headers: bool,
+    relocs: bool,
+) -> List[str]:
+    lines: List[str] = []
+    if file_header:
+        lines.append("PE Header:")
+        lines.append("  Magic:                             PE32+")
+        lines.append("  Machine:                           StackVM (0x%04x)" % pe.machine)
+        lines.append(
+            "  Subsystem:                         %s (%d)"
+            % (SUBSYSTEM_NAMES.get(pe.subsystem, "Unknown"), pe.subsystem)
+        )
+        lines.append(
+            "  Type:                              %s"
+            % ("DLL" if pe.characteristics & IMAGE_FILE_DLL else "EXE")
+        )
+        lines.append("  ImageBase:                         0x%x" % pe.image_base)
+        lines.append("  AddressOfEntryPoint:               0x%x" % pe.entry_point)
+        lines.append("  SectionAlignment:                  0x%x" % pe.section_alignment)
+        lines.append("  FileAlignment:                     0x%x" % pe.file_alignment)
+        lines.append("  SizeOfImage:                       0x%x" % pe.size_of_image)
+        lines.append("  SizeOfHeaders:                     0x%x" % pe.size_of_headers)
+        lines.append("  Number of sections:                %d" % len(pe.sections))
+        lines.append("Data Directories:")
+        for index, (rva, size) in enumerate(pe.data_directories):
+            if not rva and not size:
+                continue
+            lines.append(
+                "  [%2d] %-16s VirtualAddress 0x%08x Size 0x%x"
+                % (index, _PE_DIRECTORY_NAMES.get(index, ""), rva, size)
+            )
+    if section_headers:
+        lines.append("Section Headers:")
+        lines.append("  [Nr] Name             VirtAddr         VirtSize Off    RawSize Flags")
+        for index, section in enumerate(pe.sections):
+            lines.append(
+                "  [%2d] %-16s %016x %08x %06x %07x %s"
+                % (
+                    index,
+                    section.name[:16],
+                    section.virtual_address,
+                    section.virtual_size,
+                    section.raw_pointer,
+                    section.raw_size,
+                    _pe_section_flag_chars(section),
+                )
+            )
+    if relocs:
+        dir64 = [
+            (rva, typ) for rva, typ in pe.base_relocations if typ == IMAGE_REL_BASED_DIR64
+        ]
+        if not pe.base_relocations:
+            lines.append("There are no base relocations in this file.")
+        else:
+            lines.append(
+                "Base relocation section contains %d entries (%d DIR64):"
+                % (len(pe.base_relocations), len(dir64))
+            )
+            lines.append("  RVA               Type")
+            for rva, typ in pe.base_relocations:
+                name = "DIR64" if typ == IMAGE_REL_BASED_DIR64 else ("ABSOLUTE" if typ == 0 else "%#x" % typ)
+                lines.append("  %016x  %s" % (rva, name))
+    return lines
+
+
+def format_pe_objdump(
+    path: str,
+    pe: PeImage,
+    *,
+    disassemble_code: bool,
+    section_headers: bool,
+    relocs: bool,
+) -> List[str]:
+    lines = ["", "%s:     file format pe32+-stackvm" % path]
+    if section_headers:
+        lines.append("")
+        lines.append("Sections:")
+        lines.append("Idx Name          Size      VMA               Type")
+        for idx, section in enumerate(pe.sections):
+            kind = (
+                "BSS"
+                if section.is_uninitialized
+                else ("TEXT" if section.is_code else "DATA")
+            )
+            lines.append(
+                "%3d %-13s %08x  %016x  %s"
+                % (idx, section.name, section.virtual_size, section.virtual_address, kind)
+            )
+    if relocs:
+        dir64 = [r for r in pe.base_relocations if r[1] == IMAGE_REL_BASED_DIR64]
+        if dir64:
+            lines.append("")
+            lines.append("BASE RELOCATION RECORDS:")
+            lines.append("RVA              TYPE")
+            for rva, _typ in dir64:
+                lines.append("%016x DIR64" % rva)
+    if disassemble_code:
+        for section in pe.sections:
+            if not section.is_code or not section.data:
+                continue
+            lines.append("")
+            lines.append("Disassembly of section %s:" % section.name)
+            base = section.virtual_address
+            # Disassemble the file-backed bytes up to the section's virtual size.
+            # The raw payload is zero-padded to the file alignment; an extra pad
+            # keeps an instruction whose operands straddle the boundary in range.
+            end = min(section.virtual_size, len(section.data))
+            buffer = section.data + b"\x00" * 16
+            fmt = lambda line, addr: "%8x:\t%s" % (addr + base, line)
+            text = disassemble(buffer, 0, end, {}, fmt)
+            if text:
+                lines.extend(text.splitlines())
+    return lines
 
 
 # ---------------------------------------------------------------------------

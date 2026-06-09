@@ -448,6 +448,14 @@ link_parser.add_argument(
     dest="needed",
     help="record a DT_NEEDED dependency (repeatable)",
 )
+link_parser.add_argument(
+    "--subsystem",
+    metavar="type",
+    default=None,
+    dest="subsystem",
+    help="EFI subsystem for a PE/COFF (.efi) output: efi-application "
+    "(default), efi-boot-service-driver, or efi-runtime-driver",
+)
 
 # Options that consume a following value token; used to reconstruct the
 # positional ``--whole-archive`` regions (argparse cannot preserve the relative
@@ -456,7 +464,7 @@ _LINK_VALUE_OPTS = {
     "-o", "--output-binary", "-M", "-Map", "--map", "--map-file", "-T", "--script",
     "--code-base", "--data-base", "-a", "--data-seg-align", "--percpu-copies",
     "--version-script", "-e", "--entry", "-soname", "--soname", "--needed",
-    "-u", "--undefined",
+    "-u", "--undefined", "--subsystem",
 }
 _BUILD_ID_STYLES = {"sha1", "md5", "uuid", "none", "default", "tree"}
 
@@ -831,6 +839,7 @@ elif args.subcommand == "link":
             pie=args.pie,
             soname=args.soname,
             needed=args.needed,
+            subsystem=args.subsystem,
         )
     except (LinkerError, OSError, ValueError) as exc:
         link_parser.error(str(exc))

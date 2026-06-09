@@ -138,6 +138,7 @@ def build_gcc_parser() -> argparse.ArgumentParser:
     parser.add_argument("-no-pie", "-nopie", action="store_true", dest="no_pie")
     parser.add_argument("-static", action="store_true", dest="static")
     parser.add_argument("-march", default=None, dest="march", metavar="arch")
+    parser.add_argument("--subsystem", default=None, dest="subsystem", metavar="type")
     parser.add_argument("-print-file-name", default=None, dest="print_file_name")
     parser.add_argument("-E", action="store_true", dest="preprocess_only")
     parser.add_argument("inputs", nargs="*")
@@ -610,6 +611,7 @@ def _link(
         and linker_script_path is None
         and not args.shared
         and not pie
+        and not output.lower().endswith((".efi", ".pe"))
         and not link_opts["gc_sections"]
         and link_opts["build_id"] is None
         and not link_opts["emit_relocs"]
@@ -692,6 +694,7 @@ def _link(
                 pie=pie,
                 soname=link_opts["soname"],
                 needed=link_opts["needed"],
+                subsystem=getattr(args, "subsystem", None),
             )
         except (LinkerError, OSError, ValueError) as exc:
             raise GccDriverError(str(exc)) from exc

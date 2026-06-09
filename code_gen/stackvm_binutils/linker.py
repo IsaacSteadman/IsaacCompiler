@@ -1627,6 +1627,13 @@ def _should_write_elf_executable(path: str) -> bool:
     return base == "vmlinux" or os.path.splitext(base)[1].lower() == ".elf"
 
 
+def _should_write_pe_executable(path: str) -> bool:
+    return os.path.splitext(os.path.basename(os.fspath(path)))[1].lower() in {
+        ".efi",
+        ".pe",
+    }
+
+
 def link_files(
     input_paths: Sequence[str],
     output_path: Optional[str] = None,
@@ -1651,6 +1658,7 @@ def link_files(
     pie: bool = False,
     soname: Optional[str] = None,
     needed: Sequence[str] = (),
+    subsystem: Union[str, int, None] = None,
 ) -> LinkResult:
     if whole_archive_flags is not None and len(whole_archive_flags) != len(input_paths):
         raise ValueError("whole_archive_flags must align with input_paths")
@@ -1686,7 +1694,17 @@ def link_files(
         needed=needed,
     )
     if output_path is not None:
-        if shared or pie or _should_write_elf_executable(output_path):
+        if not shared and not pie and _should_write_pe_executable(output_path):
+            from .pe_file import write_pe_executable
+
+            write_pe_executable(
+                result.to_executable(),
+                output_path,
+                result.section_layouts,
+                result.symbols,
+                subsystem=subsystem,
+            )
+        elif shared or pie or _should_write_elf_executable(output_path):
             write_elf_executable(
                 result.to_executable(),
                 output_path,
